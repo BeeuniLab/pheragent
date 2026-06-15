@@ -61,6 +61,7 @@ class OpenAIResponsesBlockPlanner:
             "input": _response_text_input(
                 json.dumps(
                     {
+                        "output_instructions": "Return JSON only.",
                         "repo_context": to_jsonable(context),
                         "fallback_blocks": [
                             to_jsonable(block) for block in self.fallback.plan(context)

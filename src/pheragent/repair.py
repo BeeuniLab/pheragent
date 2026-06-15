@@ -166,6 +166,7 @@ class OpenAIResponsesRepairPlanner:
         heuristic_hints: list[RepairCommand] | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
+            "output_instructions": "Return JSON only.",
             "block": to_jsonable(block),
             "failure": {
                 "exit_code": result.exit_code,

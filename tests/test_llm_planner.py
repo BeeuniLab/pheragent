@@ -139,7 +139,10 @@ def test_openai_responses_planner_uses_sdk_streaming(tmp_path: Path, monkeypatch
     assert payload["input"][0]["role"] == "user"
     input_text = payload["input"][0]["content"][0]
     assert input_text["type"] == "input_text"
-    assert "repo_context" in json.loads(input_text["text"])
+    content = json.loads(input_text["text"])
+    assert content["output_instructions"] == "Return JSON only."
+    assert "json" in input_text["text"].lower()
+    assert "repo_context" in content
 
 
 def test_openai_client_disables_sdk_retries() -> None:

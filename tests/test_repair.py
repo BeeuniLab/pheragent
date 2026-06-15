@@ -557,6 +557,8 @@ def test_openai_responses_repair_payload_includes_repair_context(tmp_path: Path)
     assert input_text["type"] == "input_text"
     content = json.loads(input_text["text"])
 
+    assert content["output_instructions"] == "Return JSON only."
+    assert "json" in input_text["text"].lower()
     assert content["repair_context"]["checkpoint_before"] == "fake:baseline"
     assert "tool:cmake=missing" in content["repair_context"]["repo_context"]["runtime_notes"]
     assert content["repair_context"]["previous_blocks"][0]["id"] == "00-preflight"
@@ -571,7 +573,10 @@ def test_openai_responses_repair_payload_includes_repair_context(tmp_path: Path)
     probe_payload = planner._probe_request_payload(block, result, context)
     assert isinstance(probe_payload["input"], list)
     assert probe_payload["input"][0]["content"][0]["type"] == "input_text"
-    probe_content = json.loads(probe_payload["input"][0]["content"][0]["text"])
+    probe_text = probe_payload["input"][0]["content"][0]["text"]
+    probe_content = json.loads(probe_text)
+    assert probe_content["output_instructions"] == "Return JSON only."
+    assert "json" in probe_text.lower()
     assert probe_content["repair_context"]["checkpoint_before"] == "fake:baseline"
     assert "max_output_tokens" not in probe_payload
     assert "temperature" not in probe_payload
