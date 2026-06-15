@@ -269,6 +269,15 @@ class ProjectBatchBuilder:
                     )
                     results.append(existing_result)
                     continue
+                if repo_path.exists():
+                    self._emit(
+                        f"project {spec.owner_repo}: reset existing incomplete project at "
+                        f"{repo_path}"
+                    )
+                    if repo_path.is_dir() and not repo_path.is_symlink():
+                        shutil.rmtree(repo_path)
+                    else:
+                        repo_path.unlink()
 
                 self._emit(f"project {spec.owner_repo}@{spec.commit}: prepare")
                 repo_path = prepare_project(

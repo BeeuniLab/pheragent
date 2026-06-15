@@ -268,11 +268,16 @@ def test_project_batch_builder_reruns_existing_failed_project_and_clears_failure
     stale_failure_log = projects_dir / "failed-projects.log"
     stale_failure_log.write_text("old\tfailure\n", encoding="utf-8")
     requests: list[BuildRequest] = []
+    clone_calls = 0
 
     def fake_runner(command: list[str], cwd: Path | None) -> CommandResult:
+        nonlocal clone_calls
         del cwd
         if command[:2] == ["git", "clone"]:
-            raise AssertionError("existing repository should not be cloned")
+            clone_calls += 1
+            cloned_repo_path = Path(command[-1])
+            assert not cloned_repo_path.exists()
+            (cloned_repo_path / ".git").mkdir(parents=True)
         return CommandResult(exit_code=0, stdout="ok")
 
     class FakeBuilder:
@@ -305,11 +310,69 @@ def test_project_batch_builder_reruns_existing_failed_project_and_clears_failure
     ).build_all()
 
     assert result.ok
+    assert clone_calls == 1
     assert requests
     assert requests[0].repo_path == repo_path
     assert result.results[0].final_image == "pheragent:batch-flask-rebuilt"
     assert result.failures_log_path is None
     assert not stale_failure_log.exists()
+
+
+def test_project_batch_builder_resets_unrecognized_existing_project_state(
+    tmp_path: Path,
+) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text("pallets/flask 2579ce9\n", encoding="utf-8")
+    projects_dir = tmp_path / "projects"
+    repo_path = projects_dir / "flask"
+    run_dir = repo_path / ".pheragent" / "runs" / "batch-flask"
+    run_dir.mkdir(parents=True)
+    (run_dir / "manifest.json").write_text("{not-json", encoding="utf-8")
+    (repo_path / "stale.log").write_text("old log\n", encoding="utf-8")
+    clone_calls = 0
+
+    def fake_runner(command: list[str], cwd: Path | None) -> CommandResult:
+        nonlocal clone_calls
+        del cwd
+        if command[:2] == ["git", "clone"]:
+            clone_calls += 1
+            cloned_repo_path = Path(command[-1])
+            assert not cloned_repo_path.exists()
+            (cloned_repo_path / ".git").mkdir(parents=True)
+        return CommandResult(exit_code=0, stdout="ok")
+
+    class FakeBuilder:
+        def __init__(self, request: BuildRequest):
+            self.request = request
+
+        def build(self) -> BuildResult:
+            state_dir = self.request.repo_path / ".pheragent" / "runs" / "batch-flask"
+            return BuildResult(
+                ok=True,
+                run_id=self.request.run_id or "batch-flask",
+                state_dir=state_dir,
+                scripts_dir=state_dir / "scripts",
+                manifest_path=state_dir / "manifest.json",
+                final_image="pheragent:batch-flask-rebuilt",
+            )
+
+    result = ProjectBatchBuilder(
+        projects_file=projects_file,
+        projects_dir=projects_dir,
+        base_request=BuildRequest(
+            repo_path=tmp_path,
+            base_dockerfile=tmp_path / "Dockerfile",
+            run_id=None,
+        ),
+        run_id_prefix="batch",
+        command_runner=fake_runner,
+        builder_factory=FakeBuilder,
+    ).build_all()
+
+    assert result.ok
+    assert clone_calls == 1
+    assert not (repo_path / "stale.log").exists()
+    assert result.results[0].final_image == "pheragent:batch-flask-rebuilt"
 
 
 def test_project_batch_builder_writes_failed_projects_log(tmp_path: Path) -> None:
