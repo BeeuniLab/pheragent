@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -38,6 +39,7 @@ class ProjectRunResult:
     run_id: str | None = None
     final_image: str | None = None
     manifest_path: Path | None = None
+    oracle_path: Path | None = None
     error: str | None = None
 
 
@@ -45,6 +47,7 @@ class ProjectRunResult:
 class BatchBuildResult:
     ok: bool
     projects_dir: Path
+    oracles_dir: Path
     results: list[ProjectRunResult]
 
 
@@ -135,12 +138,34 @@ def prepare_project(
     return repo_path
 
 
+def isolate_project_oracles(
+    spec: ProjectSpec,
+    *,
+    repo_path: Path,
+    oracles_dir: Path,
+) -> Path | None:
+    source = repo_path / ".github"
+    destination = oracles_dir / spec.checkout_dir_name / ".github"
+    if not source.exists():
+        return destination if destination.exists() else None
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        if destination.is_dir() and not destination.is_symlink():
+            shutil.rmtree(destination)
+        else:
+            destination.unlink()
+    shutil.move(str(source), str(destination))
+    return destination
+
+
 class ProjectBatchBuilder:
     def __init__(
         self,
         *,
         projects_file: Path,
         projects_dir: Path,
+        oracles_dir: Path = Path("oracles"),
         base_request: BuildRequest,
         clone_timeout: float = 900.0,
         run_id_prefix: str | None = None,
@@ -151,6 +176,7 @@ class ProjectBatchBuilder:
     ):
         self.projects_file = projects_file.expanduser().resolve()
         self.projects_dir = projects_dir.expanduser().resolve()
+        self.oracles_dir = oracles_dir.expanduser().resolve()
         self.base_request = base_request
         self.clone_timeout = clone_timeout
         self.run_id_prefix = run_id_prefix
@@ -167,12 +193,18 @@ class ProjectBatchBuilder:
         results: list[ProjectRunResult] = []
         for spec in specs:
             repo_path = self.projects_dir / spec.checkout_dir_name
+            oracle_path: Path | None = None
             try:
                 repo_path = prepare_project(
                     spec,
                     projects_dir=self.projects_dir,
                     clone_timeout=self.clone_timeout,
                     command_runner=self.command_runner,
+                )
+                oracle_path = isolate_project_oracles(
+                    spec,
+                    repo_path=repo_path,
+                    oracles_dir=self.oracles_dir,
                 )
                 build_result = self.builder_factory(self._request_for(spec, repo_path)).build()
                 result = ProjectRunResult(
@@ -182,6 +214,7 @@ class ProjectBatchBuilder:
                     run_id=build_result.run_id,
                     final_image=build_result.final_image,
                     manifest_path=build_result.manifest_path,
+                    oracle_path=oracle_path,
                     error=build_result.error,
                 )
             except Exception as exc:
@@ -189,6 +222,7 @@ class ProjectBatchBuilder:
                     project=spec,
                     repo_path=repo_path,
                     ok=False,
+                    oracle_path=oracle_path,
                     error=str(exc),
                 )
             results.append(result)
@@ -198,6 +232,7 @@ class ProjectBatchBuilder:
         return BatchBuildResult(
             ok=all(result.ok for result in results),
             projects_dir=self.projects_dir,
+            oracles_dir=self.oracles_dir,
             results=results,
         )
 

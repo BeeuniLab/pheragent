@@ -32,6 +32,7 @@ def main(argv: list[str] | None = None) -> int:
         result = ProjectBatchBuilder(
             projects_file=args.projects_file,
             projects_dir=args.projects_dir,
+            oracles_dir=args.oracles_dir,
             base_request=request,
             clone_timeout=args.clone_timeout,
             run_id_prefix=args.run_id_prefix,
@@ -123,6 +124,12 @@ def _add_batch_args(parser: argparse.ArgumentParser) -> None:
         type=Path,
         default=Path("projects"),
         help="Directory where repositories will be cloned.",
+    )
+    parser.add_argument(
+        "--oracles-dir",
+        type=Path,
+        default=Path("oracles"),
+        help="Directory where .github oracle data is moved before building.",
     )
     parser.add_argument(
         "--base-dockerfile",
@@ -243,6 +250,7 @@ def _print_batch_result(result, *, as_json: bool) -> None:
     status = "ok" if result.ok else "failed"
     print(f"pheragent project batch: {status}")
     print(f"projects: {result.projects_dir}")
+    print(f"oracles: {result.oracles_dir}")
     for project_result in result.results:
         project_status = "ok" if project_result.ok else "failed"
         print(
@@ -256,5 +264,7 @@ def _print_batch_result(result, *, as_json: bool) -> None:
             print(f"  final image: {project_result.final_image}")
         if project_result.manifest_path:
             print(f"  manifest: {project_result.manifest_path}")
+        if project_result.oracle_path:
+            print(f"  oracle: {project_result.oracle_path}")
         if project_result.error:
             print(f"  error: {project_result.error}")

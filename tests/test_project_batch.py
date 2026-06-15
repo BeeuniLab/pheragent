@@ -6,6 +6,7 @@ from pheragent.models import BuildRequest, BuildResult, CommandResult
 from pheragent.project_batch import (
     ProjectBatchBuilder,
     ProjectSpec,
+    isolate_project_oracles,
     parse_projects_file,
     prepare_project,
 )
@@ -66,16 +67,42 @@ def test_prepare_project_clones_fetches_and_checks_out_in_repo_dir(tmp_path: Pat
     assert calls[2] == (["git", "checkout", "--detach", "2579ce9"], repo_path)
 
 
+def test_isolate_project_oracles_moves_github_out_of_repo(tmp_path: Path) -> None:
+    repo_path = tmp_path / "projects" / "flask"
+    github_dir = repo_path / ".github" / "workflows"
+    github_dir.mkdir(parents=True)
+    (github_dir / "ci.yml").write_text("name: ci\n", encoding="utf-8")
+    spec = ProjectSpec(
+        owner_repo="pallets/flask",
+        commit="2579ce9",
+        line_no=1,
+        checkout_dir_name="flask",
+    )
+
+    oracle_path = isolate_project_oracles(
+        spec,
+        repo_path=repo_path,
+        oracles_dir=tmp_path / "oracles",
+    )
+
+    assert oracle_path == tmp_path / "oracles" / "flask" / ".github"
+    assert not (repo_path / ".github").exists()
+    assert (oracle_path / "workflows" / "ci.yml").read_text(encoding="utf-8") == "name: ci\n"
+
+
 def test_project_batch_builder_builds_each_prepared_project(tmp_path: Path) -> None:
     projects_file = tmp_path / "projects.txt"
     projects_file.write_text("pallets/flask 2579ce9\n", encoding="utf-8")
     requests: list[BuildRequest] = []
 
     def fake_runner(command: list[str], cwd: Path | None) -> CommandResult:
-        del cwd
         if command[:2] == ["git", "clone"]:
             repo_path = Path(command[-1])
             (repo_path / ".git").mkdir(parents=True)
+        if command[:2] == ["git", "checkout"] and cwd is not None:
+            github_dir = cwd / ".github" / "workflows"
+            github_dir.mkdir(parents=True)
+            (github_dir / "ci.yml").write_text("name: ci\n", encoding="utf-8")
         return CommandResult(exit_code=0, stdout="ok")
 
     class FakeBuilder:
@@ -97,6 +124,7 @@ def test_project_batch_builder_builds_each_prepared_project(tmp_path: Path) -> N
     result = ProjectBatchBuilder(
         projects_file=projects_file,
         projects_dir=tmp_path / "projects",
+        oracles_dir=tmp_path / "oracles",
         base_request=BuildRequest(
             repo_path=tmp_path,
             base_dockerfile=tmp_path / "Dockerfile",
@@ -109,5 +137,8 @@ def test_project_batch_builder_builds_each_prepared_project(tmp_path: Path) -> N
 
     assert result.ok
     assert requests[0].repo_path == tmp_path / "projects" / "flask"
+    assert not (requests[0].repo_path / ".github").exists()
     assert requests[0].run_id == "batch-flask"
     assert result.results[0].final_image == "pheragent:batch-flask-final"
+    assert result.results[0].oracle_path == tmp_path / "oracles" / "flask" / ".github"
+    assert (result.results[0].oracle_path / "workflows" / "ci.yml").is_file()

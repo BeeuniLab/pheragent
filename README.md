@@ -64,6 +64,7 @@ Clone and build multiple projects from an `owner/repo commit` file:
 uv run pheragent build-projects \
   --projects-file tests/projects/executionAgent.txt \
   --projects-dir projects \
+  --oracles-dir oracles \
   --base-dockerfile tests/dockerfile/Dockerfile.heragent-thin \
   --run-id-prefix execution-agent \
   --planner llm \
@@ -73,6 +74,12 @@ uv run pheragent build-projects \
 
 Use `--limit N` for a small smoke run, and `--stop-on-failure` when you want the
 batch to stop at the first clone/build failure.
+
+For `build-projects`, `.github` is treated as oracle data instead of build
+context. After checkout, if a cloned project contains `.github`, it is moved to
+`<oracles-dir>/<project-name>/.github` before the environment build starts. This
+keeps CI/CD validation hints out of the agent's repo context while preserving
+them for later manual or oracle-based validation.
 
 Validate the final checkpoint image with an oracle file:
 
@@ -122,6 +129,12 @@ Outputs are written under:
   logs/<block-id>/*.log
   executions.jsonl
   manifest.json
+```
+
+When using `build-projects`, quarantined oracle data is written under:
+
+```text
+<oracles-dir>/<project-name>/.github/
 ```
 
 The important artifact is `scripts/*.sh`: those files are the final block-by-block

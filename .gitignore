@@ -33,6 +33,7 @@ dist/
 **/.pheragent/
 projects/
 !tests/projects/
+oracles/
 
 # Repo-local caches created inside target projects
 .cache/
