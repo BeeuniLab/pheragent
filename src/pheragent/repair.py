@@ -78,6 +78,7 @@ class OpenAIResponsesRepairPlanner:
                 context,
                 heuristic_hints=heuristic_hints,
             ),
+            error_context="LLM probe",
         )
         self.last_probe_raw_response = content
         return self._parse_probes(content)
@@ -107,6 +108,7 @@ class OpenAIResponsesRepairPlanner:
                 context,
                 heuristic_hints=heuristic_hints,
             ),
+            error_context="LLM repair",
         )
         self.last_raw_response = content
         return self._parse_repairs(content)
@@ -186,6 +188,8 @@ class OpenAIResponsesRepairPlanner:
         self,
         client,
         payload: dict[str, Any],
+        *,
+        error_context: str,
     ) -> str:
         content = ""
         max_attempts = max(1, self.config.max_retries)
@@ -193,10 +197,10 @@ class OpenAIResponsesRepairPlanner:
         for attempt in range(1, max_attempts + 1):
             try:
                 stream = client.responses.create(**payload)
-                content = _read_streamed_response(stream, error_context="LLM repair")
+                content = _read_streamed_response(stream, error_context=error_context)
                 break
             except Exception as exc:
-                last_error = RuntimeError(_format_llm_error("LLM repair", exc))
+                last_error = RuntimeError(_format_llm_error(error_context, exc))
                 if attempt == max_attempts:
                     raise last_error from exc
                 if not _retryable_llm_error(exc):
@@ -700,8 +704,6 @@ def _repair_command_rejection_reason(command: str) -> str | None:
         "docker ",
         "podman ",
         "git push",
-        "rm -rf /",
-        "rm -rf /*",
         "mkfs",
         "shutdown",
         "reboot",
@@ -716,9 +718,27 @@ def _repair_command_rejection_reason(command: str) -> str | None:
     for token in dangerous_tokens:
         if token in normalized:
             return f"unsafe token {token!r}"
+    rm_rf_rejection = _rm_rf_rejection_reason(normalized)
+    if rm_rf_rejection:
+        return rm_rf_rejection
     for token in transient_runtime_paths:
         if token in normalized:
             return f"transient runtime path {token!r}"
+    return None
+
+
+def _rm_rf_rejection_reason(normalized_command: str) -> str | None:
+    pattern = r"(?:^|[;&|]\s*)rm\s+(-[a-z]*[rf][a-z]*[rf][a-z]*)\s+([^;&|]+)"
+    for match in re.finditer(pattern, normalized_command):
+        target = match.group(2).strip().strip("\"'")
+        if target in {"/", "/*"}:
+            return f"unsafe rm target {target!r}"
+        if target.startswith("/var/lib/apt/lists/") or target == "/var/lib/apt/lists/*":
+            continue
+        if target.startswith("/tmp/pheragent-"):
+            continue
+        if target.startswith("/"):
+            return f"unsafe absolute rm target {target!r}"
     return None
 
 

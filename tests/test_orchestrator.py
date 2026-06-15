@@ -405,6 +405,70 @@ def test_environment_builder_retries_empty_llm_repair_suggestions(
     assert "repairs list is empty" in first_log
 
 
+def test_environment_builder_stops_when_llm_probe_request_fails(tmp_path: Path) -> None:
+    class UnknownFailureRuntime(FakeRuntime):
+        def execute_script(self, script_path: Path, *, timeout: float) -> CommandResult:
+            del script_path, timeout
+            return CommandResult(exit_code=1, stderr="mystery failure")
+
+    class FailingProbeLLMRepairPlanner:
+        def __init__(self) -> None:
+            self.repair_calls = 0
+
+        def propose_probes(self, block, result, *, context=None, heuristic_hints=None):
+            del block, result, context, heuristic_hints
+            raise RuntimeError("HTTP 429: rate limit")
+
+        def suggest(self, block, result, *, context=None, heuristic_hints=None):
+            del block, result, context, heuristic_hints
+            self.repair_calls += 1
+            return [
+                RepairCommand(
+                    title="Should not run",
+                    command="true",
+                    patch_script="true",
+                )
+            ]
+
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="probe-failure",
+        max_repair_attempts=3,
+    )
+    planner = StaticPlanner(
+        [
+            CommandBlock(
+                id="01-custom",
+                title="Custom",
+                goal="install",
+                script="#!/bin/sh\necho custom\n",
+                order=1,
+            )
+        ]
+    )
+    llm_planner = FailingProbeLLMRepairPlanner()
+
+    result = EnvironmentBuilder(
+        request,
+        planner=planner,
+        repair_planner=RepairPlanner(llm_planner=llm_planner),
+        runtime_factory=UnknownFailureRuntime,
+    ).build()
+
+    assert not result.ok
+    assert llm_planner.repair_calls == 0
+    llm_probe_execution = next(
+        execution for execution in result.executions if execution.phase == "llm_probe"
+    )
+    assert "HTTP 429" in Path(llm_probe_execution.log_path or "").read_text(
+        encoding="utf-8"
+    )
+
+
 def test_environment_builder_resumes_from_checkpoint_without_replanning(
     tmp_path: Path,
 ) -> None:

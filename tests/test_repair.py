@@ -293,6 +293,53 @@ def test_openai_responses_repair_parser_filters_transient_block_script_paths() -
     assert "transient runtime path" in planner.last_parse_diagnostics[0]
 
 
+def test_openai_responses_repair_parser_allows_apt_cache_cleanup() -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
+    command = (
+        "apt-get update && apt-get install -y python3-pytest && "
+        "rm -rf /var/lib/apt/lists/*"
+    )
+
+    repairs = planner._parse_repairs(
+        json.dumps(
+            {
+                "repairs": [
+                    {
+                        "title": "Install pytest",
+                        "command": command,
+                        "patch_script": command,
+                    }
+                ]
+            }
+        )
+    )
+
+    assert len(repairs) == 1
+    assert repairs[0].title == "Install pytest"
+    assert planner.last_parse_diagnostics == []
+
+
+def test_openai_responses_repair_parser_rejects_absolute_rm_rf_targets() -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
+
+    repairs = planner._parse_repairs(
+        """
+        {
+          "repairs": [
+            {
+              "title": "Bad cleanup",
+              "command": "rm -rf /etc",
+              "patch_script": "rm -rf /etc"
+            }
+          ]
+        }
+        """
+    )
+
+    assert repairs == []
+    assert "unsafe absolute rm target" in planner.last_parse_diagnostics[0]
+
+
 def test_openai_responses_repair_parser_records_empty_repairs_diagnostic() -> None:
     planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
 

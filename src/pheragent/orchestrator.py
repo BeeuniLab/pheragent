@@ -356,6 +356,13 @@ class EnvironmentBuilder:
                 baseline_image=baseline_image,
                 executions=executions,
             )
+            probe_error = getattr(self.repair_planner, "last_probe_error", None)
+            if probe_error:
+                self._emit(
+                    f"run {self.run_id}: block {block.id} LLM probe attempt "
+                    f"{repair_attempt} failed: {tail_text(probe_error, max_chars=500)}"
+                )
+                break
             probe_results = self._run_repair_probes(
                 runtime=runtime,
                 block=block,
