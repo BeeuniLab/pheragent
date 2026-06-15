@@ -232,6 +232,32 @@ def test_openai_responses_repair_parser_filters_dangerous_commands() -> None:
     assert repairs[0].title == "Good"
 
 
+def test_openai_responses_repair_parser_filters_transient_block_script_paths() -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
+
+    repairs = planner._parse_repairs(
+        """
+        {
+          "repairs": [
+            {
+              "title": "Rerun temp script",
+              "command": "python -m pip install pytest && sh /tmp/pheragent/blocks/04.sh",
+              "patch_script": "python -m pip install pytest"
+            },
+            {
+              "title": "Install pytest",
+              "command": "python -m pip install pytest && python -m pytest --version",
+              "patch_script": "python -m pip install pytest"
+            }
+          ]
+        }
+        """
+    )
+
+    assert len(repairs) == 1
+    assert repairs[0].title == "Install pytest"
+
+
 def test_openai_responses_repair_payload_includes_repair_context(tmp_path: Path) -> None:
     planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
     block = CommandBlock(

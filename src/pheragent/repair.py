@@ -422,7 +422,11 @@ def _safe_repair_command(command: str) -> bool:
         "dd if=",
         ">/dev/sd",
     )
-    return not any(token in normalized for token in dangerous_tokens)
+    transient_runtime_paths = (
+        "/tmp/pheragent/blocks/",
+        "/tmp/pheragent/blocks",
+    )
+    return not any(token in normalized for token in dangerous_tokens + transient_runtime_paths)
 
 
 _REPAIR_SYSTEM_PROMPT = """
@@ -442,6 +446,11 @@ Return strict JSON only:
 Rules:
 - Suggest local, idempotent shell commands only.
 - Do not use docker, podman, git push, service shutdown, or destructive host commands.
+- Do not call /tmp/pheragent/blocks/*.sh or any other transient block script path.
+  The orchestrator will copy and rerun the patched block script after a repair
+  command succeeds.
+- Make command validate only the repair itself from the failed block baseline
+  (for example, install a missing package and run a small import/version check).
 - Prefer package-manager fixes, missing tool installs, compatibility pins, and validation fixes.
 - Keep each repair small enough to belong to the failed block.
 - Analyze the failed block and failure stdout/stderr first; repair_context and
