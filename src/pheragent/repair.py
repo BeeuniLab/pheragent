@@ -391,25 +391,23 @@ class RepairPlanner:
     def patch_block(self, block: CommandBlock, repair: RepairCommand) -> CommandBlock:
         if repair.patch_validation_command:
             block.validation_command = repair.patch_validation_command
-            block.repair_attempts += 1
-            block.status = "repaired"
-            return block
 
         original = block.script
-        if repair.patch_script in original:
-            return block
-        repair_header = f'echo "[pheragent] repair: {repair.title}"'
-        if original.startswith("#!/"):
-            lines = original.splitlines()
-            shebang = lines[0]
-            rest = "\n".join(lines[1:]).lstrip()
-            block.script = (
-                f"{shebang}\nset -eu\n\n"
-                f"{repair_header}\n{repair.patch_script}\n\n"
-                f"{rest}\n"
-            )
-        else:
-            block.script = shell_script(f"{repair_header}\n{repair.patch_script}\n\n{original}")
+        if repair.patch_script and repair.patch_script not in original:
+            repair_header = f'echo "[pheragent] repair: {repair.title}"'
+            if original.startswith("#!/"):
+                lines = original.splitlines()
+                shebang = lines[0]
+                rest = "\n".join(lines[1:]).lstrip()
+                block.script = (
+                    f"{shebang}\nset -eu\n\n"
+                    f"{repair_header}\n{repair.patch_script}\n\n"
+                    f"{rest}\n"
+                )
+            else:
+                block.script = shell_script(
+                    f"{repair_header}\n{repair.patch_script}\n\n{original}"
+                )
         block.repair_attempts += 1
         block.status = "repaired"
         return block

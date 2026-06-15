@@ -130,6 +130,29 @@ def test_repair_hints_relax_dunder_version_validation() -> None:
     assert patched.validation_command == 'uv run python -c "import flask; print(flask)"'
 
 
+def test_patch_block_applies_script_when_validation_is_replaced() -> None:
+    block = CommandBlock(
+        id="02-python-deps",
+        title="Python Dependencies",
+        goal="Install deps",
+        script="#!/bin/sh\nset -eu\npython3 -m venv .venv\n",
+        validation_command="python3 --version",
+    )
+    repair = RepairCommand(
+        title="Install venv support",
+        command="apt-get install -y python3.12-venv",
+        patch_script="apt-get install -y python3.12-venv",
+        patch_validation_command=".venv/bin/python -m pip --version",
+    )
+
+    patched = RepairPlanner().patch_block(block, repair)
+
+    assert "apt-get install -y python3.12-venv" in patched.script
+    assert patched.script.index("apt-get install") < patched.script.index("python3 -m venv")
+    assert patched.validation_command == ".venv/bin/python -m pip --version"
+    assert patched.repair_attempts == 1
+
+
 def test_repair_planner_prefers_llm_suggestions_and_passes_heuristic_hints() -> None:
     class FakeLLMRepairPlanner:
         heuristic_hints: list[RepairCommand] | None = None
