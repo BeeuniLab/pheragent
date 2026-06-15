@@ -51,7 +51,6 @@ class EnvironmentBuilder:
             max_tokens=self.request.llm_max_tokens,
             retries=self.request.llm_retries,
             retry_delay=self.request.llm_retry_delay,
-            stream=self.request.llm_stream,
         )
         self.repair_planner = repair_planner or make_repair_planner(
             mode=self.request.planner_mode,
@@ -63,7 +62,6 @@ class EnvironmentBuilder:
             max_tokens=self.request.llm_max_tokens,
             retries=self.request.llm_retries,
             retry_delay=self.request.llm_retry_delay,
-            stream=self.request.llm_stream,
         )
         self.runtime_factory = runtime_factory
 

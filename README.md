@@ -31,7 +31,7 @@ Plan scripts without Docker:
 uv run pheragent plan --repo /path/to/repo
 ```
 
-Use the LLM planner with an OpenAI-compatible endpoint:
+Use the LLM planner with an OpenAI Responses API endpoint:
 
 ```bash
 export OPENAI_API_KEY="..."
@@ -56,7 +56,6 @@ uv run pheragent build \
   --planner llm \
   --llm-retries 3 \
   --llm-retry-delay 1 \
-  --llm-stream \
   --stream-logs
 ```
 
@@ -72,7 +71,6 @@ uv run pheragent build-projects \
   --planner llm \
   --command-timeout 1800 \
   --llm-timeout 180 \
-  --llm-stream \
   --stream-logs
 ```
 
@@ -83,11 +81,10 @@ Use `--stream-logs` when you want live Docker, git, block, validation, repair,
 and oracle command output in the terminal while still keeping complete logs
 under `logs/`.
 
-Use `--llm-stream` when the OpenAI-compatible endpoint supports Chat
-Completions streaming. This sends `stream: true` for planning and repair calls
-and reconstructs the JSON response from streamed chunks. LLM repair request
-failures or empty repair responses are recorded as `llm_repair` executions under
-the failed block's logs.
+LLM planning and repair use the OpenAI Python SDK Responses API with
+`stream=True`. The streamed JSON response is reconstructed from
+`response.output_text.delta` events. LLM repair request failures or empty repair
+responses are recorded as `llm_repair` executions under the failed block's logs.
 
 Project checkout first tries to fetch the requested commit/ref directly. If a
 short commit hash cannot be fetched as a remote ref, `pheragent` fetches remote
@@ -191,9 +188,8 @@ rolled back to the block baseline before each repair/replay attempt.
 - Block planning in build mode uses both repository context and container
   preflight runtime context.
 - Repair is local to the failed block, with heuristic fixes first and optional
-  OpenAI-compatible LLM repair suggestions when the overall planner uses LLM
-  support.
-- LLM planning uses an OpenAI-compatible `/chat/completions` endpoint and does
+  OpenAI SDK Responses repair suggestions when the overall planner uses LLM support.
+- LLM planning uses the OpenAI Python SDK Responses API with streaming and does
   not store API keys on disk. Transient LLM request failures are retried; `auto`
   mode falls back to deterministic rules if the LLM planner cannot produce a
   plan.

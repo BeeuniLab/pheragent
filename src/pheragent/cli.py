@@ -105,18 +105,13 @@ def _add_common_args(parser: argparse.ArgumentParser, *, include_dockerfile: boo
         help="Block planner. auto uses LLM when an API key is present, otherwise rules.",
     )
     parser.add_argument("--model", default=None, help="LLM model name, for example gpt-5.5.")
-    parser.add_argument("--openai-base-url", default=None, help="OpenAI-compatible API base URL.")
+    parser.add_argument("--openai-base-url", default=None, help="OpenAI Responses API base URL.")
     parser.add_argument("--openai-api-key-env", default="OPENAI_API_KEY")
     parser.add_argument("--openai-base-url-env", default="OPENAI_BASE_URL")
     parser.add_argument("--llm-timeout", type=float, default=120.0)
     parser.add_argument("--llm-max-tokens", type=int, default=4096)
     parser.add_argument("--llm-retries", type=int, default=3)
     parser.add_argument("--llm-retry-delay", type=float, default=1.0)
-    parser.add_argument(
-        "--llm-stream",
-        action="store_true",
-        help="Use streaming Chat Completions responses for LLM planning and repair.",
-    )
     parser.add_argument("--oracle-file", type=Path, default=None)
     parser.add_argument("--oracle-timeout", type=float, default=None)
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
@@ -164,18 +159,13 @@ def _add_batch_args(parser: argparse.ArgumentParser) -> None:
         help="Block planner. auto uses LLM when an API key is present, otherwise rules.",
     )
     parser.add_argument("--model", default=None, help="LLM model name, for example gpt-5.5.")
-    parser.add_argument("--openai-base-url", default=None, help="OpenAI-compatible API base URL.")
+    parser.add_argument("--openai-base-url", default=None, help="OpenAI Responses API base URL.")
     parser.add_argument("--openai-api-key-env", default="OPENAI_API_KEY")
     parser.add_argument("--openai-base-url-env", default="OPENAI_BASE_URL")
     parser.add_argument("--llm-timeout", type=float, default=120.0)
     parser.add_argument("--llm-max-tokens", type=int, default=4096)
     parser.add_argument("--llm-retries", type=int, default=3)
     parser.add_argument("--llm-retry-delay", type=float, default=1.0)
-    parser.add_argument(
-        "--llm-stream",
-        action="store_true",
-        help="Use streaming Chat Completions responses for LLM planning and repair.",
-    )
     parser.add_argument("--oracle-file", type=Path, default=None)
     parser.add_argument("--oracle-timeout", type=float, default=None)
     parser.add_argument("--keep-container", action="store_true")
@@ -215,7 +205,6 @@ def _request_from_args(args: argparse.Namespace, *, require_dockerfile: bool) ->
         llm_max_tokens=args.llm_max_tokens,
         llm_retries=args.llm_retries,
         llm_retry_delay=args.llm_retry_delay,
-        llm_stream=args.llm_stream,
         oracle_file=args.oracle_file,
         oracle_timeout=args.oracle_timeout,
         resume_from=resume_from,
@@ -246,7 +235,6 @@ def _batch_base_request_from_args(args: argparse.Namespace) -> BuildRequest:
         llm_max_tokens=args.llm_max_tokens,
         llm_retries=args.llm_retries,
         llm_retry_delay=args.llm_retry_delay,
-        llm_stream=args.llm_stream,
         oracle_file=args.oracle_file,
         oracle_timeout=args.oracle_timeout,
     )

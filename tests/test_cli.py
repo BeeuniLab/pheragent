@@ -18,7 +18,6 @@ def test_build_resume_from_does_not_require_base_dockerfile(tmp_path: Path) -> N
             "pheragent:previous-checkpoint",
             "--start-at-block",
             "02-tests",
-            "--llm-stream",
         ]
     )
 
@@ -27,7 +26,6 @@ def test_build_resume_from_does_not_require_base_dockerfile(tmp_path: Path) -> N
     assert request.base_dockerfile is None
     assert request.resume_from == "pheragent:previous-checkpoint"
     assert request.start_at_block == "02-tests"
-    assert request.llm_stream is True
 
 
 def test_build_without_resume_requires_base_dockerfile(tmp_path: Path) -> None:

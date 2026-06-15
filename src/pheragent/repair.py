@@ -3,18 +3,15 @@ from __future__ import annotations
 import json
 import os
 import re
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
 from .llm_planner import (
-    _chat_completion_request,
-    _env_flag,
-    _maybe_stream_payload,
+    _format_llm_error,
+    _openai_client,
     _parse_json_object,
-    _read_chat_completion_response,
-    _retryable_http_status,
+    _read_streamed_response,
+    _retryable_llm_error,
     _sleep_before_retry,
 )
 from .models import CommandBlock, CommandResult, RepairContext, to_jsonable
@@ -30,7 +27,7 @@ class RepairCommand:
 
 
 @dataclass(slots=True)
-class OpenAIRepairConfig:
+class OpenAIResponsesRepairConfig:
     model: str = "gpt-5.5"
     api_key_env: str = "OPENAI_API_KEY"
     base_url_env: str = "OPENAI_BASE_URL"
@@ -40,11 +37,10 @@ class OpenAIRepairConfig:
     temperature: float = 0.1
     max_retries: int = 3
     retry_delay_s: float = 1.0
-    stream: bool = False
 
 
-class OpenAICompatibleRepairPlanner:
-    def __init__(self, config: OpenAIRepairConfig):
+class OpenAIResponsesRepairPlanner:
+    def __init__(self, config: OpenAIResponsesRepairConfig):
         self.config = config
 
     def suggest(
@@ -61,9 +57,8 @@ class OpenAICompatibleRepairPlanner:
         if not base_url:
             base_url = "https://api.openai.com/v1"
 
-        content = self._post_chat_completion(
-            base_url,
-            api_key,
+        content = self._create_response(
+            _openai_client(base_url=base_url, api_key=api_key, timeout=self.config.timeout),
             self._request_payload(block, result, context),
         )
         return self._parse_repairs(content)
@@ -87,48 +82,32 @@ class OpenAICompatibleRepairPlanner:
             payload["repair_context"] = to_jsonable(context)
         return {
             "model": self.config.model,
+            "instructions": _REPAIR_SYSTEM_PROMPT,
+            "input": json.dumps(payload, ensure_ascii=False, indent=2),
             "temperature": self.config.temperature,
-            "max_completion_tokens": self.config.max_tokens,
-            "response_format": {"type": "json_object"},
-            "messages": [
-                {"role": "system", "content": _REPAIR_SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": json.dumps(payload, ensure_ascii=False, indent=2),
-                },
-            ],
+            "max_output_tokens": self.config.max_tokens,
+            "text": {"format": {"type": "json_object"}},
+            "stream": True,
         }
 
-    def _post_chat_completion(
+    def _create_response(
         self,
-        base_url: str,
-        api_key: str,
+        client,
         payload: dict[str, Any],
     ) -> str:
         content = ""
         max_attempts = max(1, self.config.max_retries)
         last_error: Exception | None = None
         for attempt in range(1, max_attempts + 1):
-            request_payload = _maybe_stream_payload(payload, stream=self.config.stream)
-            request = _chat_completion_request(base_url, api_key, request_payload)
             try:
-                with urllib.request.urlopen(request, timeout=self.config.timeout) as response:
-                    content = _read_chat_completion_response(
-                        response,
-                        stream=self.config.stream,
-                        error_context="LLM repair",
-                    )
+                stream = client.responses.create(**payload)
+                content = _read_streamed_response(stream, error_context="LLM repair")
                 break
-            except urllib.error.HTTPError as exc:
-                detail = exc.read().decode("utf-8", errors="replace")
-                last_error = RuntimeError(
-                    f"LLM repair request failed: HTTP {exc.code}: {detail}"
-                )
-                if not _retryable_http_status(exc.code) or attempt == max_attempts:
-                    raise last_error from exc
-            except (TimeoutError, urllib.error.URLError) as exc:
-                last_error = RuntimeError(f"LLM repair request failed: {exc}")
+            except Exception as exc:
+                last_error = RuntimeError(_format_llm_error("LLM repair", exc))
                 if attempt == max_attempts:
+                    raise last_error from exc
+                if not _retryable_llm_error(exc):
                     raise last_error from exc
             _sleep_before_retry(attempt, self.config.retry_delay_s)
         else:
@@ -170,7 +149,7 @@ class OpenAICompatibleRepairPlanner:
 
 
 class RepairPlanner:
-    def __init__(self, llm_planner: OpenAICompatibleRepairPlanner | None = None):
+    def __init__(self, llm_planner: OpenAIResponsesRepairPlanner | None = None):
         self.llm_planner = llm_planner
         self.last_llm_error: str | None = None
 
@@ -319,7 +298,6 @@ def make_repair_planner(
     max_tokens: int,
     retries: int,
     retry_delay: float,
-    stream: bool,
 ) -> RepairPlanner:
     if mode == "rules":
         return RepairPlanner()
@@ -329,8 +307,8 @@ def make_repair_planner(
     if mode not in {"auto", "llm"}:
         raise ValueError(f"unsupported planner mode for repair: {mode}")
     return RepairPlanner(
-        llm_planner=OpenAICompatibleRepairPlanner(
-            OpenAIRepairConfig(
+        llm_planner=OpenAIResponsesRepairPlanner(
+            OpenAIResponsesRepairConfig(
                 model=(
                     model
                     or os.getenv("PHERAGENT_MODEL")
@@ -344,7 +322,6 @@ def make_repair_planner(
                 max_tokens=min(max_tokens, 2048),
                 max_retries=retries,
                 retry_delay_s=retry_delay,
-                stream=stream or _env_flag("PHERAGENT_LLM_STREAM"),
             )
         )
     )

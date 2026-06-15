@@ -344,7 +344,6 @@ class ProjectBatchBuilder:
             llm_max_tokens=self.base_request.llm_max_tokens,
             llm_retries=self.base_request.llm_retries,
             llm_retry_delay=self.base_request.llm_retry_delay,
-            llm_stream=self.base_request.llm_stream,
             oracle_file=self.base_request.oracle_file,
             oracle_timeout=self.base_request.oracle_timeout,
             resume_from=self.base_request.resume_from,

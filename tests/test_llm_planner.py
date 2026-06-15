@@ -1,12 +1,88 @@
 from __future__ import annotations
 
 import json
-import urllib.error
 from pathlib import Path
+from typing import Any
 
 from pheragent.analyzer import RepoAnalyzer
-from pheragent.llm_planner import OpenAICompatibleBlockPlanner, OpenAIPlannerConfig, make_planner
+from pheragent.llm_planner import (
+    OpenAIResponsesBlockPlanner,
+    OpenAIResponsesPlannerConfig,
+    _openai_client,
+    make_planner,
+)
 from pheragent.planner import RuleBasedBlockPlanner
+
+
+class FakeEvent:
+    def __init__(self, event_type: str, **values: object):
+        self.type = event_type
+        for name, value in values.items():
+            setattr(self, name, value)
+
+
+class FakeStream:
+    def __init__(self, events: list[FakeEvent]):
+        self.events = events
+        self.closed = False
+
+    def __iter__(self):
+        return iter(self.events)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeResponses:
+    def __init__(self, events: list[FakeEvent], *, failures_before_success: int = 0):
+        self.events = events
+        self.failures_before_success = failures_before_success
+        self.calls: list[dict[str, Any]] = []
+
+    def create(self, **payload):
+        self.calls.append(payload)
+        if len(self.calls) <= self.failures_before_success:
+            raise TimeoutError("temporary")
+        return FakeStream(self.events)
+
+
+class FakeOpenAI:
+    clients: list[FakeOpenAI] = []
+    events: list[FakeEvent] = []
+    failures_before_success = 0
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.responses = FakeResponses(
+            self.events,
+            failures_before_success=self.failures_before_success,
+        )
+        type(self).clients.append(self)
+
+
+def _planner_response_events() -> list[FakeEvent]:
+    content = json.dumps(
+        {
+            "blocks": [
+                {
+                    "id": "00-custom",
+                    "order": 0,
+                    "title": "Custom",
+                    "goal": "custom setup",
+                    "script": "echo custom",
+                    "validation_command": (
+                        'uv run python -c "import flask; print(flask.__version__)"'
+                    ),
+                }
+            ]
+        }
+    )
+    midpoint = len(content) // 2
+    return [
+        FakeEvent("response.output_text.delta", delta=content[:midpoint]),
+        FakeEvent("response.output_text.delta", delta=content[midpoint:]),
+        FakeEvent("response.completed"),
+    ]
 
 
 def test_make_planner_auto_uses_rules_without_api_key(monkeypatch) -> None:
@@ -22,65 +98,22 @@ def test_make_planner_auto_uses_rules_without_api_key(monkeypatch) -> None:
         max_tokens=4096,
         retries=3,
         retry_delay=1.0,
-        stream=False,
     )
 
     assert isinstance(planner, RuleBasedBlockPlanner)
 
 
-def test_openai_compatible_planner_parses_chat_completion(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
+def test_openai_responses_planner_uses_sdk_streaming(tmp_path: Path, monkeypatch) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
     context = RepoAnalyzer().analyze(tmp_path)
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://example.test/v1")
-    requests: list[object] = []
+    FakeOpenAI.clients = []
+    FakeOpenAI.events = _planner_response_events()
+    FakeOpenAI.failures_before_success = 0
+    monkeypatch.setattr("pheragent.llm_planner._openai_client", FakeOpenAI)
 
-    class FakeResponse:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb) -> None:
-            pass
-
-        def read(self) -> bytes:
-            return json.dumps(
-                {
-                    "choices": [
-                        {
-                            "message": {
-                                "content": json.dumps(
-                                    {
-                                        "blocks": [
-                                            {
-                                                "id": "00-custom",
-                                                "order": 0,
-                                                "title": "Custom",
-                                                "goal": "custom setup",
-                                                "script": "echo custom",
-                                                "validation_command": (
-                                                    'uv run python -c "import flask; '
-                                                    'print(flask.__version__)"'
-                                                ),
-                                            }
-                                        ]
-                                    }
-                                )
-                            }
-                        }
-                    ]
-                }
-            ).encode("utf-8")
-
-    def fake_urlopen(request, timeout):
-        del timeout
-        requests.append(request)
-        return FakeResponse()
-
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    planner = OpenAICompatibleBlockPlanner(OpenAIPlannerConfig(model="gpt-5.5"))
+    planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
 
     blocks = planner.plan(context)
 
@@ -88,147 +121,73 @@ def test_openai_compatible_planner_parses_chat_completion(
     assert blocks[0].script.startswith("#!/bin/sh")
     assert "echo custom" in blocks[0].script
     assert blocks[0].validation_command == 'uv run python -c "import flask; print(flask)"'
-    request = requests[0]
-    assert request.full_url == "https://example.test/v1/chat/completions"
-    assert request.headers["Authorization"] == "Bearer test-key"
-    payload = json.loads(request.data.decode("utf-8"))
+
+    client = FakeOpenAI.clients[0]
+    assert client.kwargs["api_key"] == "test-key"
+    assert client.kwargs["base_url"] == "https://example.test/v1"
+    assert client.kwargs["timeout"] == 120.0
+
+    payload = client.responses.calls[0]
     assert payload["model"] == "gpt-5.5"
-    assert payload["response_format"] == {"type": "json_object"}
-
-
-def test_openai_compatible_planner_retries_transient_request_failure(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
-    context = RepoAnalyzer().analyze(tmp_path)
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.setenv("OPENAI_BASE_URL", "https://example.test/v1")
-    calls = 0
-
-    class FakeResponse:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb) -> None:
-            pass
-
-        def read(self) -> bytes:
-            return json.dumps(
-                {
-                    "choices": [
-                        {
-                            "message": {
-                                "content": json.dumps(
-                                    {
-                                        "blocks": [
-                                            {
-                                                "id": "00-custom",
-                                                "order": 0,
-                                                "title": "Custom",
-                                                "goal": "custom setup",
-                                                "script": "echo custom",
-                                            }
-                                        ]
-                                    }
-                                )
-                            }
-                        }
-                    ]
-                }
-            ).encode("utf-8")
-
-    def fake_urlopen(request, timeout):
-        nonlocal calls
-        del request, timeout
-        calls += 1
-        if calls == 1:
-            raise urllib.error.URLError("temporary")
-        return FakeResponse()
-
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    planner = OpenAICompatibleBlockPlanner(
-        OpenAIPlannerConfig(model="gpt-5.5", max_retries=2, retry_delay_s=0)
-    )
-
-    blocks = planner.plan(context)
-
-    assert calls == 2
-    assert blocks[0].id == "00-custom"
-
-
-def test_openai_compatible_planner_parses_streaming_chat_completion(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
-    context = RepoAnalyzer().analyze(tmp_path)
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.setenv("OPENAI_BASE_URL", "https://example.test/v1")
-    requests: list[object] = []
-
-    class FakeResponse:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb) -> None:
-            pass
-
-        def __iter__(self):
-            content = json.dumps(
-                {
-                    "blocks": [
-                        {
-                            "id": "00-custom",
-                            "order": 0,
-                            "title": "Custom",
-                            "goal": "custom setup",
-                            "script": "echo custom",
-                        }
-                    ]
-                }
-            )
-            midpoint = len(content) // 2
-            for chunk in (content[:midpoint], content[midpoint:]):
-                yield (
-                    "data: "
-                    + json.dumps({"choices": [{"delta": {"content": chunk}}]})
-                    + "\n\n"
-                ).encode("utf-8")
-            yield b"data: [DONE]\n\n"
-
-    def fake_urlopen(request, timeout):
-        del timeout
-        requests.append(request)
-        return FakeResponse()
-
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    planner = OpenAICompatibleBlockPlanner(
-        OpenAIPlannerConfig(model="gpt-5.5", stream=True)
-    )
-
-    blocks = planner.plan(context)
-
-    assert blocks[0].id == "00-custom"
-    payload = json.loads(requests[0].data.decode("utf-8"))
     assert payload["stream"] is True
+    assert payload["text"] == {"format": {"type": "json_object"}}
+    assert payload["max_output_tokens"] == 4096
+    assert "messages" not in payload
+    assert "response_format" not in payload
+    assert "repo_context" in json.loads(payload["input"])
 
 
-def test_openai_compatible_planner_auto_falls_back_after_retries(
+def test_openai_client_disables_sdk_retries() -> None:
+    client = _openai_client(
+        base_url="https://example.test/v1",
+        api_key="test-key",
+        timeout=120.0,
+    )
+
+    assert client.max_retries == 0
+
+
+def test_openai_responses_planner_retries_transient_sdk_failure(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
     context = RepoAnalyzer().analyze(tmp_path)
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    FakeOpenAI.clients = []
+    FakeOpenAI.events = _planner_response_events()
+    FakeOpenAI.failures_before_success = 1
+    monkeypatch.setattr("pheragent.llm_planner._openai_client", FakeOpenAI)
+    planner = OpenAIResponsesBlockPlanner(
+        OpenAIResponsesPlannerConfig(model="gpt-5.5", max_retries=2, retry_delay_s=0)
+    )
 
-    def fake_urlopen(request, timeout):
-        del request, timeout
-        raise urllib.error.URLError("temporary")
+    blocks = planner.plan(context)
 
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    planner = OpenAICompatibleBlockPlanner(
-        OpenAIPlannerConfig(
+    assert len(FakeOpenAI.clients[0].responses.calls) == 2
+    assert blocks[0].id == "00-custom"
+
+
+def test_openai_responses_planner_auto_falls_back_after_retries(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class FailingResponses:
+        def create(self, **payload):
+            del payload
+            raise TimeoutError("temporary")
+
+    class FailingOpenAI:
+        def __init__(self, **kwargs):
+            del kwargs
+            self.responses = FailingResponses()
+
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    context = RepoAnalyzer().analyze(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr("pheragent.llm_planner._openai_client", FailingOpenAI)
+    planner = OpenAIResponsesBlockPlanner(
+        OpenAIResponsesPlannerConfig(
             model="gpt-5.5",
             max_retries=1,
             retry_delay_s=0,
@@ -242,8 +201,8 @@ def test_openai_compatible_planner_auto_falls_back_after_retries(
     assert any(block.id.endswith("python-deps") for block in blocks)
 
 
-def test_openai_compatible_planner_uses_safe_preflight_script() -> None:
-    planner = OpenAICompatibleBlockPlanner(OpenAIPlannerConfig(model="gpt-5.5"))
+def test_openai_responses_planner_uses_safe_preflight_script() -> None:
+    planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
 
     blocks = planner._parse_blocks(
         json.dumps(
@@ -269,8 +228,8 @@ def test_openai_compatible_planner_uses_safe_preflight_script() -> None:
     assert "command -v python3" in blocks[0].script
 
 
-def test_openai_compatible_planner_uses_safe_python_dependency_script() -> None:
-    planner = OpenAICompatibleBlockPlanner(OpenAIPlannerConfig(model="gpt-5.5"))
+def test_openai_responses_planner_uses_safe_python_dependency_script() -> None:
+    planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
 
     blocks = planner._parse_blocks(
         json.dumps(

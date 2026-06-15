@@ -5,8 +5,8 @@ from pathlib import Path
 
 from pheragent.models import BlockExecution, CommandBlock, CommandResult, RepairContext, RepoContext
 from pheragent.repair import (
-    OpenAICompatibleRepairPlanner,
-    OpenAIRepairConfig,
+    OpenAIResponsesRepairConfig,
+    OpenAIResponsesRepairPlanner,
     RepairCommand,
     RepairPlanner,
     make_repair_planner,
@@ -155,8 +155,8 @@ def test_repair_planner_records_llm_failure_for_unknown_errors() -> None:
     assert planner.last_llm_error == "proxy unavailable"
 
 
-def test_openai_repair_parser_filters_dangerous_commands() -> None:
-    planner = OpenAICompatibleRepairPlanner(OpenAIRepairConfig())
+def test_openai_responses_repair_parser_filters_dangerous_commands() -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
 
     repairs = planner._parse_repairs(
         """
@@ -181,8 +181,8 @@ def test_openai_repair_parser_filters_dangerous_commands() -> None:
     assert repairs[0].title == "Good"
 
 
-def test_openai_repair_payload_includes_repair_context(tmp_path: Path) -> None:
-    planner = OpenAICompatibleRepairPlanner(OpenAIRepairConfig())
+def test_openai_responses_repair_payload_includes_repair_context(tmp_path: Path) -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
     block = CommandBlock(
         id="02-build",
         title="Build",
@@ -220,12 +220,14 @@ def test_openai_repair_payload_includes_repair_context(tmp_path: Path) -> None:
     )
 
     payload = planner._request_payload(block, result, context)
-    content = json.loads(payload["messages"][1]["content"])
+    content = json.loads(payload["input"])
 
     assert content["repair_context"]["checkpoint_before"] == "fake:baseline"
     assert "tool:cmake=missing" in content["repair_context"]["repo_context"]["runtime_notes"]
     assert content["repair_context"]["previous_blocks"][0]["id"] == "00-preflight"
     assert content["repair_context"]["recent_executions"][0]["phase"] == "block"
+    assert payload["stream"] is True
+    assert payload["text"] == {"format": {"type": "json_object"}}
 
 
 def test_make_repair_planner_auto_uses_rules_without_api_key(monkeypatch) -> None:
@@ -241,7 +243,6 @@ def test_make_repair_planner_auto_uses_rules_without_api_key(monkeypatch) -> Non
         max_tokens=4096,
         retries=3,
         retry_delay=1,
-        stream=False,
     )
 
     assert planner.llm_planner is None

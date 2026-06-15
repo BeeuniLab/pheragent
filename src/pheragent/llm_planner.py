@@ -4,8 +4,6 @@ import json
 import os
 import re
 import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,7 +13,7 @@ from .utils import shell_script, slugify
 
 
 @dataclass(slots=True)
-class OpenAIPlannerConfig:
+class OpenAIResponsesPlannerConfig:
     model: str = "gpt-5.5"
     api_key_env: str = "OPENAI_API_KEY"
     base_url_env: str = "OPENAI_BASE_URL"
@@ -25,14 +23,13 @@ class OpenAIPlannerConfig:
     temperature: float = 0.1
     max_retries: int = 3
     retry_delay_s: float = 1.0
-    stream: bool = False
     fallback_on_error: bool = False
 
 
-class OpenAICompatibleBlockPlanner:
+class OpenAIResponsesBlockPlanner:
     def __init__(
         self,
-        config: OpenAIPlannerConfig,
+        config: OpenAIResponsesPlannerConfig,
         *,
         fallback: BlockPlanner | None = None,
     ):
@@ -48,10 +45,9 @@ class OpenAICompatibleBlockPlanner:
             base_url = "https://api.openai.com/v1"
 
         try:
-            content = self._post_chat_completion(
-                base_url,
-                api_key,
-                self._request_payload(context, token_param="max_completion_tokens"),
+            content = self._create_response(
+                _openai_client(base_url=base_url, api_key=api_key, timeout=self.config.timeout),
+                self._request_payload(context),
             )
             return self._parse_blocks(content)
         except Exception:
@@ -59,60 +55,44 @@ class OpenAICompatibleBlockPlanner:
                 return self.fallback.plan(context)
             raise
 
-    def _request_payload(self, context: RepoContext, *, token_param: str) -> dict[str, Any]:
+    def _request_payload(self, context: RepoContext) -> dict[str, Any]:
         return {
             "model": self.config.model,
-            "temperature": self.config.temperature,
-            token_param: self.config.max_tokens,
-            "response_format": {"type": "json_object"},
-            "messages": [
-                {"role": "system", "content": _SYSTEM_PROMPT},
+            "instructions": _SYSTEM_PROMPT,
+            "input": json.dumps(
                 {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "repo_context": to_jsonable(context),
-                            "fallback_blocks": [
-                                to_jsonable(block) for block in self.fallback.plan(context)
-                            ],
-                        },
-                        ensure_ascii=False,
-                        indent=2,
-                    ),
+                    "repo_context": to_jsonable(context),
+                    "fallback_blocks": [
+                        to_jsonable(block) for block in self.fallback.plan(context)
+                    ],
                 },
-            ],
+                ensure_ascii=False,
+                indent=2,
+            ),
+            "temperature": self.config.temperature,
+            "max_output_tokens": self.config.max_tokens,
+            "text": {"format": {"type": "json_object"}},
+            "stream": True,
         }
 
-    def _post_chat_completion(
+    def _create_response(
         self,
-        base_url: str,
-        api_key: str,
+        client: Any,
         payload: dict[str, Any],
     ) -> str:
         content = ""
         max_attempts = max(1, self.config.max_retries)
         last_error: Exception | None = None
         for attempt in range(1, max_attempts + 1):
-            request_payload = _maybe_stream_payload(payload, stream=self.config.stream)
-            request = _chat_completion_request(base_url, api_key, request_payload)
             try:
-                with urllib.request.urlopen(request, timeout=self.config.timeout) as response:
-                    content = _read_chat_completion_response(
-                        response,
-                        stream=self.config.stream,
-                        error_context="LLM planner",
-                    )
+                stream = client.responses.create(**payload)
+                content = _read_streamed_response(stream, error_context="LLM planner")
                 break
-            except urllib.error.HTTPError as exc:
-                detail = exc.read().decode("utf-8", errors="replace")
-                last_error = RuntimeError(
-                    f"LLM planner request failed: HTTP {exc.code}: {detail}"
-                )
-                if not _retryable_http_status(exc.code) or attempt == max_attempts:
-                    raise last_error from exc
-            except (TimeoutError, urllib.error.URLError) as exc:
-                last_error = RuntimeError(f"LLM planner request failed: {exc}")
+            except Exception as exc:
+                last_error = RuntimeError(_format_llm_error("LLM planner", exc))
                 if attempt == max_attempts:
+                    raise last_error from exc
+                if not _retryable_llm_error(exc):
                     raise last_error from exc
             _sleep_before_retry(attempt, self.config.retry_delay_s)
         else:
@@ -172,7 +152,6 @@ def make_planner(
     max_tokens: int,
     retries: int,
     retry_delay: float,
-    stream: bool,
 ) -> BlockPlanner:
     fallback = RuleBasedBlockPlanner()
     if mode == "rules":
@@ -182,8 +161,8 @@ def make_planner(
         return fallback
     if mode not in {"auto", "llm"}:
         raise ValueError(f"unsupported planner mode: {mode}")
-    return OpenAICompatibleBlockPlanner(
-        OpenAIPlannerConfig(
+    return OpenAIResponsesBlockPlanner(
+        OpenAIResponsesPlannerConfig(
             model=model or os.getenv("PHERAGENT_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.5",
             api_key_env=api_key_env,
             base_url_env=base_url_env,
@@ -192,92 +171,93 @@ def make_planner(
             max_tokens=max_tokens,
             max_retries=retries,
             retry_delay_s=retry_delay,
-            stream=stream or _env_flag("PHERAGENT_LLM_STREAM"),
             fallback_on_error=mode == "auto",
         ),
         fallback=fallback,
     )
 
 
-def _chat_completion_request(
-    base_url: str,
-    api_key: str,
-    payload: dict[str, Any],
-) -> urllib.request.Request:
-    return urllib.request.Request(
-        url=f"{base_url}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "User-Agent": "pheragent/0.1",
-        },
-        data=json.dumps(payload).encode("utf-8"),
-        method="POST",
+def _openai_client(*, base_url: str, api_key: str, timeout: float) -> Any:
+    try:
+        from openai import OpenAI
+    except Exception as exc:
+        raise RuntimeError(f"failed to import OpenAI Python SDK: {exc}") from exc
+
+    return OpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        timeout=timeout,
+        max_retries=0,
     )
 
 
-def _maybe_stream_payload(payload: dict[str, Any], *, stream: bool) -> dict[str, Any]:
-    if not stream:
-        return payload
-    streamed = dict(payload)
-    streamed["stream"] = True
-    return streamed
-
-
-def _read_chat_completion_response(response, *, stream: bool, error_context: str) -> str:
-    if stream:
-        return _read_streaming_chat_completion(response, error_context=error_context)
-    body = response.read().decode("utf-8", errors="replace")
-    return _extract_chat_completion_content(body, error_context=error_context)
-
-
-def _read_streaming_chat_completion(response, *, error_context: str) -> str:
+def _read_streamed_response(stream: Any, *, error_context: str) -> str:
     chunks: list[str] = []
-    for raw_line in response:
-        line = _decode_sse_line(raw_line)
-        if not line or line.startswith(":") or not line.startswith("data:"):
-            continue
-        data = line.removeprefix("data:").strip()
-        if data == "[DONE]":
-            break
-        try:
-            event = json.loads(data)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                f"{error_context} returned invalid stream chunk: {data[:500]}"
-            ) from exc
-        choices = event.get("choices")
-        if not isinstance(choices, list) or not choices:
-            continue
-        choice = choices[0]
-        if not isinstance(choice, dict):
-            continue
-        delta = choice.get("delta")
-        if isinstance(delta, dict) and delta.get("content") is not None:
-            chunks.append(str(delta["content"]))
-        message = choice.get("message")
-        if isinstance(message, dict) and message.get("content") is not None:
-            chunks.append(str(message["content"]))
+    done_text: str | None = None
+    completed_text: str | None = None
+    try:
+        for event in stream:
+            event_type = _event_value(event, "type")
+            if event_type == "response.output_text.delta":
+                delta = _event_value(event, "delta")
+                if delta is not None:
+                    chunks.append(str(delta))
+            elif event_type == "response.output_text.done":
+                text = _event_value(event, "text")
+                if text is not None:
+                    done_text = str(text)
+            elif event_type == "response.completed":
+                completed_text = _extract_response_output_text(_event_value(event, "response"))
+            elif event_type in {"error", "response.failed"}:
+                raise RuntimeError(f"{error_context} stream failed: {_event_error_text(event)}")
+    finally:
+        close = getattr(stream, "close", None)
+        if callable(close):
+            close()
     content = "".join(chunks)
+    if not content:
+        content = done_text or completed_text or ""
     if not content:
         raise RuntimeError(f"{error_context} stream returned no content")
     return content
 
 
-def _decode_sse_line(raw_line: bytes | str) -> str:
-    if isinstance(raw_line, bytes):
-        return raw_line.decode("utf-8", errors="replace").strip()
-    return raw_line.strip()
+def _event_value(event: Any, name: str) -> Any:
+    if isinstance(event, dict):
+        return event.get(name)
+    return getattr(event, name, None)
 
 
-def _extract_chat_completion_content(body: str, *, error_context: str) -> str:
-    try:
-        data = json.loads(body)
-        return str(data["choices"][0]["message"]["content"])
-    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-        raise RuntimeError(
-            f"{error_context} returned an unexpected response: {body[:1000]}"
-        ) from exc
+def _event_error_text(event: Any) -> str:
+    error = _event_value(event, "error")
+    if error is None:
+        return str(event)
+    if isinstance(error, dict):
+        return str(error.get("message") or error)
+    return str(getattr(error, "message", None) or error)
+
+
+def _extract_response_output_text(response: Any) -> str:
+    output_text = _event_value(response, "output_text")
+    if isinstance(output_text, str):
+        return output_text
+
+    if not isinstance(response, dict) and hasattr(response, "model_dump"):
+        response = response.model_dump()
+    output = _event_value(response, "output")
+    if not isinstance(output, list):
+        return ""
+    text_parts: list[str] = []
+    for item in output:
+        content = _event_value(item, "content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if _event_value(part, "type") == "output_text":
+                text = _event_value(part, "text")
+                if text is not None:
+                    text_parts.append(str(text))
+    return "".join(text_parts)
 
 
 def _retryable_http_status(status: int) -> bool:
@@ -290,8 +270,35 @@ def _sleep_before_retry(attempt: int, retry_delay_s: float) -> None:
         time.sleep(delay)
 
 
-def _env_flag(name: str) -> bool:
-    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+def _retryable_llm_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        return _retryable_http_status(status_code)
+    openai_error_name = type(exc).__name__
+    if openai_error_name in {"APIConnectionError", "APITimeoutError"}:
+        return True
+    return isinstance(
+        exc,
+        (TimeoutError, ConnectionError, OSError),
+    )
+
+
+def _format_llm_error(error_context: str, exc: Exception) -> str:
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        detail = _api_status_detail(exc)
+        return f"{error_context} request failed: HTTP {status_code}: {detail}"
+    if type(exc).__name__ == "APIError":
+        return f"{error_context} request failed: {exc}"
+    return f"{error_context} request failed: {exc}"
+
+
+def _api_status_detail(exc: Exception) -> str:
+    response = getattr(exc, "response", None)
+    detail = getattr(response, "text", None)
+    if detail:
+        return str(detail)[:1000]
+    return str(exc)
 
 
 def _parse_json_object(content: str) -> dict[str, Any]:
