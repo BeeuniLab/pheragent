@@ -1,0 +1,45 @@
+# Local secrets and machine-specific config
+.env
+.env.*
+!.env.example
+
+# Python / uv environments
+.venv/
+venv/
+env/
+.python-version
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test, lint, type-check, and coverage caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyre/
+.tox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# pheragent run state and copied target repos
+.pheragent/
+**/.pheragent/
+projects/
+
+# Repo-local caches created inside target projects
+.cache/
+**/.cache/
+
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
