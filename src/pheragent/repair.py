@@ -429,6 +429,8 @@ def _heuristic_repair_hints(block: CommandBlock, result: CommandResult) -> list[
         suggestions.append(_apt_repair("Install OpenSSL headers", "libssl-dev"))
     if "ffi.h" in output or "libffi" in output:
         suggestions.append(_apt_repair("Install libffi headers", "libffi-dev"))
+    if _needs_qt_opencv_runtime_hint(output):
+        suggestions.append(_qt_opencv_runtime_repair())
     if "cargo: not found" in output and block.id.endswith("rust-deps"):
         suggestions.append(_apt_repair("Install Rust toolchain", "cargo rustc"))
     if "certificate verify failed" in output or "ca certificates" in output:
@@ -561,6 +563,25 @@ def _apt_repair(title: str, packages: str) -> RepairCommand:
     return RepairCommand(title=title, command=command, patch_script=command)
 
 
+def _qt_opencv_runtime_repair() -> RepairCommand:
+    packages = (
+        "libgl1 libegl1 libxkbcommon0 libxcb-cursor0 libdbus-1-3 "
+        "libfontconfig1 libxrender1 libxext6 libsm6"
+    )
+    command = (
+        "if command -v apt-get >/dev/null 2>&1; then "
+        "export DEBIAN_FRONTEND=noninteractive; apt-get update && "
+        f"(apt-get install -y --no-install-recommends {packages} libglib2.0-0 || "
+        f"apt-get install -y --no-install-recommends {packages} libglib2.0-0t64); "
+        "else echo 'apt-get not available for repair' >&2; exit 127; fi"
+    )
+    return RepairCommand(
+        title="Install Qt/OpenCV runtime libraries",
+        command=command,
+        patch_script=command,
+    )
+
+
 def _python_venv_repair_command(output: str) -> tuple[str, str]:
     package_match = re.search(r"apt\s+install\s+([a-z0-9.+-]+-venv)", output)
     package = package_match.group(1) if package_match else "python3-venv"
@@ -605,6 +626,21 @@ def _dedupe_probes(probes: list[RepairProbeCommand]) -> list[RepairProbeCommand]
         seen.add(probe.command)
         deduped.append(probe)
     return deduped
+
+
+def _needs_qt_opencv_runtime_hint(output: str) -> bool:
+    missing_runtime_tokens = (
+        "libgl.so.1",
+        "libegl.so.1",
+        "libxkbcommon.so.0",
+        "libglib-2.0.so.0",
+        "libxcb-cursor",
+    )
+    package_tokens = ("pyside6", "pyqt", "qfluentwidgets", "opencv", "cv2")
+    return any(token in output for token in missing_runtime_tokens) or (
+        "cannot open shared object file" in output
+        and any(token in output for token in package_tokens)
+    )
 
 
 def _uv_tool_venv_command() -> str:

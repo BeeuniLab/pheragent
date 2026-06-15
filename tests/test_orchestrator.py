@@ -242,6 +242,215 @@ def test_environment_builder_passes_probe_results_to_llm_repair(tmp_path: Path) 
     assert any(execution.phase == "probe" for execution in result.executions)
 
 
+def test_environment_builder_stops_probing_after_empty_llm_probe_response(
+    tmp_path: Path,
+) -> None:
+    class EmptyProbeRuntime(FakeRuntime):
+        def __init__(self, request: BuildRequest, run_id: str):
+            super().__init__(request, run_id)
+            self.current_has_second_fix = False
+
+        def recreate_from(self, image_ref: str) -> str:
+            self.current_has_second_fix = False
+            return super().recreate_from(image_ref)
+
+        def execute_script(self, script_path: Path, *, timeout: float) -> CommandResult:
+            del timeout
+            self.block_runs += 1
+            script = script_path.read_text(encoding="utf-8")
+            if "first-fix" not in script:
+                return CommandResult(exit_code=1, stderr="first missing")
+            self.current_has_second_fix = "second-fix" in script
+            return CommandResult(exit_code=0, stdout="block ok")
+
+        def execute_command(self, command: str, *, timeout: float) -> CommandResult:
+            del timeout
+            if "container preflight" in command:
+                return CommandResult(exit_code=0, stdout="tool:python3=/usr/bin/python3\n")
+            if command == "validate":
+                if self.current_has_second_fix:
+                    return CommandResult(exit_code=0, stdout="validation ok")
+                return CommandResult(exit_code=1, stderr="validation needs second fix")
+            if command in {"first-repair", "second-repair"}:
+                return CommandResult(exit_code=0, stdout="repaired")
+            return CommandResult(exit_code=0, stdout="ok")
+
+    class EmptyProbeLLMRepairPlanner:
+        def __init__(self) -> None:
+            self.probe_calls = 0
+            self.repair_calls = 0
+            self.last_probe_raw_response: str | None = None
+            self.last_probe_parse_diagnostics: list[str] = []
+            self.last_raw_response: str | None = None
+            self.last_parse_diagnostics: list[str] = []
+
+        def propose_probes(self, block, result, *, context=None, heuristic_hints=None):
+            del block, result, context, heuristic_hints
+            self.probe_calls += 1
+            self.last_probe_raw_response = '{"probes":[]}'
+            self.last_probe_parse_diagnostics = ["probes list is empty"]
+            return []
+
+        def suggest(self, block, result, *, context=None, heuristic_hints=None):
+            del block, result, context, heuristic_hints
+            self.repair_calls += 1
+            if self.repair_calls == 1:
+                self.last_raw_response = '{"repairs":[{"title":"First fix"}]}'
+                return [
+                    RepairCommand(
+                        title="First fix",
+                        command="first-repair",
+                        patch_script="echo first-fix",
+                    )
+                ]
+            self.last_raw_response = '{"repairs":[{"title":"Second fix"}]}'
+            return [
+                RepairCommand(
+                    title="Second fix",
+                    command="second-repair",
+                    patch_script="echo second-fix",
+                )
+            ]
+
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="empty-probe",
+        max_repair_attempts=2,
+        max_probe_failures=5,
+    )
+    planner = StaticPlanner(
+        [
+            CommandBlock(
+                id="01-python-deps",
+                title="Python Dependencies",
+                goal="install",
+                script="#!/bin/sh\necho python-deps\n",
+                validation_command="validate",
+                order=1,
+            )
+        ]
+    )
+    llm_planner = EmptyProbeLLMRepairPlanner()
+
+    result = EnvironmentBuilder(
+        request,
+        planner=planner,
+        repair_planner=RepairPlanner(llm_planner=llm_planner),
+        runtime_factory=EmptyProbeRuntime,
+    ).build()
+
+    assert result.ok
+    assert llm_planner.probe_calls == 1
+    assert llm_planner.repair_calls == 2
+    llm_probe_executions = [
+        execution for execution in result.executions if execution.phase == "llm_probe"
+    ]
+    assert [execution.attempt for execution in llm_probe_executions] == [1]
+
+
+def test_environment_builder_tests_later_repairs_after_existing_patches(
+    tmp_path: Path,
+) -> None:
+    class LayeredRuntime(FakeRuntime):
+        def __init__(self, request: BuildRequest, run_id: str):
+            super().__init__(request, run_id)
+            self.current_has_first_fix = False
+            self.current_has_second_fix = False
+
+        def recreate_from(self, image_ref: str) -> str:
+            self.current_has_first_fix = False
+            self.current_has_second_fix = False
+            return super().recreate_from(image_ref)
+
+        def execute_script(self, script_path: Path, *, timeout: float) -> CommandResult:
+            del timeout
+            self.block_runs += 1
+            script = script_path.read_text(encoding="utf-8")
+            if "first-fix" not in script:
+                return CommandResult(exit_code=1, stderr="first missing")
+            self.current_has_first_fix = True
+            self.current_has_second_fix = "second-fix" in script
+            return CommandResult(exit_code=0, stdout="block ok")
+
+        def execute_command(self, command: str, *, timeout: float) -> CommandResult:
+            del timeout
+            if "container preflight" in command:
+                return CommandResult(exit_code=0, stdout="tool:python3=/usr/bin/python3\n")
+            if command == "validate":
+                if self.current_has_second_fix:
+                    return CommandResult(exit_code=0, stdout="validation ok")
+                return CommandResult(exit_code=1, stderr="second missing")
+            if command == "first-repair":
+                return CommandResult(exit_code=0, stdout="first repaired")
+            if command == "second-repair":
+                if self.current_has_first_fix:
+                    return CommandResult(exit_code=0, stdout="second repaired")
+                return CommandResult(exit_code=1, stderr="first fix not applied")
+            return CommandResult(exit_code=0, stdout="ok")
+
+    class LayeredRepairPlanner:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def suggest(self, block, result, *, context=None, heuristic_hints=None):
+            del block, result, context, heuristic_hints
+            self.calls += 1
+            if self.calls == 1:
+                return [
+                    RepairCommand(
+                        title="First fix",
+                        command="first-repair",
+                        patch_script="echo first-fix",
+                    )
+                ]
+            return [
+                RepairCommand(
+                    title="Second fix",
+                    command="second-repair",
+                    patch_script="echo second-fix",
+                )
+            ]
+
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="layered-repair",
+        max_repair_attempts=2,
+    )
+    planner = StaticPlanner(
+        [
+            CommandBlock(
+                id="01-python-deps",
+                title="Python Dependencies",
+                goal="install",
+                script="#!/bin/sh\necho python-deps\n",
+                validation_command="validate",
+                order=1,
+            )
+        ]
+    )
+
+    result = EnvironmentBuilder(
+        request,
+        planner=planner,
+        repair_planner=RepairPlanner(llm_planner=LayeredRepairPlanner()),
+        runtime_factory=LayeredRuntime,
+    ).build()
+
+    assert result.ok
+    assert any(execution.phase == "repair_prep" for execution in result.executions)
+    script = (result.scripts_dir / "01-python-deps.sh").read_text(encoding="utf-8")
+    assert "first-fix" in script
+    assert "second-fix" in script
+
+
 class StaticPlanner:
     def __init__(self, blocks: list[CommandBlock]):
         self.blocks = blocks

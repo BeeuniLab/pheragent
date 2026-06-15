@@ -109,6 +109,31 @@ def test_repair_hints_install_matching_python_venv_package() -> None:
     assert "python3.12-venv" in suggestions[0].patch_script
 
 
+def test_repair_hints_include_qt_opencv_runtime_bundle() -> None:
+    block = CommandBlock(
+        id="04-build-test-prep",
+        title="Build Test Prep",
+        goal="Run tests",
+        script="#!/bin/sh\n.venv/bin/python -m pytest --collect-only\n",
+    )
+    result = CommandResult(
+        exit_code=1,
+        stderr="ImportError: libGL.so.1: cannot open shared object file",
+    )
+
+    suggestions = _heuristic_repair_hints(block, result)
+
+    qt_hint = next(
+        suggestion
+        for suggestion in suggestions
+        if suggestion.title == "Install Qt/OpenCV runtime libraries"
+    )
+    assert "libgl1" in qt_hint.command
+    assert "libegl1" in qt_hint.command
+    assert "libxkbcommon0" in qt_hint.command
+    assert "libglib2.0-0t64" in qt_hint.command
+
+
 def test_repair_hints_relax_dunder_version_validation() -> None:
     block = CommandBlock(
         id="02-python-deps",

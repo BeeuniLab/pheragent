@@ -335,11 +335,14 @@ class EnvironmentBuilder:
             self.store.update_block(block)
             self._emit(f"run {self.run_id}: block {block.id} checkpoint {checkpoint.image_ref}")
             return True, checkpoint.image_ref
+        last_failure_phase = "block"
         if last_result.ok and validation_result is not None:
             last_result = validation_result
+            last_failure_phase = "validation"
 
         probe_failures = 0
         max_probe_failures = max(0, self.request.max_probe_failures)
+        probe_disabled = max_probe_failures == 0
         for repair_attempt in range(1, self.request.max_repair_attempts + 1):
             repair_context = self._repair_context(
                 repo_context=repo_context,
@@ -348,7 +351,7 @@ class EnvironmentBuilder:
                 executions=executions,
             )
             probes: list[RepairProbeCommand] = []
-            if max_probe_failures > 0 and probe_failures < max_probe_failures:
+            if not probe_disabled and probe_failures < max_probe_failures:
                 probes = self.repair_planner.propose_probes(
                     block,
                     last_result,
@@ -377,6 +380,16 @@ class EnvironmentBuilder:
                         f"run {self.run_id}: block {block.id} continue repair without probes"
                     )
                     probes = []
+                elif (
+                    not probes
+                    and getattr(self.repair_planner, "last_probe_raw_response", None)
+                    is not None
+                ):
+                    probe_disabled = True
+                    self._emit(
+                        f"run {self.run_id}: block {block.id} LLM requested no probes; "
+                        "skip future probes"
+                    )
             probe_results = self._run_repair_probes(
                 runtime=runtime,
                 block=block,
@@ -418,6 +431,24 @@ class EnvironmentBuilder:
             repair = suggestions[min(repair_attempt - 1, len(suggestions) - 1)]
             self._emit(f"run {self.run_id}: block {block.id} repair attempt {repair_attempt}")
             runtime.recreate_from(baseline_image)
+            if last_failure_phase == "validation" and block.repair_attempts > 0:
+                prep_result = runtime.execute_script(
+                    self.store.script_path(block.id),
+                    timeout=self.request.command_timeout,
+                )
+                prep_execution = self._execution_from_result(
+                    block_id=block.id,
+                    phase="repair_prep",
+                    attempt=repair_attempt,
+                    command_result=prep_result,
+                    checkpoint_before=baseline_image,
+                )
+                executions.append(prep_execution)
+                self.store.append_execution(prep_execution)
+                if not prep_result.ok:
+                    last_result = prep_result
+                    last_failure_phase = "block"
+                    continue
             repair_result = runtime.execute_command(
                 repair.command,
                 timeout=self.request.command_timeout,
@@ -434,6 +465,7 @@ class EnvironmentBuilder:
             self.store.append_execution(execution)
             if not repair_result.ok:
                 last_result = repair_result
+                last_failure_phase = "repair"
                 continue
 
             block = self.repair_planner.patch_block(block, repair)
@@ -441,6 +473,7 @@ class EnvironmentBuilder:
             runtime.recreate_from(baseline_image)
             attempt += 1
             last_result = self._execute_block(runtime, block, attempt, baseline_image, executions)
+            last_failure_phase = "block"
             validation_result = self._validate_block(
                 runtime, block, attempt, baseline_image, executions
             )
@@ -474,6 +507,7 @@ class EnvironmentBuilder:
                 return True, checkpoint.image_ref
             if last_result.ok and validation_result is not None:
                 last_result = validation_result
+                last_failure_phase = "validation"
 
         block.status = "failed"
         block.last_error = tail_text(last_result.combined_output, max_chars=4000)
