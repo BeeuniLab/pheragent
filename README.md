@@ -55,7 +55,8 @@ uv run pheragent build \
   --base-dockerfile /path/to/Dockerfile \
   --planner llm \
   --llm-retries 3 \
-  --llm-retry-delay 1
+  --llm-retry-delay 1 \
+  --stream-logs
 ```
 
 Clone and build multiple projects from an `owner/repo commit` file:
@@ -69,11 +70,16 @@ uv run pheragent build-projects \
   --run-id-prefix execution-agent \
   --planner llm \
   --command-timeout 1800 \
-  --llm-timeout 180
+  --llm-timeout 180 \
+  --stream-logs
 ```
 
 Use `--limit N` for a small smoke run, and `--stop-on-failure` when you want the
 batch to stop at the first clone/build failure.
+
+Use `--stream-logs` when you want live Docker, git, block, validation, repair,
+and oracle command output in the terminal while still keeping complete logs
+under `logs/`.
 
 For `build-projects`, `.github` is treated as oracle data instead of build
 context. After checkout, if a cloned project contains `.github`, it is moved to

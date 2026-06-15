@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import sys
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -88,10 +89,16 @@ def prepare_project(
     *,
     projects_dir: Path,
     clone_timeout: float,
+    stream_logs: bool = False,
     command_runner: CommandRunner | None = None,
 ) -> Path:
     runner = command_runner or (
-        lambda command, cwd=None: run_command(command, timeout=clone_timeout, cwd=cwd)
+        lambda command, cwd=None: run_command(
+            command,
+            timeout=clone_timeout,
+            cwd=cwd,
+            stream_output=stream_logs,
+        )
     )
     projects_dir.mkdir(parents=True, exist_ok=True)
     repo_path = projects_dir / spec.checkout_dir_name
@@ -195,10 +202,12 @@ class ProjectBatchBuilder:
             repo_path = self.projects_dir / spec.checkout_dir_name
             oracle_path: Path | None = None
             try:
+                self._emit(f"project {spec.owner_repo}@{spec.commit}: prepare")
                 repo_path = prepare_project(
                     spec,
                     projects_dir=self.projects_dir,
                     clone_timeout=self.clone_timeout,
+                    stream_logs=self.base_request.stream_logs,
                     command_runner=self.command_runner,
                 )
                 oracle_path = isolate_project_oracles(
@@ -206,6 +215,9 @@ class ProjectBatchBuilder:
                     repo_path=repo_path,
                     oracles_dir=self.oracles_dir,
                 )
+                if oracle_path is not None:
+                    self._emit(f"project {spec.owner_repo}: isolated oracle data at {oracle_path}")
+                self._emit(f"project {spec.owner_repo}: build")
                 build_result = self.builder_factory(self._request_for(spec, repo_path)).build()
                 result = ProjectRunResult(
                     project=spec,
@@ -226,6 +238,7 @@ class ProjectBatchBuilder:
                     error=str(exc),
                 )
             results.append(result)
+            self._emit(f"project {spec.owner_repo}: {'ok' if result.ok else 'failed'}")
             if self.stop_on_failure and not result.ok:
                 break
 
@@ -257,6 +270,7 @@ class ProjectBatchBuilder:
             docker_build_timeout=self.base_request.docker_build_timeout,
             keep_container=self.base_request.keep_container,
             cleanup_images=self.base_request.cleanup_images,
+            stream_logs=self.base_request.stream_logs,
             planner_mode=self.base_request.planner_mode,
             llm_model=self.base_request.llm_model,
             openai_base_url=self.base_request.openai_base_url,
@@ -271,6 +285,10 @@ class ProjectBatchBuilder:
             resume_from=self.base_request.resume_from,
             start_at_block=self.base_request.start_at_block,
         )
+
+    def _emit(self, message: str) -> None:
+        if self.base_request.stream_logs:
+            print(f"[pheragent] {message}", file=sys.stderr, flush=True)
 
 
 def _run_or_raise(

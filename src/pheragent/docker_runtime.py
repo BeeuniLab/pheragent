@@ -32,7 +32,7 @@ class DockerRuntime:
             self.base_image,
             str(self.request.repo_path),
         ]
-        return run_command(command, timeout=self.request.docker_build_timeout)
+        return self._run_command(command, timeout=self.request.docker_build_timeout)
 
     def start(self, image_ref: str | None = None, *, seed_repo: bool = False) -> str:
         image = image_ref or self.base_image
@@ -50,7 +50,7 @@ class DockerRuntime:
             "-lc",
             "trap : TERM INT; sleep infinity & wait",
         ]
-        result = run_command(command, timeout=120)
+        result = self._run_command(command, timeout=120)
         if not result.ok:
             raise RuntimeError(f"docker run failed: {result.combined_output}")
         self.current_container = name
@@ -63,7 +63,7 @@ class DockerRuntime:
         workdir = self.request.container_workdir.rstrip("/")
         if not workdir.startswith("/") or workdir == "/":
             raise ValueError(f"container_workdir must be an absolute non-root path: {workdir}")
-        prepare_result = run_command(
+        prepare_result = self._run_command(
             [
                 "docker",
                 "exec",
@@ -79,7 +79,7 @@ class DockerRuntime:
                 f"failed to prepare container workdir: {prepare_result.combined_output}"
             )
         source = f"{self.request.repo_path}/."
-        copy_result = run_command(
+        copy_result = self._run_command(
             ["docker", "cp", source, f"{self.current_container}:{workdir}"],
             timeout=max(120.0, min(self.request.command_timeout, 900.0)),
         )
@@ -92,7 +92,7 @@ class DockerRuntime:
         mkdir_result = self.execute_command("mkdir -p /tmp/pheragent/blocks", timeout=30)
         if not mkdir_result.ok:
             return mkdir_result
-        copy_result = run_command(
+        copy_result = self._run_command(
             ["docker", "cp", str(script_path), f"{self.current_container}:{container_path}"],
             timeout=60,
         )
@@ -102,7 +102,7 @@ class DockerRuntime:
 
     def execute_command(self, command: str, *, timeout: float) -> CommandResult:
         self._require_container()
-        return run_command(
+        return self._run_command(
             [
                 "docker",
                 "exec",
@@ -130,7 +130,7 @@ class DockerRuntime:
             f"{slugify(self.request.image_prefix)}:"
             f"{self.run_id}-{self._checkpoint_counter:03d}-{safe_block}-{slugify(kind)}"
         )
-        result = run_command(
+        result = self._run_command(
             ["docker", "commit", self.current_container or "", image_ref],
             timeout=600,
         )
@@ -152,7 +152,7 @@ class DockerRuntime:
     def remove_current_container(self) -> None:
         if not self.current_container:
             return
-        run_command(["docker", "rm", "-f", self.current_container], timeout=60)
+        self._run_command(["docker", "rm", "-f", self.current_container], timeout=60)
         self.current_container = None
 
     def cleanup(self) -> None:
@@ -160,8 +160,13 @@ class DockerRuntime:
             self.remove_current_container()
         if self.request.cleanup_images:
             for image_ref in reversed(self._created_images):
-                run_command(["docker", "rmi", "-f", image_ref], timeout=120)
+                self._run_command(["docker", "rmi", "-f", image_ref], timeout=120)
 
     def _require_container(self) -> None:
         if not self.current_container:
             raise RuntimeError("container has not been started")
+
+    def _run_command(self, command: list[str], *, timeout: float) -> CommandResult:
+        if self.request.stream_logs:
+            return run_command(command, timeout=timeout, stream_output=True)
+        return run_command(command, timeout=timeout)

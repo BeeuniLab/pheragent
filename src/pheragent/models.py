@@ -21,6 +21,7 @@ class BuildRequest:
     docker_build_timeout: float = 1800.0
     keep_container: bool = False
     cleanup_images: bool = False
+    stream_logs: bool = False
     planner_mode: PlannerMode = "auto"
     llm_model: str | None = None
     openai_base_url: str | None = None
@@ -56,6 +57,7 @@ class BuildRequest:
             docker_build_timeout=self.docker_build_timeout,
             keep_container=self.keep_container,
             cleanup_images=self.cleanup_images,
+            stream_logs=self.stream_logs,
             planner_mode=self.planner_mode,
             llm_model=self.llm_model,
             openai_base_url=self.openai_base_url,

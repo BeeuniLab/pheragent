@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -65,8 +66,10 @@ class EnvironmentBuilder:
         self.runtime_factory = runtime_factory
 
     def plan_only(self) -> BuildResult:
+        self._emit(f"run {self.run_id}: analyze repo {self.request.repo_path}")
         context = self.analyzer.analyze(self.request.repo_path)
         self.store.save_context(context)
+        self._emit(f"run {self.run_id}: plan blocks")
         blocks = self.store.write_blocks(self.planner.plan(context))
         result = BuildResult(
             ok=True,
@@ -80,6 +83,7 @@ class EnvironmentBuilder:
         return result
 
     def build(self) -> BuildResult:
+        self._emit(f"run {self.run_id}: analyze repo {self.request.repo_path}")
         context = self.analyzer.analyze(self.request.repo_path)
         self.store.save_context(context)
         runtime = self.runtime_factory(self.request, self.run_id)
@@ -102,6 +106,7 @@ class EnvironmentBuilder:
             start_index = 0
             if self.request.resume_from:
                 current_image = self.request.resume_from
+                self._emit(f"run {self.run_id}: resume from {current_image}")
                 runtime.start(image_ref=current_image, seed_repo=False)
                 self._collect_container_context(
                     runtime=runtime,
@@ -123,6 +128,7 @@ class EnvironmentBuilder:
                 start_index = self._resume_start_index(blocks, current_image)
                 self._mark_resume_skipped_blocks(blocks, start_index, current_image)
             else:
+                self._emit(f"run {self.run_id}: build base image")
                 build_result = runtime.build_base_image()
                 executions.append(
                     self._execution_from_result(
@@ -135,10 +141,12 @@ class EnvironmentBuilder:
                 )
                 self.store.append_execution(executions[-1])
                 if not build_result.ok:
+                    self._emit(f"run {self.run_id}: base image build failed")
                     result.error = "base Docker image build failed"
                     self.store.save_manifest(result)
                     return result
 
+                self._emit(f"run {self.run_id}: start container and copy repo")
                 runtime.start(seed_repo=True)
                 self._collect_container_context(
                     runtime=runtime,
@@ -157,6 +165,7 @@ class EnvironmentBuilder:
                 current_image = workspace_checkpoint.image_ref
 
             for block_index, block in enumerate(blocks[start_index:], start=start_index):
+                self._emit(f"run {self.run_id}: block {block.id} start")
                 block.baseline_checkpoint = current_image
                 self.store.update_block(block)
                 block_ok, current_image = self._run_block_with_repair(
@@ -169,18 +178,21 @@ class EnvironmentBuilder:
                     executions=executions,
                 )
                 if not block_ok:
+                    self._emit(f"run {self.run_id}: block {block.id} failed")
                     result.error = f"block failed: {block.id}"
                     result.final_image = current_image
                     self.store.save_manifest(result)
                     return result
 
             if self.request.oracle_file is not None:
+                self._emit(f"run {self.run_id}: oracle validation")
                 oracle_ok = self._run_oracle_validation(
                     runtime=runtime,
                     checkpoint_image=current_image,
                     executions=executions,
                 )
                 if not oracle_ok:
+                    self._emit(f"run {self.run_id}: oracle validation failed")
                     result.error = "oracle validation failed"
                     result.final_image = current_image
                     self.store.save_manifest(result)
@@ -189,8 +201,10 @@ class EnvironmentBuilder:
             result.ok = True
             result.final_image = current_image
             self.store.save_manifest(result)
+            self._emit(f"run {self.run_id}: ok")
             return result
         except Exception as exc:
+            self._emit(f"run {self.run_id}: failed: {exc}")
             result.error = str(exc)
             result.final_image = current_image
             self.store.save_manifest(result)
@@ -202,7 +216,9 @@ class EnvironmentBuilder:
         if self.request.resume_from:
             existing_blocks = self.store.list_blocks()
             if existing_blocks:
+                self._emit(f"run {self.run_id}: reuse existing block scripts")
                 return self.store.write_blocks(existing_blocks)
+        self._emit(f"run {self.run_id}: plan blocks")
         return self.store.write_blocks(self.planner.plan(context))
 
     def _collect_container_context(
@@ -213,6 +229,7 @@ class EnvironmentBuilder:
         executions: list[BlockExecution],
         checkpoint_before: str | None,
     ) -> None:
+        self._emit(f"run {self.run_id}: collect container context")
         result = runtime.execute_command(
             _CONTAINER_PREFLIGHT_COMMAND,
             timeout=min(self.request.command_timeout, 120.0),
@@ -315,6 +332,7 @@ class EnvironmentBuilder:
             block.success_checkpoint = checkpoint.image_ref
             block.status = "succeeded"
             self.store.update_block(block)
+            self._emit(f"run {self.run_id}: block {block.id} checkpoint {checkpoint.image_ref}")
             return True, checkpoint.image_ref
         if last_result.ok and validation_result is not None:
             last_result = validation_result
@@ -334,6 +352,7 @@ class EnvironmentBuilder:
             if not suggestions:
                 break
             repair = suggestions[min(repair_attempt - 1, len(suggestions) - 1)]
+            self._emit(f"run {self.run_id}: block {block.id} repair attempt {repair_attempt}")
             runtime.recreate_from(baseline_image)
             repair_result = runtime.execute_command(
                 repair.command,
@@ -384,6 +403,10 @@ class EnvironmentBuilder:
                 block.success_checkpoint = checkpoint.image_ref
                 block.status = "succeeded"
                 self.store.update_block(block)
+                self._emit(
+                    f"run {self.run_id}: block {block.id} repaired checkpoint "
+                    f"{checkpoint.image_ref}"
+                )
                 return True, checkpoint.image_ref
             if last_result.ok and validation_result is not None:
                 last_result = validation_result
@@ -423,6 +446,7 @@ class EnvironmentBuilder:
     ) -> CommandResult:
         block.status = "running"
         self.store.update_block(block)
+        self._emit(f"run {self.run_id}: block {block.id} execute attempt {attempt}")
         result = runtime.execute_script(
             self.store.script_path(block.id),
             timeout=self.request.command_timeout,
@@ -447,6 +471,7 @@ class EnvironmentBuilder:
         baseline_image: str,
         executions: list[BlockExecution],
     ) -> CommandResult:
+        self._emit(f"run {self.run_id}: block {block.id} finalize")
         result = runtime.execute_command(
             _CHECKPOINT_TOOL_EXPORT_COMMAND,
             timeout=min(self.request.command_timeout, 120.0),
@@ -472,6 +497,7 @@ class EnvironmentBuilder:
     ) -> CommandResult | None:
         if not block.validation_command:
             return None
+        self._emit(f"run {self.run_id}: block {block.id} validate")
         result = runtime.execute_command(
             block.validation_command,
             timeout=self.request.command_timeout,
@@ -503,6 +529,7 @@ class EnvironmentBuilder:
             )
         timeout = self.request.oracle_timeout or self.request.command_timeout
         for index, command in enumerate(commands, start=1):
+            self._emit(f"run {self.run_id}: oracle command {index}/{len(commands)}")
             result = runtime.execute_command(command, timeout=timeout)
             execution = self._execution_from_result(
                 block_id="oracle",
@@ -552,6 +579,10 @@ class EnvironmentBuilder:
             command=command_result.command,
             log_path=str(log_path),
         )
+
+    def _emit(self, message: str) -> None:
+        if self.request.stream_logs:
+            print(f"[pheragent] {message}", file=sys.stderr, flush=True)
 
 
 _CONTAINER_PREFLIGHT_COMMAND = r"""

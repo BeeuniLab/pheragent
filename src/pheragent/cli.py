@@ -67,6 +67,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     build.add_argument("--keep-container", action="store_true")
     build.add_argument("--cleanup-images", action="store_true")
+    build.add_argument(
+        "--stream-logs",
+        action="store_true",
+        help="Stream command output to the terminal while still saving full logs.",
+    )
 
     build_projects = subparsers.add_parser(
         "build-projects",
@@ -165,6 +170,11 @@ def _add_batch_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--oracle-timeout", type=float, default=None)
     parser.add_argument("--keep-container", action="store_true")
     parser.add_argument("--cleanup-images", action="store_true")
+    parser.add_argument(
+        "--stream-logs",
+        action="store_true",
+        help="Stream command output to the terminal while still saving full logs.",
+    )
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
 
 
@@ -185,6 +195,7 @@ def _request_from_args(args: argparse.Namespace, *, require_dockerfile: bool) ->
         docker_build_timeout=args.docker_build_timeout,
         keep_container=bool(getattr(args, "keep_container", False)),
         cleanup_images=bool(getattr(args, "cleanup_images", False)),
+        stream_logs=bool(getattr(args, "stream_logs", False)),
         planner_mode=args.planner,
         llm_model=args.model,
         openai_base_url=args.openai_base_url,
@@ -214,6 +225,7 @@ def _batch_base_request_from_args(args: argparse.Namespace) -> BuildRequest:
         docker_build_timeout=args.docker_build_timeout,
         keep_container=bool(getattr(args, "keep_container", False)),
         cleanup_images=bool(getattr(args, "cleanup_images", False)),
+        stream_logs=bool(getattr(args, "stream_logs", False)),
         planner_mode=args.planner,
         llm_model=args.model,
         openai_base_url=args.openai_base_url,
