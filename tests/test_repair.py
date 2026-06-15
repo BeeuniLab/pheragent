@@ -551,7 +551,11 @@ def test_openai_responses_repair_payload_includes_repair_context(tmp_path: Path)
         context,
         heuristic_hints=heuristic_hints,
     )
-    content = json.loads(payload["input"])
+    assert isinstance(payload["input"], list)
+    assert payload["input"][0]["role"] == "user"
+    input_text = payload["input"][0]["content"][0]
+    assert input_text["type"] == "input_text"
+    content = json.loads(input_text["text"])
 
     assert content["repair_context"]["checkpoint_before"] == "fake:baseline"
     assert "tool:cmake=missing" in content["repair_context"]["repo_context"]["runtime_notes"]
@@ -561,6 +565,12 @@ def test_openai_responses_repair_payload_includes_repair_context(tmp_path: Path)
     assert content["heuristic_hints"][0]["title"] == "Install cmake"
     assert payload["stream"] is True
     assert payload["text"] == {"format": {"type": "json_object"}}
+
+    probe_payload = planner._probe_request_payload(block, result, context)
+    assert isinstance(probe_payload["input"], list)
+    assert probe_payload["input"][0]["content"][0]["type"] == "input_text"
+    probe_content = json.loads(probe_payload["input"][0]["content"][0]["text"])
+    assert probe_content["repair_context"]["checkpoint_before"] == "fake:baseline"
 
 
 def test_make_repair_planner_auto_uses_rules_without_api_key(monkeypatch) -> None:

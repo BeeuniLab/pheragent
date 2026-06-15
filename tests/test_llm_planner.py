@@ -134,7 +134,11 @@ def test_openai_responses_planner_uses_sdk_streaming(tmp_path: Path, monkeypatch
     assert payload["max_output_tokens"] == 4096
     assert "messages" not in payload
     assert "response_format" not in payload
-    assert "repo_context" in json.loads(payload["input"])
+    assert isinstance(payload["input"], list)
+    assert payload["input"][0]["role"] == "user"
+    input_text = payload["input"][0]["content"][0]
+    assert input_text["type"] == "input_text"
+    assert "repo_context" in json.loads(input_text["text"])
 
 
 def test_openai_client_disables_sdk_retries() -> None:

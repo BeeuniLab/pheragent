@@ -59,15 +59,17 @@ class OpenAIResponsesBlockPlanner:
         return {
             "model": self.config.model,
             "instructions": _SYSTEM_PROMPT,
-            "input": json.dumps(
-                {
-                    "repo_context": to_jsonable(context),
-                    "fallback_blocks": [
-                        to_jsonable(block) for block in self.fallback.plan(context)
-                    ],
-                },
-                ensure_ascii=False,
-                indent=2,
+            "input": _response_text_input(
+                json.dumps(
+                    {
+                        "repo_context": to_jsonable(context),
+                        "fallback_blocks": [
+                            to_jsonable(block) for block in self.fallback.plan(context)
+                        ],
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
             ),
             "temperature": self.config.temperature,
             "max_output_tokens": self.config.max_tokens,
@@ -189,6 +191,20 @@ def _openai_client(*, base_url: str, api_key: str, timeout: float) -> Any:
         timeout=timeout,
         max_retries=0,
     )
+
+
+def _response_text_input(text: str) -> list[dict[str, Any]]:
+    return [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": text,
+                }
+            ],
+        }
+    ]
 
 
 def _read_streamed_response(stream: Any, *, error_context: str) -> str:

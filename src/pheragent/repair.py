@@ -11,6 +11,7 @@ from .llm_planner import (
     _openai_client,
     _parse_json_object,
     _read_streamed_response,
+    _response_text_input,
     _retryable_llm_error,
     _sleep_before_retry,
 )
@@ -130,7 +131,7 @@ class OpenAIResponsesRepairPlanner:
         return {
             "model": self.config.model,
             "instructions": _REPAIR_SYSTEM_PROMPT,
-            "input": json.dumps(payload, ensure_ascii=False, indent=2),
+            "input": _response_text_input(json.dumps(payload, ensure_ascii=False, indent=2)),
             "temperature": self.config.temperature,
             "max_output_tokens": self.config.max_tokens,
             "text": {"format": {"type": "json_object"}},
@@ -154,7 +155,7 @@ class OpenAIResponsesRepairPlanner:
         return {
             "model": self.config.model,
             "instructions": _PROBE_SYSTEM_PROMPT,
-            "input": json.dumps(payload, ensure_ascii=False, indent=2),
+            "input": _response_text_input(json.dumps(payload, ensure_ascii=False, indent=2)),
             "temperature": self.config.temperature,
             "max_output_tokens": min(self.config.max_tokens, 1024),
             "text": {"format": {"type": "json_object"}},
