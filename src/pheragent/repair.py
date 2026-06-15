@@ -5,13 +5,15 @@ import os
 import re
 import urllib.error
 import urllib.request
-from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
 from .llm_planner import (
     _chat_completion_request,
+    _env_flag,
+    _maybe_stream_payload,
     _parse_json_object,
+    _read_chat_completion_response,
     _retryable_http_status,
     _sleep_before_retry,
 )
@@ -38,6 +40,7 @@ class OpenAIRepairConfig:
     temperature: float = 0.1
     max_retries: int = 3
     retry_delay_s: float = 1.0
+    stream: bool = False
 
 
 class OpenAICompatibleRepairPlanner:
@@ -102,14 +105,19 @@ class OpenAICompatibleRepairPlanner:
         api_key: str,
         payload: dict[str, Any],
     ) -> str:
-        body = ""
+        content = ""
         max_attempts = max(1, self.config.max_retries)
         last_error: Exception | None = None
         for attempt in range(1, max_attempts + 1):
-            request = _chat_completion_request(base_url, api_key, payload)
+            request_payload = _maybe_stream_payload(payload, stream=self.config.stream)
+            request = _chat_completion_request(base_url, api_key, request_payload)
             try:
                 with urllib.request.urlopen(request, timeout=self.config.timeout) as response:
-                    body = response.read().decode("utf-8", errors="replace")
+                    content = _read_chat_completion_response(
+                        response,
+                        stream=self.config.stream,
+                        error_context="LLM repair",
+                    )
                 break
             except urllib.error.HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="replace")
@@ -126,13 +134,7 @@ class OpenAICompatibleRepairPlanner:
         else:
             raise RuntimeError(f"LLM repair request failed: {last_error}") from last_error
 
-        try:
-            data = json.loads(body)
-            return str(data["choices"][0]["message"]["content"])
-        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-            raise RuntimeError(
-                f"LLM repair returned an unexpected response: {body[:1000]}"
-            ) from exc
+        return content
 
     def _parse_repairs(self, content: str) -> list[RepairCommand]:
         data = _parse_json_object(content)
@@ -170,6 +172,7 @@ class OpenAICompatibleRepairPlanner:
 class RepairPlanner:
     def __init__(self, llm_planner: OpenAICompatibleRepairPlanner | None = None):
         self.llm_planner = llm_planner
+        self.last_llm_error: str | None = None
 
     def suggest(
         self,
@@ -178,6 +181,7 @@ class RepairPlanner:
         *,
         context: RepairContext | None = None,
     ) -> list[RepairCommand]:
+        self.last_llm_error = None
         output = result.combined_output.lower()
         suggestions: list[RepairCommand] = []
 
@@ -266,8 +270,14 @@ class RepairPlanner:
                 )
 
         if self.llm_planner is not None:
-            with suppress(Exception):
-                suggestions.extend(self.llm_planner.suggest(block, result, context=context))
+            try:
+                llm_suggestions = self.llm_planner.suggest(block, result, context=context)
+                if llm_suggestions:
+                    suggestions.extend(llm_suggestions)
+                else:
+                    self.last_llm_error = "LLM repair returned no usable suggestions"
+            except Exception as exc:
+                self.last_llm_error = str(exc)
 
         return _dedupe(suggestions)
 
@@ -309,6 +319,7 @@ def make_repair_planner(
     max_tokens: int,
     retries: int,
     retry_delay: float,
+    stream: bool,
 ) -> RepairPlanner:
     if mode == "rules":
         return RepairPlanner()
@@ -333,6 +344,7 @@ def make_repair_planner(
                 max_tokens=min(max_tokens, 2048),
                 max_retries=retries,
                 retry_delay_s=retry_delay,
+                stream=stream or _env_flag("PHERAGENT_LLM_STREAM"),
             )
         )
     )

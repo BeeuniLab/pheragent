@@ -25,6 +25,7 @@ class OpenAIPlannerConfig:
     temperature: float = 0.1
     max_retries: int = 3
     retry_delay_s: float = 1.0
+    stream: bool = False
     fallback_on_error: bool = False
 
 
@@ -88,14 +89,19 @@ class OpenAICompatibleBlockPlanner:
         api_key: str,
         payload: dict[str, Any],
     ) -> str:
-        body = ""
+        content = ""
         max_attempts = max(1, self.config.max_retries)
         last_error: Exception | None = None
         for attempt in range(1, max_attempts + 1):
-            request = _chat_completion_request(base_url, api_key, payload)
+            request_payload = _maybe_stream_payload(payload, stream=self.config.stream)
+            request = _chat_completion_request(base_url, api_key, request_payload)
             try:
                 with urllib.request.urlopen(request, timeout=self.config.timeout) as response:
-                    body = response.read().decode("utf-8", errors="replace")
+                    content = _read_chat_completion_response(
+                        response,
+                        stream=self.config.stream,
+                        error_context="LLM planner",
+                    )
                 break
             except urllib.error.HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="replace")
@@ -112,13 +118,7 @@ class OpenAICompatibleBlockPlanner:
         else:
             raise RuntimeError(f"LLM planner request failed: {last_error}") from last_error
 
-        try:
-            data = json.loads(body)
-            return str(data["choices"][0]["message"]["content"])
-        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-            raise RuntimeError(
-                f"LLM planner returned an unexpected response: {body[:1000]}"
-            ) from exc
+        return content
 
     def _parse_blocks(self, content: str) -> list[CommandBlock]:
         data = _parse_json_object(content)
@@ -172,6 +172,7 @@ def make_planner(
     max_tokens: int,
     retries: int,
     retry_delay: float,
+    stream: bool,
 ) -> BlockPlanner:
     fallback = RuleBasedBlockPlanner()
     if mode == "rules":
@@ -191,6 +192,7 @@ def make_planner(
             max_tokens=max_tokens,
             max_retries=retries,
             retry_delay_s=retry_delay,
+            stream=stream or _env_flag("PHERAGENT_LLM_STREAM"),
             fallback_on_error=mode == "auto",
         ),
         fallback=fallback,
@@ -214,6 +216,70 @@ def _chat_completion_request(
     )
 
 
+def _maybe_stream_payload(payload: dict[str, Any], *, stream: bool) -> dict[str, Any]:
+    if not stream:
+        return payload
+    streamed = dict(payload)
+    streamed["stream"] = True
+    return streamed
+
+
+def _read_chat_completion_response(response, *, stream: bool, error_context: str) -> str:
+    if stream:
+        return _read_streaming_chat_completion(response, error_context=error_context)
+    body = response.read().decode("utf-8", errors="replace")
+    return _extract_chat_completion_content(body, error_context=error_context)
+
+
+def _read_streaming_chat_completion(response, *, error_context: str) -> str:
+    chunks: list[str] = []
+    for raw_line in response:
+        line = _decode_sse_line(raw_line)
+        if not line or line.startswith(":") or not line.startswith("data:"):
+            continue
+        data = line.removeprefix("data:").strip()
+        if data == "[DONE]":
+            break
+        try:
+            event = json.loads(data)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"{error_context} returned invalid stream chunk: {data[:500]}"
+            ) from exc
+        choices = event.get("choices")
+        if not isinstance(choices, list) or not choices:
+            continue
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            continue
+        delta = choice.get("delta")
+        if isinstance(delta, dict) and delta.get("content") is not None:
+            chunks.append(str(delta["content"]))
+        message = choice.get("message")
+        if isinstance(message, dict) and message.get("content") is not None:
+            chunks.append(str(message["content"]))
+    content = "".join(chunks)
+    if not content:
+        raise RuntimeError(f"{error_context} stream returned no content")
+    return content
+
+
+def _decode_sse_line(raw_line: bytes | str) -> str:
+    if isinstance(raw_line, bytes):
+        return raw_line.decode("utf-8", errors="replace").strip()
+    return raw_line.strip()
+
+
+def _extract_chat_completion_content(body: str, *, error_context: str) -> str:
+    try:
+        data = json.loads(body)
+        return str(data["choices"][0]["message"]["content"])
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"{error_context} returned an unexpected response: {body[:1000]}"
+        ) from exc
+
+
 def _retryable_http_status(status: int) -> bool:
     return status == 429 or 500 <= status <= 599
 
@@ -222,6 +288,10 @@ def _sleep_before_retry(attempt: int, retry_delay_s: float) -> None:
     delay = max(0.0, retry_delay_s) * (2 ** (attempt - 1))
     if delay > 0:
         time.sleep(delay)
+
+
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _parse_json_object(content: str) -> dict[str, Any]:

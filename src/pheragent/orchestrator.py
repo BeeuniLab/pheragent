@@ -51,6 +51,7 @@ class EnvironmentBuilder:
             max_tokens=self.request.llm_max_tokens,
             retries=self.request.llm_retries,
             retry_delay=self.request.llm_retry_delay,
+            stream=self.request.llm_stream,
         )
         self.repair_planner = repair_planner or make_repair_planner(
             mode=self.request.planner_mode,
@@ -62,6 +63,7 @@ class EnvironmentBuilder:
             max_tokens=self.request.llm_max_tokens,
             retries=self.request.llm_retries,
             retry_delay=self.request.llm_retry_delay,
+            stream=self.request.llm_stream,
         )
         self.runtime_factory = runtime_factory
 
@@ -350,6 +352,12 @@ class EnvironmentBuilder:
                 context=repair_context,
             )
             if not suggestions:
+                self._record_llm_repair_status(
+                    block=block,
+                    attempt=repair_attempt,
+                    baseline_image=baseline_image,
+                    executions=executions,
+                )
                 break
             repair = suggestions[min(repair_attempt - 1, len(suggestions) - 1)]
             self._emit(f"run {self.run_id}: block {block.id} repair attempt {repair_attempt}")
@@ -543,6 +551,32 @@ class EnvironmentBuilder:
             if not result.ok:
                 return False
         return True
+
+    def _record_llm_repair_status(
+        self,
+        *,
+        block: CommandBlock,
+        attempt: int,
+        baseline_image: str,
+        executions: list[BlockExecution],
+    ) -> None:
+        error = getattr(self.repair_planner, "last_llm_error", None)
+        if not error:
+            return
+        result = CommandResult(
+            exit_code=1,
+            stderr=error,
+            command=["llm-repair", block.id],
+        )
+        execution = self._execution_from_result(
+            block_id=block.id,
+            phase="llm_repair",
+            attempt=attempt,
+            command_result=result,
+            checkpoint_before=baseline_image,
+        )
+        executions.append(execution)
+        self.store.append_execution(execution)
 
     def _execution_from_result(
         self,

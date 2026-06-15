@@ -31,6 +31,7 @@ class BuildRequest:
     llm_max_tokens: int = 4096
     llm_retries: int = 3
     llm_retry_delay: float = 1.0
+    llm_stream: bool = False
     oracle_file: Path | None = None
     oracle_timeout: float | None = None
     resume_from: str | None = None
@@ -67,6 +68,7 @@ class BuildRequest:
             llm_max_tokens=self.llm_max_tokens,
             llm_retries=self.llm_retries,
             llm_retry_delay=self.llm_retry_delay,
+            llm_stream=self.llm_stream,
             oracle_file=oracle_file,
             oracle_timeout=self.oracle_timeout,
             resume_from=self.resume_from,

@@ -128,6 +128,33 @@ def test_repair_planner_appends_llm_suggestions_after_rules() -> None:
     assert suggestions[1].title == "Install cmake"
 
 
+def test_repair_planner_records_llm_failure_for_unknown_errors() -> None:
+    class FailingLLMRepairPlanner:
+        def suggest(
+            self,
+            block: CommandBlock,
+            result: CommandResult,
+            *,
+            context: RepairContext | None = None,
+        ) -> list[RepairCommand]:
+            del block, result, context
+            raise RuntimeError("proxy unavailable")
+
+    block = CommandBlock(
+        id="02-custom",
+        title="Custom",
+        goal="install",
+        script="#!/bin/sh\ncustom-install\n",
+    )
+    result = CommandResult(exit_code=1, stderr="mystery failure")
+    planner = RepairPlanner(llm_planner=FailingLLMRepairPlanner())
+
+    suggestions = planner.suggest(block, result)
+
+    assert suggestions == []
+    assert planner.last_llm_error == "proxy unavailable"
+
+
 def test_openai_repair_parser_filters_dangerous_commands() -> None:
     planner = OpenAICompatibleRepairPlanner(OpenAIRepairConfig())
 
@@ -214,6 +241,7 @@ def test_make_repair_planner_auto_uses_rules_without_api_key(monkeypatch) -> Non
         max_tokens=4096,
         retries=3,
         retry_delay=1,
+        stream=False,
     )
 
     assert planner.llm_planner is None

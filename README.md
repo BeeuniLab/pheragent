@@ -56,6 +56,7 @@ uv run pheragent build \
   --planner llm \
   --llm-retries 3 \
   --llm-retry-delay 1 \
+  --llm-stream \
   --stream-logs
 ```
 
@@ -71,6 +72,7 @@ uv run pheragent build-projects \
   --planner llm \
   --command-timeout 1800 \
   --llm-timeout 180 \
+  --llm-stream \
   --stream-logs
 ```
 
@@ -80,6 +82,12 @@ batch to stop at the first clone/build failure.
 Use `--stream-logs` when you want live Docker, git, block, validation, repair,
 and oracle command output in the terminal while still keeping complete logs
 under `logs/`.
+
+Use `--llm-stream` when the OpenAI-compatible endpoint supports Chat
+Completions streaming. This sends `stream: true` for planning and repair calls
+and reconstructs the JSON response from streamed chunks. LLM repair request
+failures or empty repair responses are recorded as `llm_repair` executions under
+the failed block's logs.
 
 Project checkout first tries to fetch the requested commit/ref directly. If a
 short commit hash cannot be fetched as a remote ref, `pheragent` fetches remote

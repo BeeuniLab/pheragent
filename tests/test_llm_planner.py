@@ -22,6 +22,7 @@ def test_make_planner_auto_uses_rules_without_api_key(monkeypatch) -> None:
         max_tokens=4096,
         retries=3,
         retry_delay=1.0,
+        stream=False,
     )
 
     assert isinstance(planner, RuleBasedBlockPlanner)
@@ -154,6 +155,63 @@ def test_openai_compatible_planner_retries_transient_request_failure(
 
     assert calls == 2
     assert blocks[0].id == "00-custom"
+
+
+def test_openai_compatible_planner_parses_streaming_chat_completion(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    context = RepoAnalyzer().analyze(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://example.test/v1")
+    requests: list[object] = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            pass
+
+        def __iter__(self):
+            content = json.dumps(
+                {
+                    "blocks": [
+                        {
+                            "id": "00-custom",
+                            "order": 0,
+                            "title": "Custom",
+                            "goal": "custom setup",
+                            "script": "echo custom",
+                        }
+                    ]
+                }
+            )
+            midpoint = len(content) // 2
+            for chunk in (content[:midpoint], content[midpoint:]):
+                yield (
+                    "data: "
+                    + json.dumps({"choices": [{"delta": {"content": chunk}}]})
+                    + "\n\n"
+                ).encode("utf-8")
+            yield b"data: [DONE]\n\n"
+
+    def fake_urlopen(request, timeout):
+        del timeout
+        requests.append(request)
+        return FakeResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    planner = OpenAICompatibleBlockPlanner(
+        OpenAIPlannerConfig(model="gpt-5.5", stream=True)
+    )
+
+    blocks = planner.plan(context)
+
+    assert blocks[0].id == "00-custom"
+    payload = json.loads(requests[0].data.decode("utf-8"))
+    assert payload["stream"] is True
 
 
 def test_openai_compatible_planner_auto_falls_back_after_retries(

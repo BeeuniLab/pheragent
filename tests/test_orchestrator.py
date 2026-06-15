@@ -166,6 +166,52 @@ def test_environment_builder_plans_with_container_preflight_context(tmp_path: Pa
     )
 
 
+def test_environment_builder_logs_failed_llm_repair_attempt(tmp_path: Path) -> None:
+    class UnknownFailureRuntime(FakeRuntime):
+        def execute_script(self, script_path: Path, *, timeout: float) -> CommandResult:
+            del script_path, timeout
+            return CommandResult(exit_code=1, stderr="mystery failure")
+
+    class FailingLLMRepairPlanner:
+        def suggest(self, block, result, *, context=None):
+            del block, result, context
+            raise RuntimeError("proxy unavailable")
+
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="llm-repair-log",
+        max_repair_attempts=1,
+    )
+    planner = StaticPlanner(
+        [
+            CommandBlock(
+                id="01-custom",
+                title="Custom",
+                goal="install",
+                script="#!/bin/sh\necho custom\n",
+                order=1,
+            )
+        ]
+    )
+
+    result = EnvironmentBuilder(
+        request,
+        planner=planner,
+        repair_planner=RepairPlanner(llm_planner=FailingLLMRepairPlanner()),
+        runtime_factory=UnknownFailureRuntime,
+    ).build()
+
+    assert not result.ok
+    llm_execution = next(
+        execution for execution in result.executions if execution.phase == "llm_repair"
+    )
+    assert "proxy unavailable" in Path(llm_execution.log_path or "").read_text(encoding="utf-8")
+
+
 def test_environment_builder_resumes_from_checkpoint_without_replanning(
     tmp_path: Path,
 ) -> None:

@@ -112,6 +112,11 @@ def _add_common_args(parser: argparse.ArgumentParser, *, include_dockerfile: boo
     parser.add_argument("--llm-max-tokens", type=int, default=4096)
     parser.add_argument("--llm-retries", type=int, default=3)
     parser.add_argument("--llm-retry-delay", type=float, default=1.0)
+    parser.add_argument(
+        "--llm-stream",
+        action="store_true",
+        help="Use streaming Chat Completions responses for LLM planning and repair.",
+    )
     parser.add_argument("--oracle-file", type=Path, default=None)
     parser.add_argument("--oracle-timeout", type=float, default=None)
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
@@ -166,6 +171,11 @@ def _add_batch_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--llm-max-tokens", type=int, default=4096)
     parser.add_argument("--llm-retries", type=int, default=3)
     parser.add_argument("--llm-retry-delay", type=float, default=1.0)
+    parser.add_argument(
+        "--llm-stream",
+        action="store_true",
+        help="Use streaming Chat Completions responses for LLM planning and repair.",
+    )
     parser.add_argument("--oracle-file", type=Path, default=None)
     parser.add_argument("--oracle-timeout", type=float, default=None)
     parser.add_argument("--keep-container", action="store_true")
@@ -205,6 +215,7 @@ def _request_from_args(args: argparse.Namespace, *, require_dockerfile: bool) ->
         llm_max_tokens=args.llm_max_tokens,
         llm_retries=args.llm_retries,
         llm_retry_delay=args.llm_retry_delay,
+        llm_stream=args.llm_stream,
         oracle_file=args.oracle_file,
         oracle_timeout=args.oracle_timeout,
         resume_from=resume_from,
@@ -235,6 +246,7 @@ def _batch_base_request_from_args(args: argparse.Namespace) -> BuildRequest:
         llm_max_tokens=args.llm_max_tokens,
         llm_retries=args.llm_retries,
         llm_retry_delay=args.llm_retry_delay,
+        llm_stream=args.llm_stream,
         oracle_file=args.oracle_file,
         oracle_timeout=args.oracle_timeout,
     )
