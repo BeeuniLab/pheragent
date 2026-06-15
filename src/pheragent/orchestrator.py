@@ -338,6 +338,8 @@ class EnvironmentBuilder:
         if last_result.ok and validation_result is not None:
             last_result = validation_result
 
+        probe_failures = 0
+        max_probe_failures = max(0, self.request.max_probe_failures)
         for repair_attempt in range(1, self.request.max_repair_attempts + 1):
             repair_context = self._repair_context(
                 repo_context=repo_context,
@@ -345,24 +347,36 @@ class EnvironmentBuilder:
                 completed_blocks=completed_blocks,
                 executions=executions,
             )
-            probes = self.repair_planner.propose_probes(
-                block,
-                last_result,
-                context=repair_context,
-            )
-            self._record_llm_probe_status(
-                block=block,
-                attempt=repair_attempt,
-                baseline_image=baseline_image,
-                executions=executions,
-            )
-            probe_error = getattr(self.repair_planner, "last_probe_error", None)
-            if probe_error:
-                self._emit(
-                    f"run {self.run_id}: block {block.id} LLM probe attempt "
-                    f"{repair_attempt} failed: {tail_text(probe_error, max_chars=500)}"
+            probes: list[RepairProbeCommand] = []
+            if max_probe_failures > 0 and probe_failures < max_probe_failures:
+                probes = self.repair_planner.propose_probes(
+                    block,
+                    last_result,
+                    context=repair_context,
                 )
-                break
+                self._record_llm_probe_status(
+                    block=block,
+                    attempt=repair_attempt,
+                    baseline_image=baseline_image,
+                    executions=executions,
+                )
+                probe_error = getattr(self.repair_planner, "last_probe_error", None)
+                if probe_error:
+                    probe_failures += 1
+                    self._emit(
+                        f"run {self.run_id}: block {block.id} LLM probe attempt "
+                        f"{repair_attempt} failed ({probe_failures}/{max_probe_failures}): "
+                        f"{tail_text(probe_error, max_chars=500)}"
+                    )
+                    if (
+                        probe_failures < max_probe_failures
+                        and repair_attempt < self.request.max_repair_attempts
+                    ):
+                        continue
+                    self._emit(
+                        f"run {self.run_id}: block {block.id} continue repair without probes"
+                    )
+                    probes = []
             probe_results = self._run_repair_probes(
                 runtime=runtime,
                 block=block,

@@ -330,6 +330,7 @@ class ProjectBatchBuilder:
             container_workdir=self.base_request.container_workdir,
             image_prefix=self.base_request.image_prefix,
             max_repair_attempts=self.base_request.max_repair_attempts,
+            max_probe_failures=self.base_request.max_probe_failures,
             command_timeout=self.base_request.command_timeout,
             docker_build_timeout=self.base_request.docker_build_timeout,
             keep_container=self.base_request.keep_container,

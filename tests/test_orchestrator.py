@@ -405,18 +405,26 @@ def test_environment_builder_retries_empty_llm_repair_suggestions(
     assert "repairs list is empty" in first_log
 
 
-def test_environment_builder_stops_when_llm_probe_request_fails(tmp_path: Path) -> None:
+def test_environment_builder_continues_repair_after_probe_failure_budget(
+    tmp_path: Path,
+) -> None:
     class UnknownFailureRuntime(FakeRuntime):
         def execute_script(self, script_path: Path, *, timeout: float) -> CommandResult:
-            del script_path, timeout
-            return CommandResult(exit_code=1, stderr="mystery failure")
+            del timeout
+            self.block_runs += 1
+            script = script_path.read_text(encoding="utf-8")
+            if "build-essential" not in script:
+                return CommandResult(exit_code=1, stderr="mystery failure")
+            return CommandResult(exit_code=0, stdout="ok")
 
     class FailingProbeLLMRepairPlanner:
         def __init__(self) -> None:
+            self.probe_calls = 0
             self.repair_calls = 0
 
         def propose_probes(self, block, result, *, context=None, heuristic_hints=None):
             del block, result, context, heuristic_hints
+            self.probe_calls += 1
             raise RuntimeError("HTTP 429: rate limit")
 
         def suggest(self, block, result, *, context=None, heuristic_hints=None):
@@ -424,9 +432,9 @@ def test_environment_builder_stops_when_llm_probe_request_fails(tmp_path: Path) 
             self.repair_calls += 1
             return [
                 RepairCommand(
-                    title="Should not run",
-                    command="true",
-                    patch_script="true",
+                    title="Install build tools",
+                    command="apt-get update && apt-get install -y build-essential",
+                    patch_script="apt-get update && apt-get install -y build-essential",
                 )
             ]
 
@@ -438,6 +446,7 @@ def test_environment_builder_stops_when_llm_probe_request_fails(tmp_path: Path) 
         state_dir=tmp_path / ".pheragent",
         run_id="probe-failure",
         max_repair_attempts=3,
+        max_probe_failures=2,
     )
     planner = StaticPlanner(
         [
@@ -445,7 +454,7 @@ def test_environment_builder_stops_when_llm_probe_request_fails(tmp_path: Path) 
                 id="01-custom",
                 title="Custom",
                 goal="install",
-                script="#!/bin/sh\necho custom\n",
+                script="#!/bin/sh\necho python-deps\n",
                 order=1,
             )
         ]
@@ -459,12 +468,14 @@ def test_environment_builder_stops_when_llm_probe_request_fails(tmp_path: Path) 
         runtime_factory=UnknownFailureRuntime,
     ).build()
 
-    assert not result.ok
-    assert llm_planner.repair_calls == 0
-    llm_probe_execution = next(
+    assert result.ok
+    assert llm_planner.probe_calls == 2
+    assert llm_planner.repair_calls == 1
+    llm_probe_executions = [
         execution for execution in result.executions if execution.phase == "llm_probe"
-    )
-    assert "HTTP 429" in Path(llm_probe_execution.log_path or "").read_text(
+    ]
+    assert [execution.attempt for execution in llm_probe_executions] == [1, 2]
+    assert "HTTP 429" in Path(llm_probe_executions[-1].log_path or "").read_text(
         encoding="utf-8"
     )
 

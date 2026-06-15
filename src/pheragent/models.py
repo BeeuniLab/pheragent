@@ -17,6 +17,7 @@ class BuildRequest:
     container_workdir: str = "/workspace/repo"
     image_prefix: str = "pheragent"
     max_repair_attempts: int = 2
+    max_probe_failures: int = 5
     command_timeout: float = 900.0
     docker_build_timeout: float = 1800.0
     keep_container: bool = False
@@ -53,6 +54,7 @@ class BuildRequest:
             container_workdir=self.container_workdir,
             image_prefix=self.image_prefix,
             max_repair_attempts=self.max_repair_attempts,
+            max_probe_failures=self.max_probe_failures,
             command_timeout=self.command_timeout,
             docker_build_timeout=self.docker_build_timeout,
             keep_container=self.keep_container,

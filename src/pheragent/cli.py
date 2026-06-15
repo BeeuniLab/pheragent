@@ -96,6 +96,15 @@ def _add_common_args(parser: argparse.ArgumentParser, *, include_dockerfile: boo
     parser.add_argument("--container-workdir", default="/workspace/repo")
     parser.add_argument("--image-prefix", default="pheragent")
     parser.add_argument("--max-repair-attempts", type=int, default=2)
+    parser.add_argument(
+        "--max-probe-failures",
+        type=int,
+        default=5,
+        help=(
+            "Failed LLM probe requests allowed before repairing without probes; "
+            "0 disables probes."
+        ),
+    )
     parser.add_argument("--command-timeout", type=float, default=900.0)
     parser.add_argument("--docker-build-timeout", type=float, default=1800.0)
     parser.add_argument(
@@ -147,6 +156,15 @@ def _add_batch_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--container-workdir", default="/workspace/repo")
     parser.add_argument("--image-prefix", default="pheragent")
     parser.add_argument("--max-repair-attempts", type=int, default=2)
+    parser.add_argument(
+        "--max-probe-failures",
+        type=int,
+        default=5,
+        help=(
+            "Failed LLM probe requests allowed before repairing without probes; "
+            "0 disables probes."
+        ),
+    )
     parser.add_argument("--command-timeout", type=float, default=900.0)
     parser.add_argument("--docker-build-timeout", type=float, default=1800.0)
     parser.add_argument("--clone-timeout", type=float, default=900.0)
@@ -191,6 +209,7 @@ def _request_from_args(args: argparse.Namespace, *, require_dockerfile: bool) ->
         container_workdir=args.container_workdir,
         image_prefix=args.image_prefix,
         max_repair_attempts=args.max_repair_attempts,
+        max_probe_failures=args.max_probe_failures,
         command_timeout=args.command_timeout,
         docker_build_timeout=args.docker_build_timeout,
         keep_container=bool(getattr(args, "keep_container", False)),
@@ -221,6 +240,7 @@ def _batch_base_request_from_args(args: argparse.Namespace) -> BuildRequest:
         container_workdir=args.container_workdir,
         image_prefix=args.image_prefix,
         max_repair_attempts=args.max_repair_attempts,
+        max_probe_failures=args.max_probe_failures,
         command_timeout=args.command_timeout,
         docker_build_timeout=args.docker_build_timeout,
         keep_container=bool(getattr(args, "keep_container", False)),
