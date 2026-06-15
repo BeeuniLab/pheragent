@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import sys
 from collections import Counter
@@ -260,6 +261,15 @@ class ProjectBatchBuilder:
             oracle_path: Path | None = None
             failure_stage = "prepare_failed"
             try:
+                existing_result = self._existing_successful_result(spec, repo_path)
+                if existing_result is not None:
+                    self._emit(
+                        f"project {spec.owner_repo}: skip existing successful run "
+                        f"{existing_result.run_id}"
+                    )
+                    results.append(existing_result)
+                    continue
+
                 self._emit(f"project {spec.owner_repo}@{spec.commit}: prepare")
                 repo_path = prepare_project(
                     spec,
@@ -314,9 +324,7 @@ class ProjectBatchBuilder:
         )
 
     def _request_for(self, spec: ProjectSpec, repo_path: Path) -> BuildRequest:
-        run_id = None
-        if self.run_id_prefix:
-            run_id = f"{slugify(self.run_id_prefix)}-{slugify(spec.checkout_dir_name)}"
+        run_id = self._run_id_for(spec)
 
         state_dir = self.base_request.state_dir
         if state_dir is not None:
@@ -354,6 +362,54 @@ class ProjectBatchBuilder:
     def _emit(self, message: str) -> None:
         if self.base_request.stream_logs:
             print(f"[pheragent] {message}", file=sys.stderr, flush=True)
+
+    def _existing_successful_result(
+        self,
+        spec: ProjectSpec,
+        repo_path: Path,
+    ) -> ProjectRunResult | None:
+        if not repo_path.exists():
+            return None
+        manifest_path = self._expected_manifest_path(spec, repo_path)
+        if manifest_path is None or not manifest_path.is_file():
+            return None
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        final_image = manifest.get("final_image")
+        if manifest.get("ok") is not True or not isinstance(final_image, str) or not final_image:
+            return None
+        oracle_path = isolate_project_oracles(
+            spec,
+            repo_path=repo_path,
+            oracles_dir=self.oracles_dir,
+        )
+        return ProjectRunResult(
+            project=spec,
+            repo_path=repo_path,
+            ok=True,
+            run_id=str(manifest.get("run_id") or self._run_id_for(spec)),
+            final_image=final_image,
+            manifest_path=manifest_path,
+            oracle_path=oracle_path,
+        )
+
+    def _expected_manifest_path(self, spec: ProjectSpec, repo_path: Path) -> Path | None:
+        run_id = self._run_id_for(spec)
+        if run_id is None:
+            return None
+        state_dir = self.base_request.state_dir
+        if state_dir is not None:
+            state_dir = state_dir.expanduser().resolve() / spec.checkout_dir_name
+        else:
+            state_dir = repo_path / ".pheragent"
+        return state_dir / "runs" / run_id / "manifest.json"
+
+    def _run_id_for(self, spec: ProjectSpec) -> str | None:
+        if not self.run_id_prefix:
+            return None
+        return f"{slugify(self.run_id_prefix)}-{slugify(spec.checkout_dir_name)}"
 
     def _append_failure_log(self, result: ProjectRunResult, failures_log_path: Path) -> None:
         failures_log_path.parent.mkdir(parents=True, exist_ok=True)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from pheragent.models import BuildRequest, BuildResult, CommandResult
@@ -191,6 +192,124 @@ def test_project_batch_builder_builds_each_prepared_project(tmp_path: Path) -> N
     assert result.results[0].final_image == "pheragent:batch-flask-final"
     assert result.results[0].oracle_path == tmp_path / "oracles" / "flask" / ".github"
     assert (result.results[0].oracle_path / "workflows" / "ci.yml").is_file()
+
+
+def test_project_batch_builder_skips_existing_successful_project(tmp_path: Path) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text("pallets/flask 2579ce9\n", encoding="utf-8")
+    repo_path = tmp_path / "projects" / "flask"
+    repo_path.mkdir(parents=True)
+    github_dir = repo_path / ".github" / "workflows"
+    github_dir.mkdir(parents=True)
+    (github_dir / "ci.yml").write_text("name: ci\n", encoding="utf-8")
+    run_dir = repo_path / ".pheragent" / "runs" / "batch-flask"
+    run_dir.mkdir(parents=True)
+    manifest_path = run_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "run_id": "batch-flask",
+                "final_image": "pheragent:batch-flask-final",
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner_calls: list[list[str]] = []
+
+    def fake_runner(command: list[str], cwd: Path | None) -> CommandResult:
+        del cwd
+        runner_calls.append(command)
+        return CommandResult(exit_code=0, stdout="unexpected")
+
+    class UnexpectedBuilder:
+        def __init__(self, request: BuildRequest):
+            del request
+            raise AssertionError("builder should not be created for successful existing run")
+
+    result = ProjectBatchBuilder(
+        projects_file=projects_file,
+        projects_dir=tmp_path / "projects",
+        oracles_dir=tmp_path / "oracles",
+        base_request=BuildRequest(
+            repo_path=tmp_path,
+            base_dockerfile=tmp_path / "Dockerfile",
+            run_id=None,
+        ),
+        run_id_prefix="batch",
+        command_runner=fake_runner,
+        builder_factory=UnexpectedBuilder,
+    ).build_all()
+
+    assert result.ok
+    assert runner_calls == []
+    assert result.results[0].ok
+    assert result.results[0].run_id == "batch-flask"
+    assert result.results[0].final_image == "pheragent:batch-flask-final"
+    assert result.results[0].manifest_path == manifest_path
+    assert result.results[0].oracle_path == tmp_path / "oracles" / "flask" / ".github"
+    assert not (repo_path / ".github").exists()
+
+
+def test_project_batch_builder_reruns_existing_failed_project_and_clears_failure_log(
+    tmp_path: Path,
+) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text("pallets/flask 2579ce9\n", encoding="utf-8")
+    projects_dir = tmp_path / "projects"
+    repo_path = projects_dir / "flask"
+    (repo_path / ".git").mkdir(parents=True)
+    run_dir = repo_path / ".pheragent" / "runs" / "batch-flask"
+    run_dir.mkdir(parents=True)
+    (run_dir / "manifest.json").write_text(
+        json.dumps({"ok": False, "run_id": "batch-flask", "error": "old failure"}),
+        encoding="utf-8",
+    )
+    stale_failure_log = projects_dir / "failed-projects.log"
+    stale_failure_log.write_text("old\tfailure\n", encoding="utf-8")
+    requests: list[BuildRequest] = []
+
+    def fake_runner(command: list[str], cwd: Path | None) -> CommandResult:
+        del cwd
+        if command[:2] == ["git", "clone"]:
+            raise AssertionError("existing repository should not be cloned")
+        return CommandResult(exit_code=0, stdout="ok")
+
+    class FakeBuilder:
+        def __init__(self, request: BuildRequest):
+            self.request = request
+            requests.append(request)
+
+        def build(self) -> BuildResult:
+            state_dir = self.request.repo_path / ".pheragent" / "runs" / "batch-flask"
+            return BuildResult(
+                ok=True,
+                run_id=self.request.run_id or "batch-flask",
+                state_dir=state_dir,
+                scripts_dir=state_dir / "scripts",
+                manifest_path=state_dir / "manifest.json",
+                final_image="pheragent:batch-flask-rebuilt",
+            )
+
+    result = ProjectBatchBuilder(
+        projects_file=projects_file,
+        projects_dir=projects_dir,
+        base_request=BuildRequest(
+            repo_path=tmp_path,
+            base_dockerfile=tmp_path / "Dockerfile",
+            run_id=None,
+        ),
+        run_id_prefix="batch",
+        command_runner=fake_runner,
+        builder_factory=FakeBuilder,
+    ).build_all()
+
+    assert result.ok
+    assert requests
+    assert requests[0].repo_path == repo_path
+    assert result.results[0].final_image == "pheragent:batch-flask-rebuilt"
+    assert result.failures_log_path is None
+    assert not stale_failure_log.exists()
 
 
 def test_project_batch_builder_writes_failed_projects_log(tmp_path: Path) -> None:
