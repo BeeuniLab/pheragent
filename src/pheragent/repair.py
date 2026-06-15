@@ -49,6 +49,7 @@ class OpenAIResponsesRepairPlanner:
         result: CommandResult,
         *,
         context: RepairContext | None = None,
+        heuristic_hints: list[RepairCommand] | None = None,
     ) -> list[RepairCommand]:
         api_key = os.getenv(self.config.api_key_env)
         if not api_key:
@@ -59,7 +60,12 @@ class OpenAIResponsesRepairPlanner:
 
         content = self._create_response(
             _openai_client(base_url=base_url, api_key=api_key, timeout=self.config.timeout),
-            self._request_payload(block, result, context),
+            self._request_payload(
+                block,
+                result,
+                context,
+                heuristic_hints=heuristic_hints,
+            ),
         )
         return self._parse_repairs(content)
 
@@ -68,6 +74,8 @@ class OpenAIResponsesRepairPlanner:
         block: CommandBlock,
         result: CommandResult,
         context: RepairContext | None = None,
+        *,
+        heuristic_hints: list[RepairCommand] | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "block": to_jsonable(block),
@@ -80,6 +88,8 @@ class OpenAIResponsesRepairPlanner:
         }
         if context is not None:
             payload["repair_context"] = to_jsonable(context)
+        if heuristic_hints:
+            payload["heuristic_hints"] = [to_jsonable(hint) for hint in heuristic_hints]
         return {
             "model": self.config.model,
             "instructions": _REPAIR_SYSTEM_PROMPT,
@@ -161,104 +171,23 @@ class RepairPlanner:
         context: RepairContext | None = None,
     ) -> list[RepairCommand]:
         self.last_llm_error = None
-        output = result.combined_output.lower()
-        suggestions: list[RepairCommand] = []
-
-        if any(
-            token in output for token in ("gcc: not found", "cc: not found", "make: not found")
-        ):
-            suggestions.append(_apt_repair("Install build-essential", "build-essential"))
-        if any(token in output for token in ("python.h", "fatal error: python")):
-            suggestions.append(_apt_repair("Install Python headers", "python3-dev build-essential"))
-        if "pg_config executable not found" in output or "libpq-fe.h" in output:
-            suggestions.append(_apt_repair("Install PostgreSQL headers", "libpq-dev"))
-        if "mysql_config" in output or "mysql.h" in output:
-            suggestions.append(_apt_repair("Install MySQL headers", "default-libmysqlclient-dev"))
-        if "openssl/ssl.h" in output or "-lssl" in output:
-            suggestions.append(_apt_repair("Install OpenSSL headers", "libssl-dev"))
-        if "ffi.h" in output or "libffi" in output:
-            suggestions.append(_apt_repair("Install libffi headers", "libffi-dev"))
-        if "cargo: not found" in output and block.id.endswith("rust-deps"):
-            suggestions.append(_apt_repair("Install Rust toolchain", "cargo rustc"))
-        if "certificate verify failed" in output or "ca certificates" in output:
-            suggestions.append(_apt_repair("Install CA certificates", "ca-certificates"))
-        if "permission denied" in output and "gradlew" in output:
-            suggestions.append(
-                RepairCommand(
-                    title="Make Gradle wrapper executable",
-                    command="chmod +x ./gradlew",
-                    patch_script="chmod +x ./gradlew",
-                )
-            )
-        if "no module named pip" in output or "pip: not found" in output:
-            suggestions.append(
-                RepairCommand(
-                    title="Bootstrap pip",
-                    command=(
-                        "python3 -m ensurepip --upgrade || python -m ensurepip --upgrade || "
-                        "(apt-get update && apt-get install -y python3-pip)"
-                    ),
-                    patch_script=(
-                        "python3 -m ensurepip --upgrade || python -m ensurepip --upgrade || "
-                        "(apt-get update && apt-get install -y python3-pip)"
-                    ),
-                )
-            )
-        if "python: not found" in output or "python executable not found" in output:
-            suggestions.append(
-                RepairCommand(
-                    title="Add python alias",
-                    command=(
-                        "if command -v python3 >/dev/null 2>&1 "
-                        "&& ! command -v python >/dev/null 2>&1; then "
-                        "ln -sf \"$(command -v python3)\" /usr/local/bin/python; fi"
-                    ),
-                    patch_script=(
-                        "if command -v python3 >/dev/null 2>&1 "
-                        "&& ! command -v python >/dev/null 2>&1; then "
-                        "ln -sf \"$(command -v python3)\" /usr/local/bin/python; fi"
-                    ),
-                )
-            )
-        if "externally-managed-environment" in output or "pep 668" in output:
-            suggestions.append(
-                RepairCommand(
-                    title="Install uv in an isolated tool venv",
-                    command=_uv_tool_venv_command(),
-                    patch_script=_uv_tool_venv_command(),
-                )
-            )
-        if "pnpm" in output and "requires at least node.js" in output:
-            suggestions.append(
-                RepairCommand(
-                    title="Install Node-compatible pnpm",
-                    command=_node_compatible_pnpm_command(),
-                    patch_script=_node_compatible_pnpm_command(),
-                )
-            )
-        if "attributeerror" in output and "__version__" in output and block.validation_command:
-            patched_validation = _strip_dunder_version_probe(block.validation_command)
-            if patched_validation != block.validation_command:
-                suggestions.append(
-                    RepairCommand(
-                        title="Relax __version__ validation probe",
-                        command="true",
-                        patch_script="",
-                        patch_validation_command=patched_validation,
-                    )
-                )
+        heuristic_suggestions = _heuristic_repairs(block, result)
 
         if self.llm_planner is not None:
             try:
-                llm_suggestions = self.llm_planner.suggest(block, result, context=context)
+                llm_suggestions = self.llm_planner.suggest(
+                    block,
+                    result,
+                    context=context,
+                    heuristic_hints=heuristic_suggestions,
+                )
                 if llm_suggestions:
-                    suggestions.extend(llm_suggestions)
-                else:
-                    self.last_llm_error = "LLM repair returned no usable suggestions"
+                    return _dedupe(llm_suggestions + heuristic_suggestions)
+                self.last_llm_error = "LLM repair returned no usable suggestions"
             except Exception as exc:
                 self.last_llm_error = str(exc)
 
-        return _dedupe(suggestions)
+        return _dedupe(heuristic_suggestions)
 
     def patch_block(self, block: CommandBlock, repair: RepairCommand) -> CommandBlock:
         if repair.patch_validation_command:
@@ -285,6 +214,95 @@ class RepairPlanner:
         block.repair_attempts += 1
         block.status = "repaired"
         return block
+
+
+def _heuristic_repairs(block: CommandBlock, result: CommandResult) -> list[RepairCommand]:
+    output = result.combined_output.lower()
+    suggestions: list[RepairCommand] = []
+
+    if any(token in output for token in ("gcc: not found", "cc: not found", "make: not found")):
+        suggestions.append(_apt_repair("Install build-essential", "build-essential"))
+    if any(token in output for token in ("python.h", "fatal error: python")):
+        suggestions.append(_apt_repair("Install Python headers", "python3-dev build-essential"))
+    if "pg_config executable not found" in output or "libpq-fe.h" in output:
+        suggestions.append(_apt_repair("Install PostgreSQL headers", "libpq-dev"))
+    if "mysql_config" in output or "mysql.h" in output:
+        suggestions.append(_apt_repair("Install MySQL headers", "default-libmysqlclient-dev"))
+    if "openssl/ssl.h" in output or "-lssl" in output:
+        suggestions.append(_apt_repair("Install OpenSSL headers", "libssl-dev"))
+    if "ffi.h" in output or "libffi" in output:
+        suggestions.append(_apt_repair("Install libffi headers", "libffi-dev"))
+    if "cargo: not found" in output and block.id.endswith("rust-deps"):
+        suggestions.append(_apt_repair("Install Rust toolchain", "cargo rustc"))
+    if "certificate verify failed" in output or "ca certificates" in output:
+        suggestions.append(_apt_repair("Install CA certificates", "ca-certificates"))
+    if "permission denied" in output and "gradlew" in output:
+        suggestions.append(
+            RepairCommand(
+                title="Make Gradle wrapper executable",
+                command="chmod +x ./gradlew",
+                patch_script="chmod +x ./gradlew",
+            )
+        )
+    if "no module named pip" in output or "pip: not found" in output:
+        suggestions.append(
+            RepairCommand(
+                title="Bootstrap pip",
+                command=(
+                    "python3 -m ensurepip --upgrade || python -m ensurepip --upgrade || "
+                    "(apt-get update && apt-get install -y python3-pip)"
+                ),
+                patch_script=(
+                    "python3 -m ensurepip --upgrade || python -m ensurepip --upgrade || "
+                    "(apt-get update && apt-get install -y python3-pip)"
+                ),
+            )
+        )
+    if "python: not found" in output or "python executable not found" in output:
+        suggestions.append(
+            RepairCommand(
+                title="Add python alias",
+                command=(
+                    "if command -v python3 >/dev/null 2>&1 "
+                    "&& ! command -v python >/dev/null 2>&1; then "
+                    "ln -sf \"$(command -v python3)\" /usr/local/bin/python; fi"
+                ),
+                patch_script=(
+                    "if command -v python3 >/dev/null 2>&1 "
+                    "&& ! command -v python >/dev/null 2>&1; then "
+                    "ln -sf \"$(command -v python3)\" /usr/local/bin/python; fi"
+                )
+            )
+        )
+    if "externally-managed-environment" in output or "pep 668" in output:
+        suggestions.append(
+            RepairCommand(
+                title="Install uv in an isolated tool venv",
+                command=_uv_tool_venv_command(),
+                patch_script=_uv_tool_venv_command(),
+            )
+        )
+    if "pnpm" in output and "requires at least node.js" in output:
+        suggestions.append(
+            RepairCommand(
+                title="Install Node-compatible pnpm",
+                command=_node_compatible_pnpm_command(),
+                patch_script=_node_compatible_pnpm_command(),
+            )
+        )
+    if "attributeerror" in output and "__version__" in output and block.validation_command:
+        patched_validation = _strip_dunder_version_probe(block.validation_command)
+        if patched_validation != block.validation_command:
+            suggestions.append(
+                RepairCommand(
+                    title="Relax __version__ validation probe",
+                    command="true",
+                    patch_script="",
+                    patch_validation_command=patched_validation,
+                )
+            )
+
+    return suggestions
 
 
 def make_repair_planner(
@@ -426,6 +444,10 @@ Rules:
 - Do not use docker, podman, git push, service shutdown, or destructive host commands.
 - Prefer package-manager fixes, missing tool installs, compatibility pins, and validation fixes.
 - Keep each repair small enough to belong to the failed block.
+- Analyze the failed block and failure stdout/stderr first; repair_context and
+  heuristic_hints are supporting evidence, not a substitute for the error.
+- Treat heuristic_hints as candidate clues or fallback repairs. Use them only when
+  they actually match the failure and runtime context.
 - Use repair_context to account for container OS/tools, previous successful blocks,
   and recent failures.
 """.strip()

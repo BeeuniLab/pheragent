@@ -96,16 +96,20 @@ def test_repair_planner_relaxes_dunder_version_validation() -> None:
     assert patched.validation_command == 'uv run python -c "import flask; print(flask)"'
 
 
-def test_repair_planner_appends_llm_suggestions_after_rules() -> None:
+def test_repair_planner_prefers_llm_suggestions_and_passes_heuristic_hints() -> None:
     class FakeLLMRepairPlanner:
+        heuristic_hints: list[RepairCommand] | None = None
+
         def suggest(
             self,
             block: CommandBlock,
             result: CommandResult,
             *,
             context: RepairContext | None = None,
+            heuristic_hints: list[RepairCommand] | None = None,
         ) -> list[RepairCommand]:
             del block, result, context
+            self.heuristic_hints = heuristic_hints
             return [
                 RepairCommand(
                     title="Install cmake",
@@ -121,11 +125,43 @@ def test_repair_planner_appends_llm_suggestions_after_rules() -> None:
         script="#!/bin/sh\npip install example\n",
     )
     result = CommandResult(exit_code=1, stderr="gcc: not found")
+    llm_planner = FakeLLMRepairPlanner()
 
-    suggestions = RepairPlanner(llm_planner=FakeLLMRepairPlanner()).suggest(block, result)
+    suggestions = RepairPlanner(llm_planner=llm_planner).suggest(block, result)
 
+    assert suggestions[0].title == "Install cmake"
+    assert "build-essential" in suggestions[1].command
+    assert llm_planner.heuristic_hints is not None
+    assert "build-essential" in llm_planner.heuristic_hints[0].command
+
+
+def test_repair_planner_falls_back_to_heuristics_when_llm_fails() -> None:
+    class FailingLLMRepairPlanner:
+        def suggest(
+            self,
+            block: CommandBlock,
+            result: CommandResult,
+            *,
+            context: RepairContext | None = None,
+            heuristic_hints: list[RepairCommand] | None = None,
+        ) -> list[RepairCommand]:
+            del block, result, context, heuristic_hints
+            raise RuntimeError("proxy unavailable")
+
+    block = CommandBlock(
+        id="02-python-deps",
+        title="Python Dependencies",
+        goal="Install deps",
+        script="#!/bin/sh\npip install example\n",
+    )
+    result = CommandResult(exit_code=1, stderr="gcc: not found")
+    planner = RepairPlanner(llm_planner=FailingLLMRepairPlanner())
+
+    suggestions = planner.suggest(block, result)
+
+    assert suggestions
     assert "build-essential" in suggestions[0].command
-    assert suggestions[1].title == "Install cmake"
+    assert planner.last_llm_error == "proxy unavailable"
 
 
 def test_repair_planner_records_llm_failure_for_unknown_errors() -> None:
@@ -136,8 +172,9 @@ def test_repair_planner_records_llm_failure_for_unknown_errors() -> None:
             result: CommandResult,
             *,
             context: RepairContext | None = None,
+            heuristic_hints: list[RepairCommand] | None = None,
         ) -> list[RepairCommand]:
-            del block, result, context
+            del block, result, context, heuristic_hints
             raise RuntimeError("proxy unavailable")
 
     block = CommandBlock(
@@ -219,13 +256,27 @@ def test_openai_responses_repair_payload_includes_repair_context(tmp_path: Path)
         ],
     )
 
-    payload = planner._request_payload(block, result, context)
+    heuristic_hints = [
+        RepairCommand(
+            title="Install cmake",
+            command="apt-get update && apt-get install -y cmake",
+            patch_script="apt-get update && apt-get install -y cmake",
+        )
+    ]
+
+    payload = planner._request_payload(
+        block,
+        result,
+        context,
+        heuristic_hints=heuristic_hints,
+    )
     content = json.loads(payload["input"])
 
     assert content["repair_context"]["checkpoint_before"] == "fake:baseline"
     assert "tool:cmake=missing" in content["repair_context"]["repo_context"]["runtime_notes"]
     assert content["repair_context"]["previous_blocks"][0]["id"] == "00-preflight"
     assert content["repair_context"]["recent_executions"][0]["phase"] == "block"
+    assert content["heuristic_hints"][0]["title"] == "Install cmake"
     assert payload["stream"] is True
     assert payload["text"] == {"format": {"type": "json_object"}}
 

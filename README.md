@@ -187,8 +187,10 @@ rolled back to the block baseline before each repair/replay attempt.
   checkpoint; checkpoints are used for resume and failure/repair rollback.
 - Block planning in build mode uses both repository context and container
   preflight runtime context.
-- Repair is local to the failed block, with heuristic fixes first and optional
-  OpenAI SDK Responses repair suggestions when the overall planner uses LLM support.
+- Repair is local to the failed block. When LLM support is active, the failed
+  block, stdout/stderr tails, runtime context, and heuristic hints are sent to
+  the OpenAI SDK Responses repair planner first; deterministic heuristics remain
+  the fallback when LLM repair is unavailable or empty.
 - LLM planning uses the OpenAI Python SDK Responses API with streaming and does
   not store API keys on disk. Transient LLM request failures are retried; `auto`
   mode falls back to deterministic rules if the LLM planner cannot produce a

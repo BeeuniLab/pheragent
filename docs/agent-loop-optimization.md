@@ -11,7 +11,7 @@ checkpointed run.
 | --- | --- | --- |
 | Record optimization plan | done | Captured scope and task state in this file. |
 | Container preflight context | done | Runtime facts are collected from the started Docker container before block planning. |
-| Repair context bundle | done | Repair planning receives the failed block, failure output, prior blocks, recent executions, and runtime context. |
+| Repair context bundle | done | LLM repair receives the failed block, failure output, prior blocks, recent executions, runtime context, and heuristic hints. |
 | Tests | done | Added coverage for planning with container context and repair context payloads without invoking Docker or a real LLM. |
 | Verification | done | `uv run ruff check .` and `uv run --with-editable . python -m pytest -q` pass. |
 
@@ -27,8 +27,8 @@ checkpointed run.
    successful block.
 7. On failure, build a local repair context from the failed block, error output,
    prior successful blocks, recent execution metadata, and container preflight.
-8. Try deterministic local repairs first, then append LLM local repair
-   suggestions when the overall agent planner is using LLM support.
+8. When LLM repair is active, send the failure bundle to the LLM repair planner
+   first and use deterministic local heuristics as hints/fallback repairs.
 9. On the success path, continue in the current container; roll back to the block
    baseline checkpoint only for failure/repair or explicit resume.
 
@@ -44,7 +44,8 @@ checkpointed run.
 - `RepoContext.runtime_notes` stores the preflight summary and is persisted in
   `context.json`.
 - LLM repair payloads now include a `RepairContext` with repo/runtime context,
-  prior successful blocks, recent execution records, and the baseline checkpoint.
+  prior successful blocks, recent execution records, the baseline checkpoint, and
+  heuristic hints derived from the failure output.
 - Successful blocks commit checkpoints but keep using the current container;
   Docker restore is reserved for failure/repair and resume paths.
 - The public CLI remains centered on the overall agent planner; repair remains

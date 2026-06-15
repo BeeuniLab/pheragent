@@ -173,8 +173,8 @@ def test_environment_builder_logs_failed_llm_repair_attempt(tmp_path: Path) -> N
             return CommandResult(exit_code=1, stderr="mystery failure")
 
     class FailingLLMRepairPlanner:
-        def suggest(self, block, result, *, context=None):
-            del block, result, context
+        def suggest(self, block, result, *, context=None, heuristic_hints=None):
+            del block, result, context, heuristic_hints
             raise RuntimeError("proxy unavailable")
 
     FakeRuntime.instances = []
