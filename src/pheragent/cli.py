@@ -263,6 +263,8 @@ def _print_batch_result(result, *, as_json: bool) -> None:
     print(f"pheragent project batch: {status}")
     print(f"projects: {result.projects_dir}")
     print(f"oracles: {result.oracles_dir}")
+    if result.failures_log_path:
+        print(f"failures: {result.failures_log_path}")
     for project_result in result.results:
         project_status = "ok" if project_result.ok else "failed"
         print(

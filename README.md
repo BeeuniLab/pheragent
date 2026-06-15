@@ -81,6 +81,15 @@ Use `--stream-logs` when you want live Docker, git, block, validation, repair,
 and oracle command output in the terminal while still keeping complete logs
 under `logs/`.
 
+Project checkout first tries to fetch the requested commit/ref directly. If a
+short commit hash cannot be fetched as a remote ref, `pheragent` fetches remote
+heads/tags with blob filtering and resolves the short hash locally before
+checkout. Failed projects are written to:
+
+```text
+<projects-dir>/failed-projects.log
+```
+
 For `build-projects`, `.github` is treated as oracle data instead of build
 context. After checkout, if a cloned project contains `.github`, it is moved to
 `<oracles-dir>/<project-name>/.github` before the environment build starts. This

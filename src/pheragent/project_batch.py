@@ -50,6 +50,7 @@ class BatchBuildResult:
     projects_dir: Path
     oracles_dir: Path
     results: list[ProjectRunResult]
+    failures_log_path: Path | None = None
 
 
 def parse_projects_file(path: Path) -> list[ProjectSpec]:
@@ -127,10 +128,8 @@ def prepare_project(
             cwd=repo_path,
         )
 
-    fetch_result = runner(["git", "fetch", "--depth", "1", "origin", spec.commit], repo_path)
-    if not fetch_result.ok:
-        fetch_result = runner(["git", "fetch", "origin", spec.commit], repo_path)
-    if not fetch_result.ok:
+    checkout_ref, fetch_result = _fetch_checkout_ref(spec, repo_path=repo_path, runner=runner)
+    if checkout_ref is None:
         raise RuntimeError(
             f"fetch failed for {spec.owner_repo}@{spec.commit}: "
             f"{fetch_result.combined_output}"
@@ -138,11 +137,64 @@ def prepare_project(
 
     _run_or_raise(
         runner,
-        ["git", "checkout", "--detach", spec.commit],
-        f"checkout failed for {spec.owner_repo}@{spec.commit}",
+        ["git", "checkout", "--detach", checkout_ref],
+        f"checkout failed for {spec.owner_repo}@{checkout_ref}",
         cwd=repo_path,
     )
     return repo_path
+
+
+def _fetch_checkout_ref(
+    spec: ProjectSpec,
+    *,
+    repo_path: Path,
+    runner: CommandRunner,
+) -> tuple[str | None, CommandResult]:
+    fetch_result = runner(["git", "fetch", "--depth", "1", "origin", spec.commit], repo_path)
+    if fetch_result.ok:
+        return spec.commit, fetch_result
+
+    direct_fetch_result = runner(["git", "fetch", "origin", spec.commit], repo_path)
+    if direct_fetch_result.ok:
+        return spec.commit, direct_fetch_result
+
+    if not _looks_like_short_sha(spec.commit):
+        return None, direct_fetch_result
+
+    refs_fetch_result = runner(
+        [
+            "git",
+            "fetch",
+            "--filter=blob:none",
+            "origin",
+            "+refs/heads/*:refs/remotes/origin/*",
+            "+refs/tags/*:refs/tags/*",
+        ],
+        repo_path,
+    )
+    if not refs_fetch_result.ok:
+        return None, refs_fetch_result
+
+    resolve_result = runner(
+        ["git", "rev-parse", "--verify", "--quiet", f"{spec.commit}^{{commit}}"],
+        repo_path,
+    )
+    if resolve_result.ok and resolve_result.stdout.strip():
+        return resolve_result.stdout.strip().splitlines()[0], resolve_result
+
+    return None, CommandResult(
+        exit_code=1,
+        stdout=refs_fetch_result.stdout,
+        stderr=(
+            f"could not resolve short commit {spec.commit!r} after fetching remote refs\n"
+            f"{resolve_result.combined_output}"
+        ).strip(),
+        command=resolve_result.command,
+    )
+
+
+def _looks_like_short_sha(value: str) -> bool:
+    return 4 <= len(value) < 40 and all(char in "0123456789abcdefABCDEF" for char in value)
 
 
 def isolate_project_oracles(
@@ -197,6 +249,10 @@ class ProjectBatchBuilder:
         if self.limit is not None:
             specs = specs[: self.limit]
 
+        failures_log_path = self.projects_dir / "failed-projects.log"
+        if failures_log_path.exists():
+            failures_log_path.unlink()
+
         results: list[ProjectRunResult] = []
         for spec in specs:
             repo_path = self.projects_dir / spec.checkout_dir_name
@@ -238,6 +294,8 @@ class ProjectBatchBuilder:
                     error=str(exc),
                 )
             results.append(result)
+            if not result.ok:
+                self._append_failure_log(result, failures_log_path)
             self._emit(f"project {spec.owner_repo}: {'ok' if result.ok else 'failed'}")
             if self.stop_on_failure and not result.ok:
                 break
@@ -247,6 +305,7 @@ class ProjectBatchBuilder:
             projects_dir=self.projects_dir,
             oracles_dir=self.oracles_dir,
             results=results,
+            failures_log_path=failures_log_path if failures_log_path.exists() else None,
         )
 
     def _request_for(self, spec: ProjectSpec, repo_path: Path) -> BuildRequest:
@@ -289,6 +348,22 @@ class ProjectBatchBuilder:
     def _emit(self, message: str) -> None:
         if self.base_request.stream_logs:
             print(f"[pheragent] {message}", file=sys.stderr, flush=True)
+
+    def _append_failure_log(self, result: ProjectRunResult, failures_log_path: Path) -> None:
+        failures_log_path.parent.mkdir(parents=True, exist_ok=True)
+        with failures_log_path.open("a", encoding="utf-8") as handle:
+            handle.write(
+                "\t".join(
+                    [
+                        result.project.owner_repo,
+                        result.project.commit,
+                        result.project.checkout_dir_name,
+                        str(result.repo_path),
+                        result.error or "",
+                    ]
+                )
+                + "\n"
+            )
 
 
 def _run_or_raise(
