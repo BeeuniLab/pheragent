@@ -349,13 +349,22 @@ class EnvironmentBuilder:
                 last_result,
                 context=repair_context,
             )
+            self._record_llm_repair_status(
+                block=block,
+                attempt=repair_attempt,
+                baseline_image=baseline_image,
+                executions=executions,
+                ok=bool(suggestions),
+            )
             if not suggestions:
-                self._record_llm_repair_status(
-                    block=block,
-                    attempt=repair_attempt,
-                    baseline_image=baseline_image,
-                    executions=executions,
-                )
+                error = getattr(self.repair_planner, "last_llm_error", None)
+                if error:
+                    self._emit(
+                        f"run {self.run_id}: block {block.id} LLM repair attempt "
+                        f"{repair_attempt} failed: {tail_text(error, max_chars=500)}"
+                    )
+                if error == "LLM repair returned no usable suggestions":
+                    continue
                 break
             repair = suggestions[min(repair_attempt - 1, len(suggestions) - 1)]
             self._emit(f"run {self.run_id}: block {block.id} repair attempt {repair_attempt}")
@@ -557,13 +566,18 @@ class EnvironmentBuilder:
         attempt: int,
         baseline_image: str,
         executions: list[BlockExecution],
+        ok: bool = False,
     ) -> None:
         error = getattr(self.repair_planner, "last_llm_error", None)
-        if not error:
+        raw_response = getattr(self.repair_planner, "last_llm_raw_response", None)
+        diagnostics = getattr(self.repair_planner, "last_llm_parse_diagnostics", [])
+        stdout = _llm_repair_debug_output(raw_response, diagnostics)
+        if not error and not stdout:
             return
         result = CommandResult(
-            exit_code=1,
-            stderr=error,
+            exit_code=0 if ok and not error else 1,
+            stdout=stdout,
+            stderr=error or "",
             command=["llm-repair", block.id],
         )
         execution = self._execution_from_result(
@@ -615,6 +629,22 @@ class EnvironmentBuilder:
     def _emit(self, message: str) -> None:
         if self.request.stream_logs:
             print(f"[pheragent] {message}", file=sys.stderr, flush=True)
+
+
+def _llm_repair_debug_output(raw_response: object, diagnostics: object) -> str:
+    parts: list[str] = []
+    if isinstance(raw_response, str):
+        parts.append("--- raw_llm_response ---\n" + raw_response)
+    if diagnostics:
+        if isinstance(diagnostics, str):
+            diagnostic_lines = [diagnostics]
+        else:
+            try:
+                diagnostic_lines = [str(item) for item in diagnostics]
+            except TypeError:
+                diagnostic_lines = [str(diagnostics)]
+        parts.append("--- parse_diagnostics ---\n" + "\n".join(diagnostic_lines))
+    return "\n\n".join(parts)
 
 
 _CONTAINER_PREFLIGHT_COMMAND = r"""

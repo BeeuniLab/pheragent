@@ -238,6 +238,66 @@ def test_environment_builder_logs_failed_llm_repair_attempt(tmp_path: Path) -> N
     assert "proxy unavailable" in Path(llm_execution.log_path or "").read_text(encoding="utf-8")
 
 
+def test_environment_builder_retries_empty_llm_repair_suggestions(
+    tmp_path: Path,
+) -> None:
+    class UnknownFailureRuntime(FakeRuntime):
+        def execute_script(self, script_path: Path, *, timeout: float) -> CommandResult:
+            del script_path, timeout
+            return CommandResult(exit_code=1, stderr="mystery failure")
+
+    class EmptyLLMRepairPlanner:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.last_raw_response = '{"repairs": []}'
+            self.last_parse_diagnostics = ["repairs list is empty"]
+
+        def suggest(self, block, result, *, context=None, heuristic_hints=None):
+            del block, result, context, heuristic_hints
+            self.calls += 1
+            return []
+
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="llm-repair-empty",
+        max_repair_attempts=3,
+    )
+    planner = StaticPlanner(
+        [
+            CommandBlock(
+                id="01-custom",
+                title="Custom",
+                goal="install",
+                script="#!/bin/sh\necho custom\n",
+                order=1,
+            )
+        ]
+    )
+    llm_planner = EmptyLLMRepairPlanner()
+
+    result = EnvironmentBuilder(
+        request,
+        planner=planner,
+        repair_planner=RepairPlanner(llm_planner=llm_planner),
+        runtime_factory=UnknownFailureRuntime,
+    ).build()
+
+    assert not result.ok
+    assert llm_planner.calls == 3
+    llm_executions = [
+        execution for execution in result.executions if execution.phase == "llm_repair"
+    ]
+    assert [execution.attempt for execution in llm_executions] == [1, 2, 3]
+    first_log = Path(llm_executions[0].log_path or "").read_text(encoding="utf-8")
+    assert "--- raw_llm_response ---" in first_log
+    assert '{"repairs": []}' in first_log
+    assert "repairs list is empty" in first_log
+
+
 def test_environment_builder_resumes_from_checkpoint_without_replanning(
     tmp_path: Path,
 ) -> None:

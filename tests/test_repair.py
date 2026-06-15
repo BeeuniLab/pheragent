@@ -76,6 +76,32 @@ def test_repair_hints_add_python_alias() -> None:
     assert "/usr/local/bin/python" in suggestions[0].command
 
 
+def test_repair_hints_install_matching_python_venv_package() -> None:
+    block = CommandBlock(
+        id="02-python-deps",
+        title="Python Dependencies",
+        goal="Install deps",
+        script="#!/bin/sh\npython3 -m venv .venv\n",
+    )
+    result = CommandResult(
+        exit_code=1,
+        stdout=(
+            "The virtual environment was not created successfully because ensurepip is not\n"
+            "available. On Debian/Ubuntu systems, you need to install the python3-venv\n"
+            "package using the following command.\n\n"
+            "    apt install python3.12-venv\n"
+        ),
+    )
+
+    suggestions = _heuristic_repair_hints(block, result)
+
+    assert suggestions
+    assert suggestions[0].title == "Install Python venv package"
+    assert "python3.12-venv" in suggestions[0].command
+    assert "python3 -m venv /tmp/pheragent-venv-check" in suggestions[0].command
+    assert "python3.12-venv" in suggestions[0].patch_script
+
+
 def test_repair_hints_relax_dunder_version_validation() -> None:
     block = CommandBlock(
         id="02-python-deps",
@@ -230,6 +256,7 @@ def test_openai_responses_repair_parser_filters_dangerous_commands() -> None:
 
     assert len(repairs) == 1
     assert repairs[0].title == "Good"
+    assert "unsafe token 'docker '" in planner.last_parse_diagnostics[0]
 
 
 def test_openai_responses_repair_parser_filters_transient_block_script_paths() -> None:
@@ -256,6 +283,16 @@ def test_openai_responses_repair_parser_filters_transient_block_script_paths() -
 
     assert len(repairs) == 1
     assert repairs[0].title == "Install pytest"
+    assert "transient runtime path" in planner.last_parse_diagnostics[0]
+
+
+def test_openai_responses_repair_parser_records_empty_repairs_diagnostic() -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
+
+    repairs = planner._parse_repairs('{"repairs": []}')
+
+    assert repairs == []
+    assert planner.last_parse_diagnostics == ["repairs list is empty"]
 
 
 def test_openai_responses_repair_payload_includes_repair_context(tmp_path: Path) -> None:

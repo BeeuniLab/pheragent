@@ -42,6 +42,8 @@ class OpenAIResponsesRepairConfig:
 class OpenAIResponsesRepairPlanner:
     def __init__(self, config: OpenAIResponsesRepairConfig):
         self.config = config
+        self.last_raw_response: str | None = None
+        self.last_parse_diagnostics: list[str] = []
 
     def suggest(
         self,
@@ -58,6 +60,8 @@ class OpenAIResponsesRepairPlanner:
         if not base_url:
             base_url = "https://api.openai.com/v1"
 
+        self.last_raw_response = None
+        self.last_parse_diagnostics = []
         content = self._create_response(
             _openai_client(base_url=base_url, api_key=api_key, timeout=self.config.timeout),
             self._request_payload(
@@ -67,6 +71,7 @@ class OpenAIResponsesRepairPlanner:
                 heuristic_hints=heuristic_hints,
             ),
         )
+        self.last_raw_response = content
         return self._parse_repairs(content)
 
     def _request_payload(
@@ -126,22 +131,45 @@ class OpenAIResponsesRepairPlanner:
         return content
 
     def _parse_repairs(self, content: str) -> list[RepairCommand]:
-        data = _parse_json_object(content)
+        self.last_parse_diagnostics = []
+        try:
+            data = _parse_json_object(content)
+        except Exception as exc:
+            self.last_parse_diagnostics.append(f"parse_error: {exc}")
+            raise
         raw_repairs = data.get("repairs")
         if raw_repairs is None and "command" in data:
             raw_repairs = [data]
         if not isinstance(raw_repairs, list):
+            self.last_parse_diagnostics.append("missing or invalid repairs list")
             raise ValueError("LLM repair JSON must contain a repairs list")
+        if not raw_repairs:
+            self.last_parse_diagnostics.append("repairs list is empty")
 
         repairs: list[RepairCommand] = []
-        for item in raw_repairs:
+        for index, item in enumerate(raw_repairs):
+            diagnostic_prefix = f"repairs[{index}]"
             if not isinstance(item, dict):
+                self.last_parse_diagnostics.append(f"{diagnostic_prefix} is not an object")
                 continue
             command = _optional_text(item.get("command"))
             patch_script = _optional_text(item.get("patch_script")) or command
             if not command or not patch_script:
+                self.last_parse_diagnostics.append(
+                    f"{diagnostic_prefix} missing command or patch_script"
+                )
                 continue
-            if not _safe_repair_command(command) or not _safe_repair_command(patch_script):
+            command_rejection = _repair_command_rejection_reason(command)
+            if command_rejection:
+                self.last_parse_diagnostics.append(
+                    f"{diagnostic_prefix}.command rejected: {command_rejection}"
+                )
+                continue
+            patch_rejection = _repair_command_rejection_reason(patch_script)
+            if patch_rejection:
+                self.last_parse_diagnostics.append(
+                    f"{diagnostic_prefix}.patch_script rejected: {patch_rejection}"
+                )
                 continue
             title = _optional_text(item.get("title")) or "LLM repair"
             validation = _optional_text(
@@ -162,6 +190,8 @@ class RepairPlanner:
     def __init__(self, llm_planner: OpenAIResponsesRepairPlanner | None = None):
         self.llm_planner = llm_planner
         self.last_llm_error: str | None = None
+        self.last_llm_raw_response: str | None = None
+        self.last_llm_parse_diagnostics: list[str] = []
 
     def suggest(
         self,
@@ -171,6 +201,8 @@ class RepairPlanner:
         context: RepairContext | None = None,
     ) -> list[RepairCommand]:
         self.last_llm_error = None
+        self.last_llm_raw_response = None
+        self.last_llm_parse_diagnostics = []
         heuristic_hints = _heuristic_repair_hints(block, result)
 
         if self.llm_planner is not None:
@@ -181,13 +213,23 @@ class RepairPlanner:
                     context=context,
                     heuristic_hints=heuristic_hints,
                 )
+                self._capture_llm_debug()
                 if llm_suggestions:
                     return _dedupe(llm_suggestions)
                 self.last_llm_error = "LLM repair returned no usable suggestions"
             except Exception as exc:
+                self._capture_llm_debug()
                 self.last_llm_error = str(exc)
 
         return []
+
+    def _capture_llm_debug(self) -> None:
+        if self.llm_planner is None:
+            return
+        raw_response = getattr(self.llm_planner, "last_raw_response", None)
+        diagnostics = getattr(self.llm_planner, "last_parse_diagnostics", [])
+        self.last_llm_raw_response = raw_response if isinstance(raw_response, str) else None
+        self.last_llm_parse_diagnostics = list(diagnostics or [])
 
     def patch_block(self, block: CommandBlock, repair: RepairCommand) -> CommandBlock:
         if repair.patch_validation_command:
@@ -256,6 +298,15 @@ def _heuristic_repair_hints(block: CommandBlock, result: CommandResult) -> list[
                     "python3 -m ensurepip --upgrade || python -m ensurepip --upgrade || "
                     "(apt-get update && apt-get install -y python3-pip)"
                 ),
+            )
+        )
+    if "ensurepip is not available" in output or "python3-venv" in output:
+        command, patch_script = _python_venv_repair_command(output)
+        suggestions.append(
+            RepairCommand(
+                title="Install Python venv package",
+                command=command,
+                patch_script=patch_script,
             )
         )
     if "python: not found" in output or "python executable not found" in output:
@@ -355,6 +406,30 @@ def _apt_repair(title: str, packages: str) -> RepairCommand:
     return RepairCommand(title=title, command=command, patch_script=command)
 
 
+def _python_venv_repair_command(output: str) -> tuple[str, str]:
+    package_match = re.search(r"apt\s+install\s+([a-z0-9.+-]+-venv)", output)
+    package = package_match.group(1) if package_match else "python3-venv"
+    if package != "python3-venv":
+        install = (
+            f"(apt-get install -y --no-install-recommends {package} || "
+            "apt-get install -y --no-install-recommends python3-venv)"
+        )
+    else:
+        install = "apt-get install -y --no-install-recommends python3-venv"
+    patch_script = (
+        "if command -v apt-get >/dev/null 2>&1; then "
+        "export DEBIAN_FRONTEND=noninteractive; apt-get update && "
+        f"{install}; "
+        "else echo 'apt-get not available for repair' >&2; exit 127; fi"
+    )
+    command = (
+        f"{patch_script} && "
+        "rm -rf /tmp/pheragent-venv-check && "
+        "python3 -m venv /tmp/pheragent-venv-check"
+    )
+    return command, patch_script
+
+
 def _dedupe(suggestions: list[RepairCommand]) -> list[RepairCommand]:
     seen: set[str] = set()
     deduped: list[RepairCommand] = []
@@ -408,6 +483,10 @@ def _optional_text(value: object) -> str | None:
 
 
 def _safe_repair_command(command: str) -> bool:
+    return _repair_command_rejection_reason(command) is None
+
+
+def _repair_command_rejection_reason(command: str) -> str | None:
     normalized = re.sub(r"\s+", " ", command.strip().lower())
     dangerous_tokens = (
         "docker ",
@@ -426,7 +505,13 @@ def _safe_repair_command(command: str) -> bool:
         "/tmp/pheragent/blocks/",
         "/tmp/pheragent/blocks",
     )
-    return not any(token in normalized for token in dangerous_tokens + transient_runtime_paths)
+    for token in dangerous_tokens:
+        if token in normalized:
+            return f"unsafe token {token!r}"
+    for token in transient_runtime_paths:
+        if token in normalized:
+            return f"transient runtime path {token!r}"
+    return None
 
 
 _REPAIR_SYSTEM_PROMPT = """
