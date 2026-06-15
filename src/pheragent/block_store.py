@@ -84,6 +84,14 @@ class BlockStore:
         block_logs_dir = self.logs_dir / block_id
         block_logs_dir.mkdir(parents=True, exist_ok=True)
         log_path = block_logs_dir / f"{phase}-attempt-{attempt}.log"
+        if log_path.exists():
+            counter = 2
+            while True:
+                candidate = block_logs_dir / f"{phase}-attempt-{attempt}-{counter}.log"
+                if not candidate.exists():
+                    log_path = candidate
+                    break
+                counter += 1
         header = {
             "block_id": block_id,
             "phase": phase,

@@ -148,11 +148,23 @@ class BlockExecution:
 
 
 @dataclass(slots=True)
+class RepairProbeResult:
+    title: str
+    command: str
+    exit_code: int | None
+    timed_out: bool
+    stdout_tail: str
+    stderr_tail: str
+    duration_s: float = 0.0
+
+
+@dataclass(slots=True)
 class RepairContext:
     repo_context: RepoContext
     checkpoint_before: str | None
     previous_blocks: list[CommandBlock] = field(default_factory=list)
     recent_executions: list[BlockExecution] = field(default_factory=list)
+    probe_results: list[RepairProbeResult] = field(default_factory=list)
 
 
 @dataclass(slots=True)

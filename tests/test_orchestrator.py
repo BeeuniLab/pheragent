@@ -12,7 +12,7 @@ from pheragent.models import (
     RepoContext,
 )
 from pheragent.orchestrator import EnvironmentBuilder
-from pheragent.repair import RepairCommand, RepairPlanner
+from pheragent.repair import RepairCommand, RepairPlanner, RepairProbeCommand
 
 
 class FakeRuntime:
@@ -133,6 +133,113 @@ def test_environment_builder_repairs_failed_block_and_persists_patch(tmp_path: P
     assert first_log.is_file()
     assert '"phase": "docker_build"' in first_log.read_text(encoding="utf-8")
     assert '"log_path"' in (result.state_dir / "executions.jsonl").read_text(encoding="utf-8")
+
+
+def test_environment_builder_passes_probe_results_to_llm_repair(tmp_path: Path) -> None:
+    class ProbeRuntime(FakeRuntime):
+        def execute_script(self, script_path: Path, *, timeout: float) -> CommandResult:
+            del timeout
+            self.block_runs += 1
+            script = script_path.read_text(encoding="utf-8")
+            if "cmake" not in script:
+                return CommandResult(exit_code=1, stderr="cmake: not found")
+            return CommandResult(exit_code=0, stdout="ok")
+
+        def execute_command(self, command: str, *, timeout: float) -> CommandResult:
+            del timeout
+            if "container preflight" in command:
+                return CommandResult(exit_code=0, stdout="tool:python3=/usr/bin/python3\n")
+            if "command -v cmake" in command:
+                return CommandResult(exit_code=0, stdout="cmake missing\n")
+            if "cmake" in command:
+                return CommandResult(exit_code=0, stdout="installed cmake")
+            return CommandResult(exit_code=0, stdout="ok")
+
+    class ProbeAwareLLMRepairPlanner:
+        def __init__(self) -> None:
+            self.repair_contexts: list[RepairContext | None] = []
+            self.last_probe_raw_response = (
+                '{"probes":[{"title":"Check cmake",'
+                '"command":"command -v cmake || echo cmake missing"}]}'
+            )
+            self.last_probe_parse_diagnostics: list[str] = []
+            self.last_raw_response = (
+                '{"repairs":[{"title":"Install cmake",'
+                '"command":"apt-get update && apt-get install -y cmake",'
+                '"patch_script":"apt-get update && apt-get install -y cmake"}]}'
+            )
+            self.last_parse_diagnostics: list[str] = []
+
+        def propose_probes(
+            self,
+            block: CommandBlock,
+            result: CommandResult,
+            *,
+            context: RepairContext | None = None,
+            heuristic_hints: list[RepairCommand] | None = None,
+        ) -> list[RepairProbeCommand]:
+            del block, result, context, heuristic_hints
+            return [
+                RepairProbeCommand(
+                    title="Check cmake",
+                    command="command -v cmake || echo cmake missing",
+                )
+            ]
+
+        def suggest(
+            self,
+            block: CommandBlock,
+            result: CommandResult,
+            *,
+            context: RepairContext | None = None,
+            heuristic_hints: list[RepairCommand] | None = None,
+        ) -> list[RepairCommand]:
+            del block, result, heuristic_hints
+            self.repair_contexts.append(context)
+            assert context is not None
+            assert context.probe_results
+            assert "cmake missing" in context.probe_results[0].stdout_tail
+            return [
+                RepairCommand(
+                    title="Install cmake",
+                    command="apt-get update && apt-get install -y cmake",
+                    patch_script="apt-get update && apt-get install -y cmake",
+                )
+            ]
+
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="probe-repair",
+        max_repair_attempts=1,
+    )
+    planner = StaticPlanner(
+        [
+            CommandBlock(
+                id="01-python-deps",
+                title="Python Dependencies",
+                goal="install",
+                script="#!/bin/sh\necho python-deps\n",
+                order=1,
+            )
+        ]
+    )
+    llm_planner = ProbeAwareLLMRepairPlanner()
+
+    result = EnvironmentBuilder(
+        request,
+        planner=planner,
+        repair_planner=RepairPlanner(llm_planner=llm_planner),
+        runtime_factory=ProbeRuntime,
+    ).build()
+
+    assert result.ok
+    assert llm_planner.repair_contexts
+    assert any(execution.phase == "llm_probe" for execution in result.executions)
+    assert any(execution.phase == "probe" for execution in result.executions)
 
 
 class StaticPlanner:

@@ -16,11 +16,12 @@ from .models import (
     CommandBlock,
     CommandResult,
     RepairContext,
+    RepairProbeResult,
     RepoContext,
 )
 from .oracle import load_oracle_commands
 from .planner import BlockPlanner
-from .repair import RepairPlanner, make_repair_planner
+from .repair import RepairPlanner, RepairProbeCommand, make_repair_planner
 from .utils import new_run_id, tail_text
 
 RuntimeFactory = Callable[[BuildRequest, str], DockerRuntime]
@@ -344,6 +345,33 @@ class EnvironmentBuilder:
                 completed_blocks=completed_blocks,
                 executions=executions,
             )
+            probes = self.repair_planner.propose_probes(
+                block,
+                last_result,
+                context=repair_context,
+            )
+            self._record_llm_probe_status(
+                block=block,
+                attempt=repair_attempt,
+                baseline_image=baseline_image,
+                executions=executions,
+            )
+            probe_results = self._run_repair_probes(
+                runtime=runtime,
+                block=block,
+                baseline_image=baseline_image,
+                attempt=repair_attempt,
+                probes=probes,
+                executions=executions,
+            )
+            if probe_results:
+                repair_context = self._repair_context(
+                    repo_context=repo_context,
+                    baseline_image=baseline_image,
+                    completed_blocks=completed_blocks,
+                    executions=executions,
+                    probe_results=probe_results,
+                )
             suggestions = self.repair_planner.suggest(
                 block,
                 last_result,
@@ -439,6 +467,7 @@ class EnvironmentBuilder:
         baseline_image: str,
         completed_blocks: list[CommandBlock],
         executions: list[BlockExecution],
+        probe_results: list[RepairProbeResult] | None = None,
     ) -> RepairContext:
         return RepairContext(
             repo_context=repo_context,
@@ -449,7 +478,54 @@ class EnvironmentBuilder:
                 if block.status in {"succeeded", "repaired", "skipped"}
             ],
             recent_executions=executions[-8:],
+            probe_results=probe_results or [],
         )
+
+    def _run_repair_probes(
+        self,
+        *,
+        runtime: DockerRuntime,
+        block: CommandBlock,
+        baseline_image: str,
+        attempt: int,
+        probes: list[RepairProbeCommand],
+        executions: list[BlockExecution],
+    ) -> list[RepairProbeResult]:
+        if not probes:
+            return []
+        self._emit(
+            f"run {self.run_id}: block {block.id} probe attempt {attempt} "
+            f"({len(probes)} commands)"
+        )
+        runtime.recreate_from(baseline_image)
+        probe_results: list[RepairProbeResult] = []
+        timeout = min(self.request.command_timeout, 60.0)
+        for index, probe in enumerate(probes, start=1):
+            self._emit(f"run {self.run_id}: block {block.id} probe {index}/{len(probes)}")
+            command_result = runtime.execute_command(probe.command, timeout=timeout)
+            execution = self._execution_from_result(
+                block_id=block.id,
+                phase="probe",
+                attempt=attempt,
+                command_result=command_result,
+                checkpoint_before=baseline_image,
+                repair_command=probe.command,
+            )
+            executions.append(execution)
+            self.store.append_execution(execution)
+            probe_results.append(
+                RepairProbeResult(
+                    title=probe.title,
+                    command=probe.command,
+                    exit_code=command_result.exit_code,
+                    timed_out=command_result.timed_out,
+                    stdout_tail=tail_text(command_result.stdout, max_chars=4000),
+                    stderr_tail=tail_text(command_result.stderr, max_chars=4000),
+                    duration_s=command_result.duration_s,
+                )
+            )
+        runtime.recreate_from(baseline_image)
+        return probe_results
 
     def _execute_block(
         self,
@@ -583,6 +659,36 @@ class EnvironmentBuilder:
         execution = self._execution_from_result(
             block_id=block.id,
             phase="llm_repair",
+            attempt=attempt,
+            command_result=result,
+            checkpoint_before=baseline_image,
+        )
+        executions.append(execution)
+        self.store.append_execution(execution)
+
+    def _record_llm_probe_status(
+        self,
+        *,
+        block: CommandBlock,
+        attempt: int,
+        baseline_image: str,
+        executions: list[BlockExecution],
+    ) -> None:
+        error = getattr(self.repair_planner, "last_probe_error", None)
+        raw_response = getattr(self.repair_planner, "last_probe_raw_response", None)
+        diagnostics = getattr(self.repair_planner, "last_probe_parse_diagnostics", [])
+        stdout = _llm_repair_debug_output(raw_response, diagnostics)
+        if not error and not stdout:
+            return
+        result = CommandResult(
+            exit_code=0 if not error else 1,
+            stdout=stdout,
+            stderr=error or "",
+            command=["llm-probe", block.id],
+        )
+        execution = self._execution_from_result(
+            block_id=block.id,
+            phase="llm_probe",
             attempt=attempt,
             command_result=result,
             checkpoint_before=baseline_image,

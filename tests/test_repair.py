@@ -3,7 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pheragent.models import BlockExecution, CommandBlock, CommandResult, RepairContext, RepoContext
+from pheragent.models import (
+    BlockExecution,
+    CommandBlock,
+    CommandResult,
+    RepairContext,
+    RepairProbeResult,
+    RepoContext,
+)
 from pheragent.repair import (
     OpenAIResponsesRepairConfig,
     OpenAIResponsesRepairPlanner,
@@ -295,6 +302,31 @@ def test_openai_responses_repair_parser_records_empty_repairs_diagnostic() -> No
     assert planner.last_parse_diagnostics == ["repairs list is empty"]
 
 
+def test_openai_responses_probe_parser_filters_mutating_commands() -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
+
+    probes = planner._parse_probes(
+        """
+        {
+          "probes": [
+            {
+              "title": "Bad install",
+              "command": "python3 -m pip install pytest"
+            },
+            {
+              "title": "Read pyproject",
+              "command": "sed -n '1,120p' pyproject.toml"
+            }
+          ]
+        }
+        """
+    )
+
+    assert len(probes) == 1
+    assert probes[0].title == "Read pyproject"
+    assert "mutating or network token" in planner.last_probe_parse_diagnostics[0]
+
+
 def test_openai_responses_repair_payload_includes_repair_context(tmp_path: Path) -> None:
     planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
     block = CommandBlock(
@@ -331,6 +363,16 @@ def test_openai_responses_repair_payload_includes_repair_context(tmp_path: Path)
                 stderr_tail="cmake: not found",
             )
         ],
+        probe_results=[
+            RepairProbeResult(
+                title="Check cmake",
+                command="command -v cmake || true",
+                exit_code=0,
+                timed_out=False,
+                stdout_tail="",
+                stderr_tail="",
+            )
+        ],
     )
 
     heuristic_hints = [
@@ -353,6 +395,7 @@ def test_openai_responses_repair_payload_includes_repair_context(tmp_path: Path)
     assert "tool:cmake=missing" in content["repair_context"]["repo_context"]["runtime_notes"]
     assert content["repair_context"]["previous_blocks"][0]["id"] == "00-preflight"
     assert content["repair_context"]["recent_executions"][0]["phase"] == "block"
+    assert content["repair_context"]["probe_results"][0]["title"] == "Check cmake"
     assert content["heuristic_hints"][0]["title"] == "Install cmake"
     assert payload["stream"] is True
     assert payload["text"] == {"format": {"type": "json_object"}}

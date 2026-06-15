@@ -27,6 +27,12 @@ class RepairCommand:
 
 
 @dataclass(slots=True)
+class RepairProbeCommand:
+    title: str
+    command: str
+
+
+@dataclass(slots=True)
 class OpenAIResponsesRepairConfig:
     model: str = "gpt-5.5"
     api_key_env: str = "OPENAI_API_KEY"
@@ -44,6 +50,37 @@ class OpenAIResponsesRepairPlanner:
         self.config = config
         self.last_raw_response: str | None = None
         self.last_parse_diagnostics: list[str] = []
+        self.last_probe_raw_response: str | None = None
+        self.last_probe_parse_diagnostics: list[str] = []
+
+    def propose_probes(
+        self,
+        block: CommandBlock,
+        result: CommandResult,
+        *,
+        context: RepairContext | None = None,
+        heuristic_hints: list[RepairCommand] | None = None,
+    ) -> list[RepairProbeCommand]:
+        api_key = os.getenv(self.config.api_key_env)
+        if not api_key:
+            raise RuntimeError(f"missing API key in env var {self.config.api_key_env}")
+        base_url = (self.config.base_url or os.getenv(self.config.base_url_env) or "").rstrip("/")
+        if not base_url:
+            base_url = "https://api.openai.com/v1"
+
+        self.last_probe_raw_response = None
+        self.last_probe_parse_diagnostics = []
+        content = self._create_response(
+            _openai_client(base_url=base_url, api_key=api_key, timeout=self.config.timeout),
+            self._probe_request_payload(
+                block,
+                result,
+                context,
+                heuristic_hints=heuristic_hints,
+            ),
+        )
+        self.last_probe_raw_response = content
+        return self._parse_probes(content)
 
     def suggest(
         self,
@@ -82,6 +119,54 @@ class OpenAIResponsesRepairPlanner:
         *,
         heuristic_hints: list[RepairCommand] | None = None,
     ) -> dict[str, Any]:
+        payload = self._failure_payload(
+            block,
+            result,
+            context,
+            heuristic_hints=heuristic_hints,
+        )
+        return {
+            "model": self.config.model,
+            "instructions": _REPAIR_SYSTEM_PROMPT,
+            "input": json.dumps(payload, ensure_ascii=False, indent=2),
+            "temperature": self.config.temperature,
+            "max_output_tokens": self.config.max_tokens,
+            "text": {"format": {"type": "json_object"}},
+            "stream": True,
+        }
+
+    def _probe_request_payload(
+        self,
+        block: CommandBlock,
+        result: CommandResult,
+        context: RepairContext | None = None,
+        *,
+        heuristic_hints: list[RepairCommand] | None = None,
+    ) -> dict[str, Any]:
+        payload = self._failure_payload(
+            block,
+            result,
+            context,
+            heuristic_hints=heuristic_hints,
+        )
+        return {
+            "model": self.config.model,
+            "instructions": _PROBE_SYSTEM_PROMPT,
+            "input": json.dumps(payload, ensure_ascii=False, indent=2),
+            "temperature": self.config.temperature,
+            "max_output_tokens": min(self.config.max_tokens, 1024),
+            "text": {"format": {"type": "json_object"}},
+            "stream": True,
+        }
+
+    def _failure_payload(
+        self,
+        block: CommandBlock,
+        result: CommandResult,
+        context: RepairContext | None = None,
+        *,
+        heuristic_hints: list[RepairCommand] | None = None,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "block": to_jsonable(block),
             "failure": {
@@ -95,15 +180,7 @@ class OpenAIResponsesRepairPlanner:
             payload["repair_context"] = to_jsonable(context)
         if heuristic_hints:
             payload["heuristic_hints"] = [to_jsonable(hint) for hint in heuristic_hints]
-        return {
-            "model": self.config.model,
-            "instructions": _REPAIR_SYSTEM_PROMPT,
-            "input": json.dumps(payload, ensure_ascii=False, indent=2),
-            "temperature": self.config.temperature,
-            "max_output_tokens": self.config.max_tokens,
-            "text": {"format": {"type": "json_object"}},
-            "stream": True,
-        }
+        return payload
 
     def _create_response(
         self,
@@ -185,6 +262,42 @@ class OpenAIResponsesRepairPlanner:
             )
         return _dedupe(repairs[:3])
 
+    def _parse_probes(self, content: str) -> list[RepairProbeCommand]:
+        self.last_probe_parse_diagnostics = []
+        try:
+            data = _parse_json_object(content)
+        except Exception as exc:
+            self.last_probe_parse_diagnostics.append(f"parse_error: {exc}")
+            raise
+        raw_probes = data.get("probes")
+        if raw_probes is None and "command" in data:
+            raw_probes = [data]
+        if not isinstance(raw_probes, list):
+            self.last_probe_parse_diagnostics.append("missing or invalid probes list")
+            raise ValueError("LLM probe JSON must contain a probes list")
+        if not raw_probes:
+            self.last_probe_parse_diagnostics.append("probes list is empty")
+
+        probes: list[RepairProbeCommand] = []
+        for index, item in enumerate(raw_probes):
+            diagnostic_prefix = f"probes[{index}]"
+            if not isinstance(item, dict):
+                self.last_probe_parse_diagnostics.append(f"{diagnostic_prefix} is not an object")
+                continue
+            command = _optional_text(item.get("command"))
+            if not command:
+                self.last_probe_parse_diagnostics.append(f"{diagnostic_prefix} missing command")
+                continue
+            rejection = _probe_command_rejection_reason(command)
+            if rejection:
+                self.last_probe_parse_diagnostics.append(
+                    f"{diagnostic_prefix}.command rejected: {rejection}"
+                )
+                continue
+            title = _optional_text(item.get("title")) or "LLM probe"
+            probes.append(RepairProbeCommand(title=title, command=command))
+        return _dedupe_probes(probes[:5])
+
 
 class RepairPlanner:
     def __init__(self, llm_planner: OpenAIResponsesRepairPlanner | None = None):
@@ -192,6 +305,38 @@ class RepairPlanner:
         self.last_llm_error: str | None = None
         self.last_llm_raw_response: str | None = None
         self.last_llm_parse_diagnostics: list[str] = []
+        self.last_probe_error: str | None = None
+        self.last_probe_raw_response: str | None = None
+        self.last_probe_parse_diagnostics: list[str] = []
+
+    def propose_probes(
+        self,
+        block: CommandBlock,
+        result: CommandResult,
+        *,
+        context: RepairContext | None = None,
+    ) -> list[RepairProbeCommand]:
+        self.last_probe_error = None
+        self.last_probe_raw_response = None
+        self.last_probe_parse_diagnostics = []
+        heuristic_hints = _heuristic_repair_hints(block, result)
+
+        if self.llm_planner is None or not hasattr(self.llm_planner, "propose_probes"):
+            return []
+
+        try:
+            probes = self.llm_planner.propose_probes(
+                block,
+                result,
+                context=context,
+                heuristic_hints=heuristic_hints,
+            )
+            self._capture_probe_debug()
+            return _dedupe_probes(probes)
+        except Exception as exc:
+            self._capture_probe_debug()
+            self.last_probe_error = str(exc)
+            return []
 
     def suggest(
         self,
@@ -230,6 +375,14 @@ class RepairPlanner:
         diagnostics = getattr(self.llm_planner, "last_parse_diagnostics", [])
         self.last_llm_raw_response = raw_response if isinstance(raw_response, str) else None
         self.last_llm_parse_diagnostics = list(diagnostics or [])
+
+    def _capture_probe_debug(self) -> None:
+        if self.llm_planner is None:
+            return
+        raw_response = getattr(self.llm_planner, "last_probe_raw_response", None)
+        diagnostics = getattr(self.llm_planner, "last_probe_parse_diagnostics", [])
+        self.last_probe_raw_response = raw_response if isinstance(raw_response, str) else None
+        self.last_probe_parse_diagnostics = list(diagnostics or [])
 
     def patch_block(self, block: CommandBlock, repair: RepairCommand) -> CommandBlock:
         if repair.patch_validation_command:
@@ -441,6 +594,17 @@ def _dedupe(suggestions: list[RepairCommand]) -> list[RepairCommand]:
     return deduped
 
 
+def _dedupe_probes(probes: list[RepairProbeCommand]) -> list[RepairProbeCommand]:
+    seen: set[str] = set()
+    deduped: list[RepairProbeCommand] = []
+    for probe in probes:
+        if probe.command in seen:
+            continue
+        seen.add(probe.command)
+        deduped.append(probe)
+    return deduped
+
+
 def _uv_tool_venv_command() -> str:
     return (
         "export PIP_BREAK_SYSTEM_PACKAGES=1 && "
@@ -484,6 +648,50 @@ def _optional_text(value: object) -> str | None:
 
 def _safe_repair_command(command: str) -> bool:
     return _repair_command_rejection_reason(command) is None
+
+
+def _probe_command_rejection_reason(command: str) -> str | None:
+    if len(command) > 1000:
+        return "command is too long"
+    if "\n" in command or "\r" in command:
+        return "multi-line commands are not allowed"
+    repair_rejection = _repair_command_rejection_reason(command)
+    if repair_rejection:
+        return repair_rejection
+
+    normalized = re.sub(r"\s+", " ", command.strip().lower())
+    mutating_tokens = (
+        "apt-get install",
+        "apt install",
+        "apt-get upgrade",
+        "apt upgrade",
+        "apt-get remove",
+        "apt remove",
+        "apk add",
+        "yum install",
+        "dnf install",
+        "pip install",
+        "pip3 install",
+        "python -m pip install",
+        "python3 -m pip install",
+        "uv sync",
+        "uv pip install",
+        "poetry install",
+        "pipenv install",
+        "npm install",
+        "npm i ",
+        "pnpm install",
+        "yarn install",
+        "cargo install",
+        "go install",
+        "make install",
+        "curl ",
+        "wget ",
+    )
+    for token in mutating_tokens:
+        if token in normalized:
+            return f"mutating or network token {token!r}"
+    return None
 
 
 def _repair_command_rejection_reason(command: str) -> str | None:
@@ -545,4 +753,33 @@ Rules:
   failure and runtime context.
 - Use repair_context to account for container OS/tools, previous successful blocks,
   and recent failures.
+- If repair_context.probe_results are present, use them as observed container
+  evidence for this failed block.
+""".strip()
+
+
+_PROBE_SYSTEM_PROMPT = """
+You choose a few safe shell probes to gather missing context before repairing one
+failed environment setup block inside an isolated Docker container.
+Return strict JSON only:
+{
+  "probes": [
+    {
+      "title": "short title",
+      "command": "single-line POSIX sh command"
+    }
+  ]
+}
+
+Rules:
+- Return at most 5 probes. Return {"probes": []} if the failure is already clear.
+- Probes must inspect only local repo/container state or run small validation checks.
+- Do not install packages, sync dependencies, modify the repo, call network tools,
+  start services, use docker/podman, or call /tmp/pheragent/blocks/*.sh.
+- Prefer commands like ls, find with shallow depth, sed/head on manifests,
+  python/node version checks, import checks, dpkg/apt-cache queries, and env probes.
+- Keep each command single-line, deterministic, and fast.
+- The orchestrator will run accepted probes from the failed block baseline and
+  then ask for the actual repair command with probe_results included.
+- The word JSON appears here intentionally because JSON mode requires an explicit JSON instruction.
 """.strip()
