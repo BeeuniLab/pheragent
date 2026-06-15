@@ -171,7 +171,7 @@ class RepairPlanner:
         context: RepairContext | None = None,
     ) -> list[RepairCommand]:
         self.last_llm_error = None
-        heuristic_suggestions = _heuristic_repairs(block, result)
+        heuristic_hints = _heuristic_repair_hints(block, result)
 
         if self.llm_planner is not None:
             try:
@@ -179,15 +179,15 @@ class RepairPlanner:
                     block,
                     result,
                     context=context,
-                    heuristic_hints=heuristic_suggestions,
+                    heuristic_hints=heuristic_hints,
                 )
                 if llm_suggestions:
-                    return _dedupe(llm_suggestions + heuristic_suggestions)
+                    return _dedupe(llm_suggestions)
                 self.last_llm_error = "LLM repair returned no usable suggestions"
             except Exception as exc:
                 self.last_llm_error = str(exc)
 
-        return _dedupe(heuristic_suggestions)
+        return []
 
     def patch_block(self, block: CommandBlock, repair: RepairCommand) -> CommandBlock:
         if repair.patch_validation_command:
@@ -216,7 +216,7 @@ class RepairPlanner:
         return block
 
 
-def _heuristic_repairs(block: CommandBlock, result: CommandResult) -> list[RepairCommand]:
+def _heuristic_repair_hints(block: CommandBlock, result: CommandResult) -> list[RepairCommand]:
     output = result.combined_output.lower()
     suggestions: list[RepairCommand] = []
 
@@ -446,8 +446,9 @@ Rules:
 - Keep each repair small enough to belong to the failed block.
 - Analyze the failed block and failure stdout/stderr first; repair_context and
   heuristic_hints are supporting evidence, not a substitute for the error.
-- Treat heuristic_hints as candidate clues or fallback repairs. Use them only when
-  they actually match the failure and runtime context.
+- Treat heuristic_hints as candidate clues for your analysis. They are not
+  authoritative repairs; use or adapt them only when they actually match the
+  failure and runtime context.
 - Use repair_context to account for container OS/tools, previous successful blocks,
   and recent failures.
 """.strip()

@@ -3,9 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from pheragent.block_store import BlockStore
-from pheragent.models import BuildRequest, Checkpoint, CommandBlock, CommandResult, RepoContext
+from pheragent.models import (
+    BuildRequest,
+    Checkpoint,
+    CommandBlock,
+    CommandResult,
+    RepairContext,
+    RepoContext,
+)
 from pheragent.orchestrator import EnvironmentBuilder
-from pheragent.repair import RepairPlanner
+from pheragent.repair import RepairCommand, RepairPlanner
 
 
 class FakeRuntime:
@@ -76,6 +83,25 @@ class FakeRuntime:
         pass
 
 
+class BuildEssentialLLMRepairPlanner:
+    def suggest(
+        self,
+        block: CommandBlock,
+        result: CommandResult,
+        *,
+        context: RepairContext | None = None,
+        heuristic_hints: list[RepairCommand] | None = None,
+    ) -> list[RepairCommand]:
+        del block, result, context, heuristic_hints
+        return [
+            RepairCommand(
+                title="Install build-essential",
+                command="apt-get update && apt-get install -y build-essential",
+                patch_script="apt-get update && apt-get install -y build-essential",
+            )
+        ]
+
+
 def test_environment_builder_repairs_failed_block_and_persists_patch(tmp_path: Path) -> None:
     FakeRuntime.instances = []
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
@@ -90,7 +116,7 @@ def test_environment_builder_repairs_failed_block_and_persists_patch(tmp_path: P
 
     result = EnvironmentBuilder(
         request,
-        repair_planner=RepairPlanner(),
+        repair_planner=RepairPlanner(llm_planner=BuildEssentialLLMRepairPlanner()),
         runtime_factory=FakeRuntime,
     ).build()
 

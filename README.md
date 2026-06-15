@@ -189,8 +189,8 @@ rolled back to the block baseline before each repair/replay attempt.
   preflight runtime context.
 - Repair is local to the failed block. When LLM support is active, the failed
   block, stdout/stderr tails, runtime context, and heuristic hints are sent to
-  the OpenAI SDK Responses repair planner first; deterministic heuristics remain
-  the fallback when LLM repair is unavailable or empty.
+  the OpenAI SDK Responses repair planner. Deterministic heuristics are prompt
+  guidance only and are not executed directly.
 - LLM planning uses the OpenAI Python SDK Responses API with streaming and does
   not store API keys on disk. Transient LLM request failures are retried; `auto`
   mode falls back to deterministic rules if the LLM planner cannot produce a

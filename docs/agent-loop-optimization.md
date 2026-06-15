@@ -28,7 +28,7 @@ checkpointed run.
 7. On failure, build a local repair context from the failed block, error output,
    prior successful blocks, recent execution metadata, and container preflight.
 8. When LLM repair is active, send the failure bundle to the LLM repair planner
-   first and use deterministic local heuristics as hints/fallback repairs.
+   and include deterministic local heuristics only as prompt hints.
 9. On the success path, continue in the current container; roll back to the block
    baseline checkpoint only for failure/repair or explicit resume.
 
@@ -45,7 +45,8 @@ checkpointed run.
   `context.json`.
 - LLM repair payloads now include a `RepairContext` with repo/runtime context,
   prior successful blocks, recent execution records, the baseline checkpoint, and
-  heuristic hints derived from the failure output.
+  heuristic hints derived from the failure output. Heuristic hints are prompt
+  guidance only and are not executed directly.
 - Successful blocks commit checkpoints but keep using the current container;
   Docker restore is reserved for failure/repair and resume paths.
 - The public CLI remains centered on the overall agent planner; repair remains

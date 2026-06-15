@@ -9,11 +9,12 @@ from pheragent.repair import (
     OpenAIResponsesRepairPlanner,
     RepairCommand,
     RepairPlanner,
+    _heuristic_repair_hints,
     make_repair_planner,
 )
 
 
-def test_repair_planner_handles_pep_668_uv_install_failure() -> None:
+def test_repair_hints_include_pep_668_uv_install_failure() -> None:
     block = CommandBlock(
         id="02-python-deps",
         title="Python Dependencies",
@@ -25,7 +26,7 @@ def test_repair_planner_handles_pep_668_uv_install_failure() -> None:
         stderr="error: externally-managed-environment\nhint: See PEP 668",
     )
 
-    suggestions = RepairPlanner().suggest(block, result)
+    suggestions = _heuristic_repair_hints(block, result)
 
     assert suggestions
     assert "python3 -m venv .pheragent-tools" in suggestions[0].command
@@ -36,7 +37,7 @@ def test_repair_planner_handles_pep_668_uv_install_failure() -> None:
     ].command
 
 
-def test_repair_planner_pins_pnpm_for_older_node_runtime() -> None:
+def test_repair_hints_pin_pnpm_for_older_node_runtime() -> None:
     block = CommandBlock(
         id="03-node-deps",
         title="Node Dependencies",
@@ -52,7 +53,7 @@ def test_repair_planner_pins_pnpm_for_older_node_runtime() -> None:
         ),
     )
 
-    suggestions = RepairPlanner().suggest(block, result)
+    suggestions = _heuristic_repair_hints(block, result)
 
     assert suggestions
     assert suggestions[0].title == "Install Node-compatible pnpm"
@@ -60,7 +61,7 @@ def test_repair_planner_pins_pnpm_for_older_node_runtime() -> None:
     assert 'npm install -g "$PNPM_PACKAGE"' in suggestions[0].command
 
 
-def test_repair_planner_adds_python_alias() -> None:
+def test_repair_hints_add_python_alias() -> None:
     block = CommandBlock(
         id="03-validation",
         title="Validation",
@@ -69,13 +70,13 @@ def test_repair_planner_adds_python_alias() -> None:
     )
     result = CommandResult(exit_code=127, stderr="sh: 1: python: not found")
 
-    suggestions = RepairPlanner().suggest(block, result)
+    suggestions = _heuristic_repair_hints(block, result)
 
     assert suggestions
     assert "/usr/local/bin/python" in suggestions[0].command
 
 
-def test_repair_planner_relaxes_dunder_version_validation() -> None:
+def test_repair_hints_relax_dunder_version_validation() -> None:
     block = CommandBlock(
         id="02-python-deps",
         title="Python Dependencies",
@@ -88,7 +89,7 @@ def test_repair_planner_relaxes_dunder_version_validation() -> None:
         stderr="AttributeError: module 'flask' has no attribute '__version__'",
     )
 
-    suggestions = RepairPlanner().suggest(block, result)
+    suggestions = _heuristic_repair_hints(block, result)
     patched = RepairPlanner().patch_block(block, suggestions[0])
 
     assert suggestions
@@ -130,12 +131,12 @@ def test_repair_planner_prefers_llm_suggestions_and_passes_heuristic_hints() -> 
     suggestions = RepairPlanner(llm_planner=llm_planner).suggest(block, result)
 
     assert suggestions[0].title == "Install cmake"
-    assert "build-essential" in suggestions[1].command
+    assert len(suggestions) == 1
     assert llm_planner.heuristic_hints is not None
     assert "build-essential" in llm_planner.heuristic_hints[0].command
 
 
-def test_repair_planner_falls_back_to_heuristics_when_llm_fails() -> None:
+def test_repair_planner_does_not_execute_heuristic_hints_when_llm_fails() -> None:
     class FailingLLMRepairPlanner:
         def suggest(
             self,
@@ -159,9 +160,22 @@ def test_repair_planner_falls_back_to_heuristics_when_llm_fails() -> None:
 
     suggestions = planner.suggest(block, result)
 
-    assert suggestions
-    assert "build-essential" in suggestions[0].command
+    assert suggestions == []
     assert planner.last_llm_error == "proxy unavailable"
+
+
+def test_repair_planner_does_not_execute_hints_without_llm() -> None:
+    block = CommandBlock(
+        id="02-python-deps",
+        title="Python Dependencies",
+        goal="Install deps",
+        script="#!/bin/sh\npip install example\n",
+    )
+    result = CommandResult(exit_code=1, stderr="gcc: not found")
+
+    suggestions = RepairPlanner().suggest(block, result)
+
+    assert suggestions == []
 
 
 def test_repair_planner_records_llm_failure_for_unknown_errors() -> None:
