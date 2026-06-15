@@ -730,16 +730,45 @@ def _repair_command_rejection_reason(command: str) -> str | None:
 def _rm_rf_rejection_reason(normalized_command: str) -> str | None:
     pattern = r"(?:^|[;&|]\s*)rm\s+(-[a-z]*[rf][a-z]*[rf][a-z]*)\s+([^;&|]+)"
     for match in re.finditer(pattern, normalized_command):
-        target = match.group(2).strip().strip("\"'")
-        if target in {"/", "/*"}:
-            return f"unsafe rm target {target!r}"
-        if target.startswith("/var/lib/apt/lists/") or target == "/var/lib/apt/lists/*":
-            continue
-        if target.startswith("/tmp/pheragent-"):
-            continue
-        if target.startswith("/"):
-            return f"unsafe absolute rm target {target!r}"
+        targets = [target.strip().strip("\"'") for target in match.group(2).split()]
+        for target in targets:
+            if target in {"/", "/*"}:
+                return f"unsafe rm target {target!r}"
+            if _allowed_absolute_rm_target(target):
+                continue
+            if target.startswith("/"):
+                return f"unsafe absolute rm target {target!r}"
     return None
+
+
+def _allowed_absolute_rm_target(target: str) -> bool:
+    if target.startswith("/var/lib/apt/lists/") or target == "/var/lib/apt/lists/*":
+        return True
+    if target.startswith("/tmp/") and target not in {"/tmp/", "/tmp/*"}:
+        return True
+
+    repo_prefix = "/workspace/repo/"
+    if not target.startswith(repo_prefix):
+        return False
+    relative = target[len(repo_prefix) :].strip("/")
+    if not relative or relative in {"*", "."}:
+        return False
+    safe_names = {
+        ".cache",
+        ".mypy_cache",
+        ".nox",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".tox",
+        ".venv",
+        "__pycache__",
+        "build",
+        "dist",
+        "node_modules",
+        "target",
+    }
+    first_part = relative.split("/", 1)[0]
+    return first_part in safe_names
 
 
 _REPAIR_SYSTEM_PROMPT = """

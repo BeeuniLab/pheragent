@@ -340,6 +340,73 @@ def test_openai_responses_repair_parser_rejects_absolute_rm_rf_targets() -> None
     assert "unsafe absolute rm target" in planner.last_parse_diagnostics[0]
 
 
+def test_openai_responses_repair_parser_allows_common_absolute_cleanup_targets() -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
+    command = (
+        "rm -rf /workspace/repo/.venv /workspace/repo/node_modules "
+        "/workspace/repo/build /tmp/pheragent-cache"
+    )
+
+    repairs = planner._parse_repairs(
+        json.dumps(
+            {
+                "repairs": [
+                    {
+                        "title": "Clean caches",
+                        "command": command,
+                        "patch_script": command,
+                    }
+                ]
+            }
+        )
+    )
+
+    assert len(repairs) == 1
+    assert planner.last_parse_diagnostics == []
+
+
+def test_openai_responses_repair_parser_rejects_workspace_repo_root_cleanup() -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
+
+    repairs = planner._parse_repairs(
+        json.dumps(
+            {
+                "repairs": [
+                    {
+                        "title": "Bad cleanup",
+                        "command": "rm -rf /workspace/repo",
+                        "patch_script": "rm -rf /workspace/repo",
+                    }
+                ]
+            }
+        )
+    )
+
+    assert repairs == []
+    assert "unsafe absolute rm target" in planner.last_parse_diagnostics[0]
+
+
+def test_openai_responses_repair_parser_checks_all_rm_rf_targets() -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
+
+    repairs = planner._parse_repairs(
+        json.dumps(
+            {
+                "repairs": [
+                    {
+                        "title": "Mixed cleanup",
+                        "command": "rm -rf /tmp/pheragent-cache /etc",
+                        "patch_script": "rm -rf /tmp/pheragent-cache /etc",
+                    }
+                ]
+            }
+        )
+    )
+
+    assert repairs == []
+    assert "unsafe absolute rm target '/etc'" in planner.last_parse_diagnostics[0]
+
+
 def test_openai_responses_repair_parser_records_empty_repairs_diagnostic() -> None:
     planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
 
