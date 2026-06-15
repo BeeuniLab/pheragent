@@ -60,6 +60,14 @@ class FakeOpenAI:
         type(self).clients.append(self)
 
 
+class FakeBadRequestError(Exception):
+    status_code = 400
+
+    def __init__(self, text: str):
+        super().__init__(text)
+        self.response = type("FakeResponse", (), {"text": text})()
+
+
 def _planner_response_events() -> list[FakeEvent]:
     content = json.dumps(
         {
@@ -139,6 +147,45 @@ def test_openai_responses_planner_uses_sdk_streaming(tmp_path: Path, monkeypatch
     input_text = payload["input"][0]["content"][0]
     assert input_text["type"] == "input_text"
     assert "repo_context" in json.loads(input_text["text"])
+
+
+def test_openai_responses_planner_removes_unsupported_max_output_tokens(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class RejectMaxOutputResponses:
+        def __init__(self):
+            self.calls: list[dict[str, Any]] = []
+
+        def create(self, **payload):
+            self.calls.append(payload)
+            if "max_output_tokens" in payload:
+                raise FakeBadRequestError('{"detail":"Unsupported parameter: max_output_tokens"}')
+            return FakeStream(_planner_response_events())
+
+    class RejectMaxOutputOpenAI:
+        clients: list[RejectMaxOutputOpenAI] = []
+
+        def __init__(self, **kwargs):
+            del kwargs
+            self.responses = RejectMaxOutputResponses()
+            type(self).clients.append(self)
+
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    context = RepoAnalyzer().analyze(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr("pheragent.llm_planner._openai_client", RejectMaxOutputOpenAI)
+    planner = OpenAIResponsesBlockPlanner(
+        OpenAIResponsesPlannerConfig(model="gpt-5.5", max_retries=1)
+    )
+
+    blocks = planner.plan(context)
+
+    calls = RejectMaxOutputOpenAI.clients[0].responses.calls
+    assert len(calls) == 2
+    assert "max_output_tokens" in calls[0]
+    assert "max_output_tokens" not in calls[1]
+    assert blocks[0].id == "00-custom"
 
 
 def test_openai_client_disables_sdk_retries() -> None:

@@ -85,18 +85,28 @@ class OpenAIResponsesBlockPlanner:
         content = ""
         max_attempts = max(1, self.config.max_retries)
         last_error: Exception | None = None
-        for attempt in range(1, max_attempts + 1):
+        request_payload = dict(payload)
+        attempt = 1
+        while attempt <= max_attempts:
             try:
-                stream = client.responses.create(**payload)
+                stream = client.responses.create(**request_payload)
                 content = _read_streamed_response(stream, error_context="LLM planner")
                 break
             except Exception as exc:
+                compatible_payload = _without_unsupported_response_parameter(
+                    request_payload,
+                    exc,
+                )
+                if compatible_payload is not None:
+                    request_payload = compatible_payload
+                    continue
                 last_error = RuntimeError(_format_llm_error("LLM planner", exc))
                 if attempt == max_attempts:
                     raise last_error from exc
                 if not _retryable_llm_error(exc):
                     raise last_error from exc
             _sleep_before_retry(attempt, self.config.retry_delay_s)
+            attempt += 1
         else:
             raise RuntimeError(f"LLM planner request failed: {last_error}") from last_error
 
@@ -205,6 +215,40 @@ def _response_text_input(text: str) -> list[dict[str, Any]]:
             ],
         }
     ]
+
+
+def _without_unsupported_response_parameter(
+    payload: dict[str, Any],
+    exc: Exception,
+) -> dict[str, Any] | None:
+    parameter = _unsupported_response_parameter(exc)
+    if parameter is None or parameter not in _OPTIONAL_RESPONSE_PARAMETERS:
+        return None
+    if parameter not in payload:
+        return None
+    compatible_payload = dict(payload)
+    compatible_payload.pop(parameter, None)
+    return compatible_payload
+
+
+_OPTIONAL_RESPONSE_PARAMETERS = frozenset(
+    {
+        "max_output_tokens",
+        "temperature",
+        "text",
+    }
+)
+
+
+def _unsupported_response_parameter(exc: Exception) -> str | None:
+    status_code = getattr(exc, "status_code", None)
+    if status_code != 400:
+        return None
+    detail = _api_status_detail(exc)
+    match = re.search(r"Unsupported parameter:\s*['\"]?([A-Za-z0-9_.-]+)", detail)
+    if match:
+        return match.group(1)
+    return None
 
 
 def _read_streamed_response(stream: Any, *, error_context: str) -> str:

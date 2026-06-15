@@ -14,6 +14,7 @@ from .llm_planner import (
     _response_text_input,
     _retryable_llm_error,
     _sleep_before_retry,
+    _without_unsupported_response_parameter,
 )
 from .models import CommandBlock, CommandResult, RepairContext, to_jsonable
 from .utils import shell_script, tail_text
@@ -195,18 +196,28 @@ class OpenAIResponsesRepairPlanner:
         content = ""
         max_attempts = max(1, self.config.max_retries)
         last_error: Exception | None = None
-        for attempt in range(1, max_attempts + 1):
+        request_payload = dict(payload)
+        attempt = 1
+        while attempt <= max_attempts:
             try:
-                stream = client.responses.create(**payload)
+                stream = client.responses.create(**request_payload)
                 content = _read_streamed_response(stream, error_context=error_context)
                 break
             except Exception as exc:
+                compatible_payload = _without_unsupported_response_parameter(
+                    request_payload,
+                    exc,
+                )
+                if compatible_payload is not None:
+                    request_payload = compatible_payload
+                    continue
                 last_error = RuntimeError(_format_llm_error(error_context, exc))
                 if attempt == max_attempts:
                     raise last_error from exc
                 if not _retryable_llm_error(exc):
                     raise last_error from exc
             _sleep_before_retry(attempt, self.config.retry_delay_s)
+            attempt += 1
         else:
             raise RuntimeError(f"LLM repair request failed: {last_error}") from last_error
 

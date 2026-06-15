@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from pheragent.models import (
     BlockExecution,
@@ -19,6 +20,14 @@ from pheragent.repair import (
     _heuristic_repair_hints,
     make_repair_planner,
 )
+
+
+class FakeBadRequestError(Exception):
+    status_code = 400
+
+    def __init__(self, text: str):
+        super().__init__(text)
+        self.response = type("FakeResponse", (), {"text": text})()
 
 
 def test_repair_hints_include_pep_668_uv_install_failure() -> None:
@@ -571,6 +580,61 @@ def test_openai_responses_repair_payload_includes_repair_context(tmp_path: Path)
     assert probe_payload["input"][0]["content"][0]["type"] == "input_text"
     probe_content = json.loads(probe_payload["input"][0]["content"][0]["text"])
     assert probe_content["repair_context"]["checkpoint_before"] == "fake:baseline"
+
+
+def test_openai_responses_repair_removes_unsupported_max_output_tokens() -> None:
+    class FakeEvent:
+        def __init__(self, event_type: str, **values: object):
+            self.type = event_type
+            for name, value in values.items():
+                setattr(self, name, value)
+
+    class FakeStream:
+        def __iter__(self):
+            return iter(
+                [
+                    FakeEvent("response.output_text.delta", delta='{"repairs": []}'),
+                    FakeEvent("response.completed"),
+                ]
+            )
+
+        def close(self) -> None:
+            pass
+
+    class RejectMaxOutputResponses:
+        def __init__(self):
+            self.calls: list[dict[str, Any]] = []
+
+        def create(self, **payload):
+            self.calls.append(payload)
+            if "max_output_tokens" in payload:
+                raise FakeBadRequestError('{"detail":"Unsupported parameter: max_output_tokens"}')
+            return FakeStream()
+
+    class FakeClient:
+        def __init__(self):
+            self.responses = RejectMaxOutputResponses()
+
+    client = FakeClient()
+    planner = OpenAIResponsesRepairPlanner(
+        OpenAIResponsesRepairConfig(model="gpt-5.5", max_retries=1)
+    )
+
+    content = planner._create_response(
+        client,
+        {
+            "model": "gpt-5.5",
+            "input": [],
+            "max_output_tokens": 128,
+            "stream": True,
+        },
+        error_context="LLM repair",
+    )
+
+    assert json.loads(content) == {"repairs": []}
+    assert len(client.responses.calls) == 2
+    assert "max_output_tokens" in client.responses.calls[0]
+    assert "max_output_tokens" not in client.responses.calls[1]
 
 
 def test_make_repair_planner_auto_uses_rules_without_api_key(monkeypatch) -> None:
