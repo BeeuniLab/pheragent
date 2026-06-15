@@ -14,7 +14,6 @@ from .llm_planner import (
     _response_text_input,
     _retryable_llm_error,
     _sleep_before_retry,
-    _without_unsupported_response_parameter,
 )
 from .models import CommandBlock, CommandResult, RepairContext, to_jsonable
 from .utils import shell_script, tail_text
@@ -42,7 +41,6 @@ class OpenAIResponsesRepairConfig:
     base_url: str | None = None
     timeout: float = 120.0
     max_tokens: int = 2048
-    temperature: float = 0.1
     max_retries: int = 3
     retry_delay_s: float = 1.0
 
@@ -133,8 +131,6 @@ class OpenAIResponsesRepairPlanner:
             "model": self.config.model,
             "instructions": _REPAIR_SYSTEM_PROMPT,
             "input": _response_text_input(json.dumps(payload, ensure_ascii=False, indent=2)),
-            "temperature": self.config.temperature,
-            "max_output_tokens": self.config.max_tokens,
             "text": {"format": {"type": "json_object"}},
             "stream": True,
         }
@@ -157,8 +153,6 @@ class OpenAIResponsesRepairPlanner:
             "model": self.config.model,
             "instructions": _PROBE_SYSTEM_PROMPT,
             "input": _response_text_input(json.dumps(payload, ensure_ascii=False, indent=2)),
-            "temperature": self.config.temperature,
-            "max_output_tokens": min(self.config.max_tokens, 1024),
             "text": {"format": {"type": "json_object"}},
             "stream": True,
         }
@@ -196,28 +190,18 @@ class OpenAIResponsesRepairPlanner:
         content = ""
         max_attempts = max(1, self.config.max_retries)
         last_error: Exception | None = None
-        request_payload = dict(payload)
-        attempt = 1
-        while attempt <= max_attempts:
+        for attempt in range(1, max_attempts + 1):
             try:
-                stream = client.responses.create(**request_payload)
+                stream = client.responses.create(**payload)
                 content = _read_streamed_response(stream, error_context=error_context)
                 break
             except Exception as exc:
-                compatible_payload = _without_unsupported_response_parameter(
-                    request_payload,
-                    exc,
-                )
-                if compatible_payload is not None:
-                    request_payload = compatible_payload
-                    continue
                 last_error = RuntimeError(_format_llm_error(error_context, exc))
                 if attempt == max_attempts:
                     raise last_error from exc
                 if not _retryable_llm_error(exc):
                     raise last_error from exc
             _sleep_before_retry(attempt, self.config.retry_delay_s)
-            attempt += 1
         else:
             raise RuntimeError(f"LLM repair request failed: {last_error}") from last_error
 
