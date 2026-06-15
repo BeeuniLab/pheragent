@@ -215,16 +215,28 @@ def _node_script(package_managers: list[str]) -> str:
 echo "[pheragent] installing node dependencies"
 node --version
 npm --version
+ensure_pnpm() {{
+  if command -v pnpm >/dev/null 2>&1 && pnpm --version >/dev/null 2>&1; then
+    return 0
+  fi
+  PNPM_PACKAGE=pnpm@9
+  NODE_VERSION=$(node -p "process.versions.node" 2>/dev/null || echo 0.0.0)
+  NODE_MAJOR=${{NODE_VERSION%%.*}}
+  NODE_REST=${{NODE_VERSION#*.}}
+  NODE_MINOR=${{NODE_REST%%.*}}
+  if [ "$NODE_MAJOR" -gt 22 ] || \
+     {{ [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -ge 13 ]; }}; then
+    PNPM_PACKAGE=pnpm
+  fi
+  npm install -g "$PNPM_PACKAGE"
+  pnpm --version
+}}
 if command -v corepack >/dev/null 2>&1; then
   corepack enable || true
 fi
 if [ -f pnpm-lock.yaml ] && {"true" if prefers_pnpm else "false"}; then
-  if command -v pnpm >/dev/null 2>&1; then
-    pnpm install --frozen-lockfile || pnpm install
-  else
-    npm install -g pnpm
-    pnpm install --frozen-lockfile || pnpm install
-  fi
+  ensure_pnpm
+  pnpm install --frozen-lockfile || pnpm install
 elif [ -f yarn.lock ] && {"true" if prefers_yarn else "false"}; then
   if command -v yarn >/dev/null 2>&1; then
     yarn install --frozen-lockfile || yarn install

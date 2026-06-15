@@ -36,6 +36,30 @@ def test_repair_planner_handles_pep_668_uv_install_failure() -> None:
     ].command
 
 
+def test_repair_planner_pins_pnpm_for_older_node_runtime() -> None:
+    block = CommandBlock(
+        id="03-node-deps",
+        title="Node Dependencies",
+        goal="Install deps",
+        script="#!/bin/sh\nset -eu\nnpm install -g pnpm\npnpm install\n",
+        validation_command="node --version && npm --version && pnpm --version",
+    )
+    result = CommandResult(
+        exit_code=1,
+        stderr=(
+            "ERROR: This version of pnpm requires at least Node.js v22.13\n"
+            "The current version of Node.js is v18.19.1"
+        ),
+    )
+
+    suggestions = RepairPlanner().suggest(block, result)
+
+    assert suggestions
+    assert suggestions[0].title == "Install Node-compatible pnpm"
+    assert "PNPM_PACKAGE=pnpm@9" in suggestions[0].command
+    assert 'npm install -g "$PNPM_PACKAGE"' in suggestions[0].command
+
+
 def test_repair_planner_adds_python_alias() -> None:
     block = CommandBlock(
         id="03-validation",

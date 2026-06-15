@@ -245,6 +245,14 @@ class RepairPlanner:
                     patch_script=_uv_tool_venv_command(),
                 )
             )
+        if "pnpm" in output and "requires at least node.js" in output:
+            suggestions.append(
+                RepairCommand(
+                    title="Install Node-compatible pnpm",
+                    command=_node_compatible_pnpm_command(),
+                    patch_script=_node_compatible_pnpm_command(),
+                )
+            )
         if "attributeerror" in output and "__version__" in output and block.validation_command:
             patched_validation = _strip_dunder_version_probe(block.validation_command)
             if patched_validation != block.validation_command:
@@ -364,6 +372,19 @@ def _uv_tool_venv_command() -> str:
         "if [ -w /usr/local/bin ] || [ \"$(id -u)\" = \"0\" ]; then "
         "ln -sf /workspace/repo/.pheragent-tools/bin/uv /usr/local/bin/uv; "
         "else export PATH=\"/workspace/repo/.pheragent-tools/bin:$PATH\"; fi"
+    )
+
+
+def _node_compatible_pnpm_command() -> str:
+    return (
+        "if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then "
+        "echo 'node/npm not available for pnpm repair' >&2; exit 127; fi && "
+        "PNPM_PACKAGE=pnpm@9 && "
+        "if node -e \"const [major, minor] = process.versions.node.split('.').map(Number); "
+        "process.exit((major > 22 || (major === 22 && minor >= 13)) ? 0 : 1)\" "
+        ">/dev/null 2>&1; then PNPM_PACKAGE=pnpm; fi && "
+        "npm install -g \"$PNPM_PACKAGE\" && "
+        "pnpm --version"
     )
 
 

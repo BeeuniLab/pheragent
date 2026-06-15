@@ -36,3 +36,16 @@ def test_rule_based_planner_writes_preflight_and_python_blocks(tmp_path: Path) -
     assert [block.id for block in blocks] == ["00-preflight", "01-python-deps"]
     assert "pip install" in blocks[1].script
     assert blocks[1].script.startswith("#!/bin/sh")
+
+
+def test_rule_based_planner_installs_node_compatible_pnpm(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"scripts":{"build":"vite build"}}', encoding="utf-8")
+    (tmp_path / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+    context = RepoAnalyzer().analyze(tmp_path)
+
+    blocks = RuleBasedBlockPlanner().plan(context)
+    node_block = next(block for block in blocks if block.id.endswith("node-deps"))
+
+    assert "ensure_pnpm" in node_block.script
+    assert "PNPM_PACKAGE=pnpm@9" in node_block.script
+    assert 'npm install -g "$PNPM_PACKAGE"' in node_block.script
