@@ -41,6 +41,7 @@ class ProjectRunResult:
     final_image: str | None = None
     manifest_path: Path | None = None
     oracle_path: Path | None = None
+    failure_stage: str | None = None
     error: str | None = None
 
 
@@ -257,6 +258,7 @@ class ProjectBatchBuilder:
         for spec in specs:
             repo_path = self.projects_dir / spec.checkout_dir_name
             oracle_path: Path | None = None
+            failure_stage = "prepare_failed"
             try:
                 self._emit(f"project {spec.owner_repo}@{spec.commit}: prepare")
                 repo_path = prepare_project(
@@ -274,6 +276,7 @@ class ProjectBatchBuilder:
                 if oracle_path is not None:
                     self._emit(f"project {spec.owner_repo}: isolated oracle data at {oracle_path}")
                 self._emit(f"project {spec.owner_repo}: build")
+                failure_stage = "build_failed"
                 build_result = self.builder_factory(self._request_for(spec, repo_path)).build()
                 result = ProjectRunResult(
                     project=spec,
@@ -283,6 +286,7 @@ class ProjectBatchBuilder:
                     final_image=build_result.final_image,
                     manifest_path=build_result.manifest_path,
                     oracle_path=oracle_path,
+                    failure_stage=None if build_result.ok else failure_stage,
                     error=build_result.error,
                 )
             except Exception as exc:
@@ -291,6 +295,7 @@ class ProjectBatchBuilder:
                     repo_path=repo_path,
                     ok=False,
                     oracle_path=oracle_path,
+                    failure_stage=failure_stage,
                     error=str(exc),
                 )
             results.append(result)
@@ -359,7 +364,7 @@ class ProjectBatchBuilder:
                         result.project.commit,
                         result.project.checkout_dir_name,
                         str(result.repo_path),
-                        result.error or "",
+                        result.failure_stage or "failed",
                     ]
                 )
                 + "\n"

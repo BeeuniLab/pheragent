@@ -90,6 +90,9 @@ checkout. Failed projects are written to:
 <projects-dir>/failed-projects.log
 ```
 
+Each line is tab-separated: owner/repo, commit/ref, checkout directory, repo
+path, and a short failure stage such as `prepare_failed` or `build_failed`.
+
 For `build-projects`, `.github` is treated as oracle data instead of build
 context. After checkout, if a cloned project contains `.github`, it is moved to
 `<oracles-dir>/<project-name>/.github` before the environment build starts. This

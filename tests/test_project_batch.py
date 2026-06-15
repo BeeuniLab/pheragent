@@ -221,4 +221,50 @@ def test_project_batch_builder_writes_failed_projects_log(tmp_path: Path) -> Non
     failure_log = result.failures_log_path.read_text(encoding="utf-8")
     assert "example/missing" in failure_log
     assert "missingref" in failure_log
-    assert "fetch failed" in failure_log
+    assert "prepare_failed" in failure_log
+    assert "fatal: couldn't find remote ref" not in failure_log
+
+
+def test_project_batch_builder_logs_build_failures_concisely(tmp_path: Path) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text("pallets/flask 2579ce9\n", encoding="utf-8")
+
+    def fake_runner(command: list[str], cwd: Path | None) -> CommandResult:
+        if command[:2] == ["git", "clone"]:
+            repo_path = Path(command[-1])
+            (repo_path / ".git").mkdir(parents=True)
+        return CommandResult(exit_code=0, stdout="ok")
+
+    class FailingBuilder:
+        def __init__(self, request: BuildRequest):
+            self.request = request
+
+        def build(self) -> BuildResult:
+            state_dir = self.request.repo_path / ".pheragent" / "runs" / "batch-flask"
+            return BuildResult(
+                ok=False,
+                run_id=self.request.run_id or "batch-flask",
+                state_dir=state_dir,
+                scripts_dir=state_dir / "scripts",
+                manifest_path=state_dir / "manifest.json",
+                error="block failed: 20-python-deps",
+            )
+
+    result = ProjectBatchBuilder(
+        projects_file=projects_file,
+        projects_dir=tmp_path / "projects",
+        base_request=BuildRequest(
+            repo_path=tmp_path,
+            base_dockerfile=tmp_path / "Dockerfile",
+            run_id=None,
+        ),
+        command_runner=fake_runner,
+        builder_factory=FailingBuilder,
+    ).build_all()
+
+    assert not result.ok
+    assert result.results[0].failure_stage == "build_failed"
+    failure_log = result.failures_log_path.read_text(encoding="utf-8")
+    assert "pallets/flask" in failure_log
+    assert "build_failed" in failure_log
+    assert "20-python-deps" not in failure_log
