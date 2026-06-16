@@ -181,6 +181,7 @@ class BuildResult:
     executions: list[BlockExecution] = field(default_factory=list)
     final_image: str | None = None
     error: str | None = None
+    llm_usage: dict[str, dict[str, int]] = field(default_factory=dict)
 
 
 def to_jsonable(value: Any) -> Any:

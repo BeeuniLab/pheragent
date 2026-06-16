@@ -83,7 +83,16 @@ def _planner_response_events() -> list[FakeEvent]:
     return [
         FakeEvent("response.output_text.delta", delta=content[:midpoint]),
         FakeEvent("response.output_text.delta", delta=content[midpoint:]),
-        FakeEvent("response.completed"),
+        FakeEvent(
+            "response.completed",
+            response={
+                "usage": {
+                    "input_tokens": 11,
+                    "output_tokens": 7,
+                    "total_tokens": 18,
+                }
+            },
+        ),
     ]
 
 
@@ -123,6 +132,12 @@ def test_openai_responses_planner_uses_sdk_streaming(tmp_path: Path, monkeypatch
     assert blocks[0].script.startswith("#!/bin/sh")
     assert "echo custom" in blocks[0].script
     assert blocks[0].validation_command == 'uv run python -c "import flask; print(flask)"'
+    assert planner.usage_summary()["total"] == {
+        "requests": 1,
+        "input_tokens": 11,
+        "output_tokens": 7,
+        "total_tokens": 18,
+    }
 
     client = FakeOpenAI.clients[0]
     assert client.kwargs["api_key"] == "test-key"

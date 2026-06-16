@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from pheragent.block_store import BlockStore
@@ -133,6 +134,81 @@ def test_environment_builder_repairs_failed_block_and_persists_patch(tmp_path: P
     assert first_log.is_file()
     assert '"phase": "docker_build"' in first_log.read_text(encoding="utf-8")
     assert '"log_path"' in (result.state_dir / "executions.jsonl").read_text(encoding="utf-8")
+
+
+def test_environment_builder_records_llm_usage_in_manifest(tmp_path: Path) -> None:
+    class UsagePlanner:
+        def plan(self, context: RepoContext) -> list[CommandBlock]:
+            del context
+            return [
+                CommandBlock(
+                    id="00-preflight",
+                    title="Preflight",
+                    goal="inspect",
+                    script="#!/bin/sh\necho ok\n",
+                    order=0,
+                )
+            ]
+
+        def usage_summary(self) -> dict[str, dict[str, int]]:
+            return {
+                "planner": {
+                    "requests": 1,
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "total_tokens": 15,
+                },
+                "total": {
+                    "requests": 1,
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "total_tokens": 15,
+                },
+            }
+
+    class UsageRepairPlanner(RepairPlanner):
+        def usage_summary(self) -> dict[str, dict[str, int]]:
+            return {
+                "repair": {
+                    "requests": 2,
+                    "input_tokens": 20,
+                    "output_tokens": 8,
+                    "total_tokens": 28,
+                },
+                "total": {
+                    "requests": 2,
+                    "input_tokens": 20,
+                    "output_tokens": 8,
+                    "total_tokens": 28,
+                },
+            }
+
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="usage-run",
+    )
+
+    result = EnvironmentBuilder(
+        request,
+        planner=UsagePlanner(),
+        repair_planner=UsageRepairPlanner(),
+        runtime_factory=FakeRuntime,
+    ).build()
+
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+
+    assert result.ok
+    assert manifest["llm_usage"]["planner"]["total_tokens"] == 15
+    assert manifest["llm_usage"]["repair"]["total_tokens"] == 28
+    assert manifest["llm_usage"]["total"] == {
+        "requests": 3,
+        "input_tokens": 30,
+        "output_tokens": 13,
+        "total_tokens": 43,
+    }
 
 
 def test_environment_builder_passes_probe_results_to_llm_repair(tmp_path: Path) -> None:

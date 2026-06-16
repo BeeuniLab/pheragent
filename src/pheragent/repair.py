@@ -7,13 +7,17 @@ from dataclasses import dataclass
 from typing import Any
 
 from .llm_planner import (
+    _add_token_usage,
+    _copy_token_usage,
+    _empty_token_usage,
     _format_llm_error,
     _openai_client,
     _parse_json_object,
-    _read_streamed_response,
+    _read_streamed_response_with_usage,
     _response_text_input,
     _retryable_llm_error,
     _sleep_before_retry,
+    merge_usage_summaries,
 )
 from .models import CommandBlock, CommandResult, RepairContext, to_jsonable
 from .utils import shell_script, tail_text
@@ -52,6 +56,10 @@ class OpenAIResponsesRepairPlanner:
         self.last_parse_diagnostics: list[str] = []
         self.last_probe_raw_response: str | None = None
         self.last_probe_parse_diagnostics: list[str] = []
+        self.token_usage_by_phase = {
+            "probe": _empty_token_usage(),
+            "repair": _empty_token_usage(),
+        }
 
     def propose_probes(
         self,
@@ -79,6 +87,7 @@ class OpenAIResponsesRepairPlanner:
                 heuristic_hints=heuristic_hints,
             ),
             error_context="LLM probe",
+            usage_phase="probe",
         )
         self.last_probe_raw_response = content
         return self._parse_probes(content)
@@ -109,6 +118,7 @@ class OpenAIResponsesRepairPlanner:
                 heuristic_hints=heuristic_hints,
             ),
             error_context="LLM repair",
+            usage_phase="repair",
         )
         self.last_raw_response = content
         return self._parse_repairs(content)
@@ -187,6 +197,7 @@ class OpenAIResponsesRepairPlanner:
         payload: dict[str, Any],
         *,
         error_context: str,
+        usage_phase: str,
     ) -> str:
         content = ""
         max_attempts = max(1, self.config.max_retries)
@@ -194,7 +205,11 @@ class OpenAIResponsesRepairPlanner:
         for attempt in range(1, max_attempts + 1):
             try:
                 stream = client.responses.create(**payload)
-                content = _read_streamed_response(stream, error_context=error_context)
+                content, usage = _read_streamed_response_with_usage(
+                    stream,
+                    error_context=error_context,
+                )
+                _add_token_usage(self.token_usage_by_phase[usage_phase], usage)
                 break
             except Exception as exc:
                 last_error = RuntimeError(_format_llm_error(error_context, exc))
@@ -207,6 +222,14 @@ class OpenAIResponsesRepairPlanner:
             raise RuntimeError(f"LLM repair request failed: {last_error}") from last_error
 
         return content
+
+    def usage_summary(self) -> dict[str, dict[str, int]]:
+        summary = {
+            phase: _copy_token_usage(usage)
+            for phase, usage in self.token_usage_by_phase.items()
+            if any(value for value in usage.values())
+        }
+        return merge_usage_summaries(summary)
 
     def _parse_repairs(self, content: str) -> list[RepairCommand]:
         self.last_parse_diagnostics = []
@@ -384,6 +407,14 @@ class RepairPlanner:
         diagnostics = getattr(self.llm_planner, "last_probe_parse_diagnostics", [])
         self.last_probe_raw_response = raw_response if isinstance(raw_response, str) else None
         self.last_probe_parse_diagnostics = list(diagnostics or [])
+
+    def usage_summary(self) -> dict[str, dict[str, int]]:
+        if self.llm_planner is None:
+            return {}
+        usage_summary = getattr(self.llm_planner, "usage_summary", None)
+        if not callable(usage_summary):
+            return {}
+        return usage_summary()
 
     def patch_block(self, block: CommandBlock, repair: RepairCommand) -> CommandBlock:
         if repair.patch_validation_command:

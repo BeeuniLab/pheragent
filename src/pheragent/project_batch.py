@@ -5,7 +5,7 @@ import shutil
 import sys
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .models import BuildRequest, CommandResult
@@ -48,6 +48,7 @@ class ProjectRunResult:
     actual_commit: str | None = None
     failure_stage: str | None = None
     error: str | None = None
+    llm_usage: dict[str, dict[str, int]] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -411,6 +412,7 @@ class ProjectBatchBuilder:
                     actual_commit=actual_commit,
                     failure_stage=None if build_result.ok else failure_stage,
                     error=build_result.error,
+                    llm_usage=build_result.llm_usage,
                 )
             except Exception as exc:
                 error = str(exc)
@@ -529,6 +531,7 @@ class ProjectBatchBuilder:
             final_image=final_image,
             manifest_path=manifest_path,
             oracle_path=oracle_path,
+            llm_usage=_manifest_llm_usage(manifest),
         )
 
     def _expected_manifest_path(self, spec: ProjectSpec, repo_path: Path) -> Path | None:
@@ -640,6 +643,27 @@ def _version_mismatch_log_key(line: str) -> ProjectLogKey | None:
     if len(parts) < 4:
         return None
     return (parts[0], parts[1], parts[3])
+
+
+def _manifest_llm_usage(manifest: object) -> dict[str, dict[str, int]]:
+    if not isinstance(manifest, dict):
+        return {}
+    raw_usage = manifest.get("llm_usage")
+    if not isinstance(raw_usage, dict):
+        return {}
+    usage: dict[str, dict[str, int]] = {}
+    for phase, raw_phase_usage in raw_usage.items():
+        if not isinstance(raw_phase_usage, dict):
+            continue
+        phase_usage: dict[str, int] = {}
+        for key in ("requests", "input_tokens", "output_tokens", "total_tokens"):
+            value = raw_phase_usage.get(key, 0)
+            try:
+                phase_usage[key] = int(value)
+            except (TypeError, ValueError):
+                phase_usage[key] = 0
+        usage[str(phase)] = phase_usage
+    return usage
 
 
 def _is_unavailable_project_error(error: str) -> bool:

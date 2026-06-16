@@ -302,6 +302,15 @@ def _print_batch_result(result, *, as_json: bool) -> None:
             print(f"  version mismatch: requested {project_result.project.commit}")
             if project_result.actual_commit:
                 print(f"  actual commit: {project_result.actual_commit}")
+        usage_total = project_result.llm_usage.get("total", {})
+        if usage_total:
+            print(
+                "  llm usage: "
+                f"requests={usage_total.get('requests', 0)} "
+                f"input={usage_total.get('input_tokens', 0)} "
+                f"output={usage_total.get('output_tokens', 0)} "
+                f"total={usage_total.get('total_tokens', 0)}"
+            )
         if project_result.run_id:
             print(f"  run: {project_result.run_id}")
         if project_result.final_image:

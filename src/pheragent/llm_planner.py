@@ -34,6 +34,7 @@ class OpenAIResponsesBlockPlanner:
     ):
         self.config = config
         self.fallback = fallback or RuleBasedBlockPlanner()
+        self.token_usage = _empty_token_usage()
 
     def plan(self, context: RepoContext) -> list[CommandBlock]:
         api_key = os.getenv(self.config.api_key_env)
@@ -86,7 +87,11 @@ class OpenAIResponsesBlockPlanner:
         for attempt in range(1, max_attempts + 1):
             try:
                 stream = client.responses.create(**payload)
-                content = _read_streamed_response(stream, error_context="LLM planner")
+                content, usage = _read_streamed_response_with_usage(
+                    stream,
+                    error_context="LLM planner",
+                )
+                _add_token_usage(self.token_usage, usage)
                 break
             except Exception as exc:
                 last_error = RuntimeError(_format_llm_error("LLM planner", exc))
@@ -99,6 +104,13 @@ class OpenAIResponsesBlockPlanner:
             raise RuntimeError(f"LLM planner request failed: {last_error}") from last_error
 
         return content
+
+    def usage_summary(self) -> dict[str, dict[str, int]]:
+        planner_usage = _copy_token_usage(self.token_usage)
+        return {
+            "planner": planner_usage,
+            "total": _copy_token_usage(planner_usage),
+        }
 
     def _parse_blocks(self, content: str) -> list[CommandBlock]:
         data = _parse_json_object(content)
@@ -213,11 +225,24 @@ def _response_text_input(text: str) -> list[dict[str, Any]]:
 
 
 def _read_streamed_response(stream: Any, *, error_context: str) -> str:
+    content, _usage = _read_streamed_response_with_usage(stream, error_context=error_context)
+    return content
+
+
+def _read_streamed_response_with_usage(
+    stream: Any,
+    *,
+    error_context: str,
+) -> tuple[str, dict[str, int]]:
     chunks: list[str] = []
     done_text: str | None = None
     completed_text: str | None = None
+    usage = _empty_token_usage()
     try:
         for event in stream:
+            event_usage = _extract_token_usage(event)
+            if event_usage is not None:
+                usage = event_usage
             event_type = _event_value(event, "type")
             if event_type == "response.output_text.delta":
                 delta = _event_value(event, "delta")
@@ -228,7 +253,11 @@ def _read_streamed_response(stream: Any, *, error_context: str) -> str:
                 if text is not None:
                     done_text = str(text)
             elif event_type == "response.completed":
-                completed_text = _extract_response_output_text(_event_value(event, "response"))
+                response = _event_value(event, "response")
+                completed_text = _extract_response_output_text(response)
+                response_usage = _extract_token_usage(response)
+                if response_usage is not None:
+                    usage = response_usage
             elif event_type in {"error", "response.failed"}:
                 raise RuntimeError(f"{error_context} stream failed: {_event_error_text(event)}")
     finally:
@@ -240,7 +269,77 @@ def _read_streamed_response(stream: Any, *, error_context: str) -> str:
         content = done_text or completed_text or ""
     if not content:
         raise RuntimeError(f"{error_context} stream returned no content")
-    return content
+    usage["requests"] = max(usage.get("requests", 0), 1)
+    return content, usage
+
+
+def _empty_token_usage() -> dict[str, int]:
+    return {
+        "requests": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+    }
+
+
+def _copy_token_usage(usage: dict[str, int]) -> dict[str, int]:
+    return {key: int(usage.get(key, 0) or 0) for key in _empty_token_usage()}
+
+
+def _add_token_usage(target: dict[str, int], usage: dict[str, int]) -> None:
+    for key in _empty_token_usage():
+        target[key] = int(target.get(key, 0) or 0) + int(usage.get(key, 0) or 0)
+
+
+def merge_usage_summaries(*summaries: dict[str, dict[str, int]]) -> dict[str, dict[str, int]]:
+    merged: dict[str, dict[str, int]] = {"total": _empty_token_usage()}
+    for summary in summaries:
+        for phase, usage in summary.items():
+            if phase == "total":
+                continue
+            phase_usage = merged.setdefault(phase, _empty_token_usage())
+            _add_token_usage(phase_usage, usage)
+            _add_token_usage(merged["total"], usage)
+    if all(value == 0 for value in merged["total"].values()):
+        return {}
+    return merged
+
+
+def _extract_token_usage(value: Any) -> dict[str, int] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) and hasattr(value, "model_dump"):
+        value = value.model_dump()
+    usage = _event_value(value, "usage")
+    if usage is None:
+        usage = value
+    if not isinstance(usage, dict) and hasattr(usage, "model_dump"):
+        usage = usage.model_dump()
+    input_tokens = _usage_int(usage, "input_tokens", "prompt_tokens")
+    output_tokens = _usage_int(usage, "output_tokens", "completion_tokens")
+    total_tokens = _usage_int(usage, "total_tokens")
+    if input_tokens is None and output_tokens is None and total_tokens is None:
+        return None
+    if total_tokens is None:
+        total_tokens = int(input_tokens or 0) + int(output_tokens or 0)
+    return {
+        "requests": 0,
+        "input_tokens": int(input_tokens or 0),
+        "output_tokens": int(output_tokens or 0),
+        "total_tokens": int(total_tokens or 0),
+    }
+
+
+def _usage_int(value: Any, *names: str) -> int | None:
+    for name in names:
+        raw = _event_value(value, name)
+        if raw is None:
+            continue
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            continue
+    return None
 
 
 def _event_value(event: Any, name: str) -> Any:

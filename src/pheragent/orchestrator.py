@@ -7,7 +7,7 @@ from pathlib import Path
 from .analyzer import RepoAnalyzer
 from .block_store import BlockStore
 from .docker_runtime import DockerRuntime
-from .llm_planner import make_planner
+from .llm_planner import make_planner, merge_usage_summaries
 from .models import (
     BlockExecution,
     BuildRequest,
@@ -80,7 +80,7 @@ class EnvironmentBuilder:
             manifest_path=self.store.manifest_path,
             blocks=blocks,
         )
-        self.store.save_manifest(result)
+        self._save_manifest(result)
         return result
 
     def build(self) -> BuildResult:
@@ -144,7 +144,7 @@ class EnvironmentBuilder:
                 if not build_result.ok:
                     self._emit(f"run {self.run_id}: base image build failed")
                     result.error = "base Docker image build failed"
-                    self.store.save_manifest(result)
+                    self._save_manifest(result)
                     return result
 
                 self._emit(f"run {self.run_id}: start container and copy repo")
@@ -182,7 +182,7 @@ class EnvironmentBuilder:
                     self._emit(f"run {self.run_id}: block {block.id} failed")
                     result.error = f"block failed: {block.id}"
                     result.final_image = current_image
-                    self.store.save_manifest(result)
+                    self._save_manifest(result)
                     return result
 
             if self.request.oracle_file is not None:
@@ -196,22 +196,34 @@ class EnvironmentBuilder:
                     self._emit(f"run {self.run_id}: oracle validation failed")
                     result.error = "oracle validation failed"
                     result.final_image = current_image
-                    self.store.save_manifest(result)
+                    self._save_manifest(result)
                     return result
 
             result.ok = True
             result.final_image = current_image
-            self.store.save_manifest(result)
+            self._save_manifest(result)
             self._emit(f"run {self.run_id}: ok")
             return result
         except Exception as exc:
             self._emit(f"run {self.run_id}: failed: {exc}")
             result.error = str(exc)
             result.final_image = current_image
-            self.store.save_manifest(result)
+            self._save_manifest(result)
             return result
         finally:
             runtime.cleanup()
+
+    def _save_manifest(self, result: BuildResult) -> None:
+        result.llm_usage = self._llm_usage_summary()
+        self.store.save_manifest(result)
+
+    def _llm_usage_summary(self) -> dict[str, dict[str, int]]:
+        summaries: list[dict[str, dict[str, int]]] = []
+        for component in (self.planner, self.repair_planner):
+            usage_summary = getattr(component, "usage_summary", None)
+            if callable(usage_summary):
+                summaries.append(usage_summary())
+        return merge_usage_summaries(*summaries)
 
     def _load_or_plan_blocks(self, context: RepoContext) -> list[CommandBlock]:
         if self.request.resume_from:
