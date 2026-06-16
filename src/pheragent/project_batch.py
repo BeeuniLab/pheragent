@@ -39,10 +39,12 @@ class ProjectRunResult:
     repo_path: Path
     ok: bool
     skipped: bool = False
+    version_mismatch: bool = False
     run_id: str | None = None
     final_image: str | None = None
     manifest_path: Path | None = None
     oracle_path: Path | None = None
+    actual_commit: str | None = None
     failure_stage: str | None = None
     error: str | None = None
 
@@ -55,6 +57,16 @@ class BatchBuildResult:
     results: list[ProjectRunResult]
     failures_log_path: Path | None = None
     no_repo_log_path: Path | None = None
+    version_mismatch_log_path: Path | None = None
+
+
+@dataclass(slots=True)
+class PreparedProject:
+    repo_path: Path
+    requested_commit: str
+    checkout_ref: str
+    actual_commit: str | None = None
+    version_mismatch: bool = False
 
 
 def parse_projects_file(path: Path) -> list[ProjectSpec]:
@@ -96,7 +108,7 @@ def prepare_project(
     clone_timeout: float,
     stream_logs: bool = False,
     command_runner: CommandRunner | None = None,
-) -> Path:
+) -> PreparedProject:
     runner = command_runner or (
         lambda command, cwd=None: run_command(
             command,
@@ -133,19 +145,74 @@ def prepare_project(
         )
 
     checkout_ref, fetch_result = _fetch_checkout_ref(spec, repo_path=repo_path, runner=runner)
+    version_mismatch = False
     if checkout_ref is None:
-        raise RuntimeError(
-            f"fetch failed for {spec.owner_repo}@{spec.commit}: "
-            f"{fetch_result.combined_output}"
-        )
+        checkout_ref, fallback_result = _fetch_default_head(repo_path=repo_path, runner=runner)
+        if checkout_ref is None:
+            raise RuntimeError(
+                f"repository unavailable for {spec.owner_repo}: "
+                f"requested {spec.commit!r} could not be fetched and default HEAD "
+                f"could not be checked out: "
+                f"{fetch_result.combined_output}\n{fallback_result.combined_output}".strip()
+            )
+        version_mismatch = True
 
+    checkout_target = checkout_ref
     _run_or_raise(
         runner,
-        ["git", "checkout", "--detach", checkout_ref],
-        f"checkout failed for {spec.owner_repo}@{checkout_ref}",
+        ["git", "checkout", "--detach", checkout_target],
+        f"checkout failed for {spec.owner_repo}@{checkout_target}",
         cwd=repo_path,
     )
-    return repo_path
+    actual_commit = _current_head(repo_path=repo_path, runner=runner)
+    return PreparedProject(
+        repo_path=repo_path,
+        requested_commit=spec.commit,
+        checkout_ref=checkout_ref,
+        actual_commit=actual_commit,
+        version_mismatch=version_mismatch,
+    )
+
+
+def _fetch_default_head(
+    *,
+    repo_path: Path,
+    runner: CommandRunner,
+) -> tuple[str | None, CommandResult]:
+    fetch_head_result = runner(["git", "fetch", "--depth", "1", "origin", "HEAD"], repo_path)
+    if fetch_head_result.ok:
+        return "FETCH_HEAD", fetch_head_result
+
+    symbolic_head_result = runner(
+        ["git", "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+        repo_path,
+    )
+    if symbolic_head_result.ok and symbolic_head_result.stdout.strip():
+        return symbolic_head_result.stdout.strip().splitlines()[0], symbolic_head_result
+
+    for fallback_ref in ("origin/main", "origin/master"):
+        verify_result = runner(
+            ["git", "rev-parse", "--verify", "--quiet", f"{fallback_ref}^{{commit}}"],
+            repo_path,
+        )
+        if verify_result.ok and verify_result.stdout.strip():
+            return fallback_ref, verify_result
+
+    return None, fetch_head_result
+
+
+def _current_head(
+    *,
+    repo_path: Path,
+    runner: CommandRunner,
+) -> str | None:
+    result = runner(["git", "rev-parse", "--verify", "HEAD"], repo_path)
+    if not result.ok:
+        return None
+    output = result.stdout.strip()
+    if not output:
+        return None
+    return output.splitlines()[0]
 
 
 def _fetch_checkout_ref(
@@ -259,11 +326,16 @@ class ProjectBatchBuilder:
         no_repo_log_path = self.projects_dir / "no-repo-projects.log"
         if no_repo_log_path.exists():
             no_repo_log_path.unlink()
+        version_mismatch_log_path = self.projects_dir / "version-mismatch-projects.log"
+        if version_mismatch_log_path.exists():
+            version_mismatch_log_path.unlink()
 
         results: list[ProjectRunResult] = []
         for spec in specs:
             repo_path = self.projects_dir / spec.checkout_dir_name
             oracle_path: Path | None = None
+            actual_commit: str | None = None
+            version_mismatch = False
             failure_stage = "prepare_failed"
             try:
                 existing_result = self._existing_successful_result(spec, repo_path)
@@ -285,13 +357,26 @@ class ProjectBatchBuilder:
                         repo_path.unlink()
 
                 self._emit(f"project {spec.owner_repo}@{spec.commit}: prepare")
-                repo_path = prepare_project(
+                prepared_project = prepare_project(
                     spec,
                     projects_dir=self.projects_dir,
                     clone_timeout=self.clone_timeout,
                     stream_logs=self.base_request.stream_logs,
                     command_runner=self.command_runner,
                 )
+                repo_path = prepared_project.repo_path
+                actual_commit = prepared_project.actual_commit
+                version_mismatch = prepared_project.version_mismatch
+                if version_mismatch:
+                    self._append_version_mismatch_log(
+                        spec,
+                        prepared_project,
+                        version_mismatch_log_path,
+                    )
+                    self._emit(
+                        f"project {spec.owner_repo}: requested {spec.commit} not found; "
+                        f"using {actual_commit or prepared_project.checkout_ref}"
+                    )
                 oracle_path = isolate_project_oracles(
                     spec,
                     repo_path=repo_path,
@@ -306,10 +391,12 @@ class ProjectBatchBuilder:
                     project=spec,
                     repo_path=repo_path,
                     ok=build_result.ok,
+                    version_mismatch=version_mismatch,
                     run_id=build_result.run_id,
                     final_image=build_result.final_image,
                     manifest_path=build_result.manifest_path,
                     oracle_path=oracle_path,
+                    actual_commit=actual_commit,
                     failure_stage=None if build_result.ok else failure_stage,
                     error=build_result.error,
                 )
@@ -321,7 +408,9 @@ class ProjectBatchBuilder:
                         repo_path=repo_path,
                         ok=False,
                         skipped=True,
+                        version_mismatch=version_mismatch,
                         oracle_path=oracle_path,
+                        actual_commit=actual_commit,
                         failure_stage="unavailable_project",
                         error=error,
                     )
@@ -330,7 +419,9 @@ class ProjectBatchBuilder:
                         project=spec,
                         repo_path=repo_path,
                         ok=False,
+                        version_mismatch=version_mismatch,
                         oracle_path=oracle_path,
+                        actual_commit=actual_commit,
                         failure_stage=failure_stage,
                         error=error,
                     )
@@ -351,6 +442,9 @@ class ProjectBatchBuilder:
             results=results,
             failures_log_path=failures_log_path if failures_log_path.exists() else None,
             no_repo_log_path=no_repo_log_path if no_repo_log_path.exists() else None,
+            version_mismatch_log_path=(
+                version_mismatch_log_path if version_mismatch_log_path.exists() else None
+            ),
         )
 
     def _request_for(self, spec: ProjectSpec, repo_path: Path) -> BuildRequest:
@@ -473,13 +567,33 @@ class ProjectBatchBuilder:
                 + "\n"
             )
 
+    def _append_version_mismatch_log(
+        self,
+        spec: ProjectSpec,
+        prepared_project: PreparedProject,
+        version_mismatch_log_path: Path,
+    ) -> None:
+        version_mismatch_log_path.parent.mkdir(parents=True, exist_ok=True)
+        with version_mismatch_log_path.open("a", encoding="utf-8") as handle:
+            handle.write(
+                "\t".join(
+                    [
+                        spec.owner_repo,
+                        spec.commit,
+                        prepared_project.actual_commit or "",
+                        spec.checkout_dir_name,
+                        str(prepared_project.repo_path),
+                    ]
+                )
+                + "\n"
+            )
+
 
 def _is_unavailable_project_error(error: str) -> bool:
     return error.startswith(
         (
             "clone failed for ",
-            "fetch failed for ",
-            "checkout failed for ",
+            "repository unavailable for ",
         )
     )
 

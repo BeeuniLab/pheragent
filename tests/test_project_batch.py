@@ -54,14 +54,16 @@ def test_prepare_project_clones_fetches_and_checks_out_in_repo_dir(tmp_path: Pat
             (repo_path / ".git").mkdir(parents=True)
         return CommandResult(exit_code=0, stdout="ok")
 
-    repo_path = prepare_project(
+    prepared_project = prepare_project(
         spec,
         projects_dir=projects_dir,
         clone_timeout=30,
         command_runner=fake_runner,
     )
+    repo_path = prepared_project.repo_path
 
     assert repo_path == projects_dir / "flask"
+    assert not prepared_project.version_mismatch
     assert calls[0][0][:2] == ["git", "clone"]
     assert calls[0][1] is None
     assert calls[1] == (["git", "fetch", "--depth", "1", "origin", "2579ce9"], repo_path)
@@ -95,14 +97,16 @@ def test_prepare_project_resolves_short_hash_after_ref_fetch_fails(tmp_path: Pat
             return CommandResult(exit_code=0, stdout=f"{full_hash}\n")
         return CommandResult(exit_code=0, stdout="ok")
 
-    repo_path = prepare_project(
+    prepared_project = prepare_project(
         spec,
         projects_dir=projects_dir,
         clone_timeout=30,
         command_runner=fake_runner,
     )
+    repo_path = prepared_project.repo_path
 
     assert repo_path == projects_dir / "VideoFusion"
+    assert not prepared_project.version_mismatch
     assert (
         [
             "git",
@@ -114,7 +118,51 @@ def test_prepare_project_resolves_short_hash_after_ref_fetch_fails(tmp_path: Pat
         ],
         repo_path,
     ) in calls
-    assert calls[-1] == (["git", "checkout", "--detach", full_hash], repo_path)
+    assert (["git", "checkout", "--detach", full_hash], repo_path) in calls
+
+
+def test_prepare_project_falls_back_to_default_head_when_requested_ref_is_missing(
+    tmp_path: Path,
+) -> None:
+    projects_dir = tmp_path / "projects"
+    actual_hash = "a" * 40
+    spec = ProjectSpec(
+        owner_repo="example/repo",
+        commit="missingref",
+        line_no=1,
+        checkout_dir_name="repo",
+    )
+    calls: list[tuple[list[str], Path | None]] = []
+
+    def fake_runner(command: list[str], cwd: Path | None) -> CommandResult:
+        calls.append((command, cwd))
+        if command[:2] == ["git", "clone"]:
+            repo_path = Path(command[-1])
+            (repo_path / ".git").mkdir(parents=True)
+            return CommandResult(exit_code=0, stdout="ok")
+        if command == ["git", "fetch", "--depth", "1", "origin", "missingref"]:
+            return CommandResult(exit_code=128, stderr="fatal: couldn't find remote ref")
+        if command == ["git", "fetch", "origin", "missingref"]:
+            return CommandResult(exit_code=128, stderr="fatal: couldn't find remote ref")
+        if command == ["git", "fetch", "--depth", "1", "origin", "HEAD"]:
+            return CommandResult(exit_code=0, stdout="default fetched")
+        if command == ["git", "rev-parse", "--verify", "HEAD"]:
+            return CommandResult(exit_code=0, stdout=f"{actual_hash}\n")
+        return CommandResult(exit_code=0, stdout="ok")
+
+    prepared_project = prepare_project(
+        spec,
+        projects_dir=projects_dir,
+        clone_timeout=30,
+        command_runner=fake_runner,
+    )
+    repo_path = projects_dir / "repo"
+
+    assert prepared_project.repo_path == repo_path
+    assert prepared_project.version_mismatch
+    assert prepared_project.actual_commit == actual_hash
+    assert (["git", "fetch", "--depth", "1", "origin", "HEAD"], repo_path) in calls
+    assert (["git", "checkout", "--detach", "FETCH_HEAD"], repo_path) in calls
 
 
 def test_isolate_project_oracles_moves_github_out_of_repo(tmp_path: Path) -> None:
@@ -384,10 +432,8 @@ def test_project_batch_builder_writes_no_repo_log_for_unavailable_projects(
     def fake_runner(command: list[str], cwd: Path | None) -> CommandResult:
         del cwd
         if command[:2] == ["git", "clone"]:
-            repo_path = Path(command[-1])
-            (repo_path / ".git").mkdir(parents=True)
-            return CommandResult(exit_code=0, stdout="ok")
-        return CommandResult(exit_code=128, stderr="fatal: couldn't find remote ref missingref")
+            return CommandResult(exit_code=128, stderr="fatal: repository not found")
+        return CommandResult(exit_code=0, stdout="unexpected")
 
     result = ProjectBatchBuilder(
         projects_file=projects_file,
@@ -412,6 +458,79 @@ def test_project_batch_builder_writes_no_repo_log_for_unavailable_projects(
     assert "fatal: couldn't find remote ref" not in no_repo_log
 
 
+def test_project_batch_builder_logs_version_mismatch_and_builds_default_checkout(
+    tmp_path: Path,
+) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text("example/repo missingref\n", encoding="utf-8")
+    actual_hash = "b" * 40
+    requests: list[BuildRequest] = []
+
+    def fake_runner(command: list[str], cwd: Path | None) -> CommandResult:
+        if command[:2] == ["git", "clone"]:
+            repo_path = Path(command[-1])
+            (repo_path / ".git").mkdir(parents=True)
+            return CommandResult(exit_code=0, stdout="ok")
+        if command == ["git", "fetch", "--depth", "1", "origin", "missingref"]:
+            return CommandResult(exit_code=128, stderr="fatal: couldn't find remote ref")
+        if command == ["git", "fetch", "origin", "missingref"]:
+            return CommandResult(exit_code=128, stderr="fatal: couldn't find remote ref")
+        if command == ["git", "fetch", "--depth", "1", "origin", "HEAD"]:
+            return CommandResult(exit_code=0, stdout="default fetched")
+        if command == ["git", "rev-parse", "--verify", "HEAD"]:
+            return CommandResult(exit_code=0, stdout=f"{actual_hash}\n")
+        if command == ["git", "checkout", "--detach", "FETCH_HEAD"] and cwd is not None:
+            github_dir = cwd / ".github" / "workflows"
+            github_dir.mkdir(parents=True)
+            (github_dir / "ci.yml").write_text("name: ci\n", encoding="utf-8")
+        return CommandResult(exit_code=0, stdout="ok")
+
+    class FakeBuilder:
+        def __init__(self, request: BuildRequest):
+            self.request = request
+            requests.append(request)
+
+        def build(self) -> BuildResult:
+            state_dir = self.request.repo_path / ".pheragent" / "runs" / "batch-repo"
+            return BuildResult(
+                ok=True,
+                run_id=self.request.run_id or "batch-repo",
+                state_dir=state_dir,
+                scripts_dir=state_dir / "scripts",
+                manifest_path=state_dir / "manifest.json",
+                final_image="pheragent:batch-repo-final",
+            )
+
+    result = ProjectBatchBuilder(
+        projects_file=projects_file,
+        projects_dir=tmp_path / "projects",
+        oracles_dir=tmp_path / "oracles",
+        base_request=BuildRequest(
+            repo_path=tmp_path,
+            base_dockerfile=tmp_path / "Dockerfile",
+            run_id=None,
+        ),
+        run_id_prefix="batch",
+        command_runner=fake_runner,
+        builder_factory=FakeBuilder,
+    ).build_all()
+
+    assert result.ok
+    assert result.no_repo_log_path is None
+    assert result.version_mismatch_log_path == (
+        tmp_path / "projects" / "version-mismatch-projects.log"
+    )
+    assert result.results[0].ok
+    assert not result.results[0].skipped
+    assert result.results[0].version_mismatch
+    assert result.results[0].actual_commit == actual_hash
+    assert requests[0].repo_path == tmp_path / "projects" / "repo"
+    mismatch_log = result.version_mismatch_log_path.read_text(encoding="utf-8")
+    assert "example/repo" in mismatch_log
+    assert "missingref" in mismatch_log
+    assert actual_hash in mismatch_log
+
+
 def test_project_batch_builder_continues_after_unavailable_project_with_stop_on_failure(
     tmp_path: Path,
 ) -> None:
@@ -425,10 +544,10 @@ def test_project_batch_builder_continues_after_unavailable_project_with_stop_on_
     def fake_runner(command: list[str], cwd: Path | None) -> CommandResult:
         if command[:2] == ["git", "clone"]:
             repo_path = Path(command[-1])
+            if repo_path.name == "missing":
+                return CommandResult(exit_code=128, stderr="fatal: repository not found")
             (repo_path / ".git").mkdir(parents=True)
             return CommandResult(exit_code=0, stdout="ok")
-        if cwd is not None and cwd.name == "missing":
-            return CommandResult(exit_code=128, stderr="fatal: couldn't find remote ref")
         return CommandResult(exit_code=0, stdout="ok")
 
     class FakeBuilder:

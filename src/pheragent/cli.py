@@ -287,6 +287,8 @@ def _print_batch_result(result, *, as_json: bool) -> None:
         print(f"failures: {result.failures_log_path}")
     if result.no_repo_log_path:
         print(f"no repo: {result.no_repo_log_path}")
+    if result.version_mismatch_log_path:
+        print(f"version mismatches: {result.version_mismatch_log_path}")
     for project_result in result.results:
         project_status = (
             "skipped" if project_result.skipped else "ok" if project_result.ok else "failed"
@@ -296,6 +298,10 @@ def _print_batch_result(result, *, as_json: bool) -> None:
             f"{project_status}"
         )
         print(f"  repo: {project_result.repo_path}")
+        if project_result.version_mismatch:
+            print(f"  version mismatch: requested {project_result.project.commit}")
+            if project_result.actual_commit:
+                print(f"  actual commit: {project_result.actual_commit}")
         if project_result.run_id:
             print(f"  run: {project_result.run_id}")
         if project_result.final_image:
