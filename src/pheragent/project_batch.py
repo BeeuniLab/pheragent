@@ -624,6 +624,7 @@ class ProjectBatchBuilder:
             "requests": int(usage_total.get("requests", 0)),
             "input_tokens": int(usage_total.get("input_tokens", 0)),
             "output_tokens": int(usage_total.get("output_tokens", 0)),
+            "reasoning_tokens": int(usage_total.get("reasoning_tokens", 0)),
             "total_tokens": int(usage_total.get("total_tokens", 0)),
             "llm_usage": result.llm_usage,
         }
@@ -695,7 +696,13 @@ def _manifest_llm_usage(manifest: object) -> dict[str, dict[str, int]]:
         if not isinstance(raw_phase_usage, dict):
             continue
         phase_usage: dict[str, int] = {}
-        for key in ("requests", "input_tokens", "output_tokens", "total_tokens"):
+        for key in (
+            "requests",
+            "input_tokens",
+            "output_tokens",
+            "reasoning_tokens",
+            "total_tokens",
+        ):
             value = raw_phase_usage.get(key, 0)
             try:
                 phase_usage[key] = int(value)

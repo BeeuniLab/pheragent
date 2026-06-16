@@ -278,6 +278,7 @@ def _empty_token_usage() -> dict[str, int]:
         "requests": 0,
         "input_tokens": 0,
         "output_tokens": 0,
+        "reasoning_tokens": 0,
         "total_tokens": 0,
     }
 
@@ -318,7 +319,17 @@ def _extract_token_usage(value: Any) -> dict[str, int] | None:
     input_tokens = _usage_int(usage, "input_tokens", "prompt_tokens")
     output_tokens = _usage_int(usage, "output_tokens", "completion_tokens")
     total_tokens = _usage_int(usage, "total_tokens")
-    if input_tokens is None and output_tokens is None and total_tokens is None:
+    reasoning_tokens = (
+        _usage_int(_event_value(usage, "output_tokens_details"), "reasoning_tokens")
+        or _usage_int(_event_value(usage, "completion_tokens_details"), "reasoning_tokens")
+        or _usage_int(usage, "reasoning_tokens")
+    )
+    if (
+        input_tokens is None
+        and output_tokens is None
+        and total_tokens is None
+        and reasoning_tokens is None
+    ):
         return None
     if total_tokens is None:
         total_tokens = int(input_tokens or 0) + int(output_tokens or 0)
@@ -326,6 +337,7 @@ def _extract_token_usage(value: Any) -> dict[str, int] | None:
         "requests": 0,
         "input_tokens": int(input_tokens or 0),
         "output_tokens": int(output_tokens or 0),
+        "reasoning_tokens": int(reasoning_tokens or 0),
         "total_tokens": int(total_tokens or 0),
     }
 

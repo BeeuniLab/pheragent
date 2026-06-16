@@ -89,6 +89,7 @@ def _planner_response_events() -> list[FakeEvent]:
                 "usage": {
                     "input_tokens": 11,
                     "output_tokens": 7,
+                    "output_tokens_details": {"reasoning_tokens": 3},
                     "total_tokens": 18,
                 }
             },
@@ -136,6 +137,7 @@ def test_openai_responses_planner_uses_sdk_streaming(tmp_path: Path, monkeypatch
         "requests": 1,
         "input_tokens": 11,
         "output_tokens": 7,
+        "reasoning_tokens": 3,
         "total_tokens": 18,
     }
 

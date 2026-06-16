@@ -313,6 +313,7 @@ def _print_batch_result(result, *, as_json: bool) -> None:
                 f"requests={usage_total.get('requests', 0)} "
                 f"input={usage_total.get('input_tokens', 0)} "
                 f"output={usage_total.get('output_tokens', 0)} "
+                f"reasoning={usage_total.get('reasoning_tokens', 0)} "
                 f"total={usage_total.get('total_tokens', 0)}"
             )
         if project_result.run_id:

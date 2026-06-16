@@ -156,12 +156,14 @@ def test_environment_builder_records_llm_usage_in_manifest(tmp_path: Path) -> No
                     "requests": 1,
                     "input_tokens": 10,
                     "output_tokens": 5,
+                    "reasoning_tokens": 2,
                     "total_tokens": 15,
                 },
                 "total": {
                     "requests": 1,
                     "input_tokens": 10,
                     "output_tokens": 5,
+                    "reasoning_tokens": 2,
                     "total_tokens": 15,
                 },
             }
@@ -173,12 +175,14 @@ def test_environment_builder_records_llm_usage_in_manifest(tmp_path: Path) -> No
                     "requests": 2,
                     "input_tokens": 20,
                     "output_tokens": 8,
+                    "reasoning_tokens": 6,
                     "total_tokens": 28,
                 },
                 "total": {
                     "requests": 2,
                     "input_tokens": 20,
                     "output_tokens": 8,
+                    "reasoning_tokens": 6,
                     "total_tokens": 28,
                 },
             }
@@ -204,12 +208,14 @@ def test_environment_builder_records_llm_usage_in_manifest(tmp_path: Path) -> No
     assert result.llm_usage_path == result.state_dir / "llm-usage.json"
     usage_file = json.loads(result.llm_usage_path.read_text(encoding="utf-8"))
     assert usage_file["total"]["total_tokens"] == 43
+    assert usage_file["total"]["reasoning_tokens"] == 8
     assert manifest["llm_usage"]["planner"]["total_tokens"] == 15
     assert manifest["llm_usage"]["repair"]["total_tokens"] == 28
     assert manifest["llm_usage"]["total"] == {
         "requests": 3,
         "input_tokens": 30,
         "output_tokens": 13,
+        "reasoning_tokens": 8,
         "total_tokens": 43,
     }
 
