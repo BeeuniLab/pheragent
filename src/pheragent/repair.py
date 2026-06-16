@@ -746,6 +746,10 @@ def _repair_command_rejection_reason(command: str) -> str | None:
         "/tmp/pheragent/blocks/",
         "/tmp/pheragent/blocks",
     )
+    test_monkeypatch_files = (
+        "conftest.py",
+        "sitecustomize.py",
+    )
     for token in dangerous_tokens:
         if token in normalized:
             return f"unsafe token {token!r}"
@@ -755,6 +759,9 @@ def _repair_command_rejection_reason(command: str) -> str | None:
     for token in transient_runtime_paths:
         if token in normalized:
             return f"transient runtime path {token!r}"
+    for token in test_monkeypatch_files:
+        if token in normalized:
+            return f"test monkeypatch file {token!r}"
     return None
 
 
@@ -825,6 +832,10 @@ Rules:
 - Make command validate only the repair itself from the failed block baseline
   (for example, install a missing package and run a small import/version check).
 - Prefer package-manager fixes, missing tool installs, compatibility pins, and validation fixes.
+- Do not edit application source, tests, conftest.py, or sitecustomize.py to make
+  tests pass. If validation is running the full test suite and failures are
+  application behavior, replace validation with a tool/import/pytest collect-only
+  check instead.
 - Keep each repair small enough to belong to the failed block.
 - Analyze the failed block and failure stdout/stderr first; repair_context and
   heuristic_hints are supporting evidence, not a substitute for the error.

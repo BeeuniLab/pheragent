@@ -341,6 +341,34 @@ def test_openai_responses_repair_parser_filters_transient_block_script_paths() -
     assert "transient runtime path" in planner.last_parse_diagnostics[0]
 
 
+def test_openai_responses_repair_parser_filters_test_monkeypatch_files() -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
+
+    repairs = planner._parse_repairs(
+        """
+        {
+          "repairs": [
+            {
+              "title": "Monkeypatch tests",
+              "command": "cat > conftest.py <<'PY'\\nprint('patch')\\nPY",
+              "patch_script": "cat > conftest.py <<'PY'\\nprint('patch')\\nPY"
+            },
+            {
+              "title": "Collect tests",
+              "command": "python -m pytest --collect-only -q",
+              "patch_script": "true",
+              "validation_command": "python -m pytest --collect-only -q"
+            }
+          ]
+        }
+        """
+    )
+
+    assert len(repairs) == 1
+    assert repairs[0].title == "Collect tests"
+    assert "test monkeypatch file" in planner.last_parse_diagnostics[0]
+
+
 def test_openai_responses_repair_parser_allows_apt_cache_cleanup() -> None:
     planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
     command = (

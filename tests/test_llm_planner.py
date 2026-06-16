@@ -265,3 +265,30 @@ def test_openai_responses_planner_uses_safe_python_dependency_script() -> None:
     assert "ln -sf /workspace/repo/.venv/bin/pytest /usr/local/bin/pytest" in blocks[0].script
     assert blocks[0].validation_command is not None
     assert ".venv/bin/python" in blocks[0].validation_command
+
+
+def test_openai_responses_planner_uses_collect_only_for_build_test_validation() -> None:
+    planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
+
+    blocks = planner._parse_blocks(
+        json.dumps(
+            {
+                "blocks": [
+                    {
+                        "id": "03-build-test-prep",
+                        "order": 3,
+                        "title": "Build/Test Prep",
+                        "goal": "install pytest and validate tests",
+                        "script": "python -m pip install pytest",
+                        "validation_command": (
+                            "cd /workspace/repo && ./.venv/bin/python -m pytest -q"
+                        ),
+                    }
+                ]
+            }
+        )
+    )
+
+    assert blocks[0].validation_command is not None
+    assert "--collect-only" in blocks[0].validation_command
+    assert "pytest -q" not in blocks[0].validation_command

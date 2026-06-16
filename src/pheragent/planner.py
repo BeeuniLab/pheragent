@@ -68,11 +68,7 @@ find . -maxdepth 2 -type f | sort | sed -n '1,120p'
             title="Python Dependencies",
             goal="Install Python project dependencies from detected manifests.",
             script=shell_script(_python_script(use_uv="uv" in context.package_managers)),
-            validation_command=_first_present(
-                context.test_commands,
-                prefix="python",
-                fallback=python_validation,
-            ),
+            validation_command=_safe_python_validation_command(context, python_validation),
         )
 
     def _plan_node(self, order: int, context: RepoContext) -> CommandBlock:
@@ -153,6 +149,14 @@ def _first_present(values: list[str], *, prefix: str, fallback: str) -> str:
         if value.startswith(prefix):
             return value
     return fallback
+
+
+def _safe_python_validation_command(context: RepoContext, fallback: str) -> str:
+    command = _first_present(context.test_commands, prefix="python", fallback=fallback)
+    normalized = " ".join(command.split()).lower()
+    if "pytest" in normalized and "--collect-only" not in normalized:
+        return "python -m pytest --collect-only -q"
+    return command
 
 
 def _preflight_script() -> str:

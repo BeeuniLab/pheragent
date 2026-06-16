@@ -39,6 +39,16 @@ def test_rule_based_planner_writes_preflight_and_python_blocks(tmp_path: Path) -
     assert blocks[1].script.startswith("#!/bin/sh")
 
 
+def test_rule_based_planner_collects_pytest_without_running_full_suite(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    context = RepoAnalyzer().analyze(tmp_path)
+
+    blocks = RuleBasedBlockPlanner().plan(context)
+
+    assert blocks[1].validation_command == "python -m pytest --collect-only -q"
+
+
 def test_rule_based_planner_installs_node_compatible_pnpm(tmp_path: Path) -> None:
     (tmp_path / "package.json").write_text('{"scripts":{"build":"vite build"}}', encoding="utf-8")
     (tmp_path / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")

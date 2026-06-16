@@ -128,6 +128,8 @@ class OpenAIResponsesBlockPlanner:
             if _is_python_dependency_block(block_id, title):
                 script = _safe_python_dependency_script()
                 validation_command = _safe_python_dependency_validation_command()
+            elif _is_build_test_prep_block(block_id, title):
+                validation_command = _safe_build_test_validation_command(validation_command)
             blocks.append(
                 CommandBlock(
                     id=block_id,
@@ -354,6 +356,27 @@ def _is_python_dependency_block(block_id: str, title: str) -> bool:
     return "python" in haystack and ("dep" in haystack or "environment" in haystack)
 
 
+def _is_build_test_prep_block(block_id: str, title: str) -> bool:
+    haystack = f"{block_id} {title}".lower()
+    return ("build" in haystack or "test" in haystack) and "prep" in haystack
+
+
+def _safe_build_test_validation_command(command: str | None) -> str | None:
+    if command is None:
+        return command
+    normalized = " ".join(command.split()).lower()
+    if "pytest" not in normalized or "--collect-only" in normalized:
+        return command
+    return (
+        "cd /workspace/repo && "
+        "if [ -x .venv/bin/python ]; then "
+        "./.venv/bin/python -m pytest --collect-only -q; "
+        "elif command -v python >/dev/null 2>&1; then "
+        "python -m pytest --collect-only -q; "
+        "else python3 -m pytest --collect-only -q; fi"
+    )
+
+
 def _safe_python_dependency_script() -> str:
     return """
 cd /workspace/repo
@@ -474,6 +497,10 @@ Rules:
 - Keep commands deterministic and idempotent where practical.
 - Do not start long-running services in setup blocks.
 - Do not use host paths outside /workspace/repo.
+- Build/test prep validation must verify tools can run, not require the full test
+  suite to pass. Prefer import checks, version checks, or pytest --collect-only.
+- Do not create conftest.py, sitecustomize.py, or monkeypatch application routes
+  to make project tests pass; this agent builds environments, not application fixes.
 - Prefer the provided fallback_blocks when they are suitable, and improve them only
   when repo context indicates a better block sequence.
 - The word JSON appears here intentionally because JSON mode requires an explicit JSON instruction.
