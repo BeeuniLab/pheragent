@@ -204,6 +204,7 @@ fi
 if [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; then
   "$PYTHON_BIN" -m pip install -e '.[dev]' || "$PYTHON_BIN" -m pip install -e .
 fi
+"$PYTHON_BIN" -m pytest --version >/dev/null 2>&1 || "$PYTHON_BIN" -m pip install pytest
 """
     )
 

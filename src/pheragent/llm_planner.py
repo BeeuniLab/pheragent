@@ -383,6 +383,32 @@ mkdir -p .cache/uv .cache/pip
 export UV_CACHE_DIR=/workspace/repo/.cache/uv
 export PIP_CACHE_DIR=/workspace/repo/.cache/pip
 
+ensure_pytest() {
+  target_python="$1"
+  if [ ! -x "$target_python" ]; then
+    return 0
+  fi
+  "$target_python" -m pip --version >/dev/null 2>&1 \
+    || "$target_python" -m ensurepip --upgrade \
+    || true
+  "$target_python" -m pytest --version >/dev/null 2>&1 || "$target_python" -m pip install pytest
+}
+
+expose_venv_tools() {
+  if [ ! -x /workspace/repo/.venv/bin/python ]; then
+    return 0
+  fi
+  if [ -w /usr/local/bin ] || [ "$(id -u)" = "0" ]; then
+    ln -sf /workspace/repo/.venv/bin/python /usr/local/bin/python
+    if [ -x /workspace/repo/.venv/bin/pip ]; then
+      ln -sf /workspace/repo/.venv/bin/pip /usr/local/bin/pip
+    fi
+    if [ -x /workspace/repo/.venv/bin/pytest ]; then
+      ln -sf /workspace/repo/.venv/bin/pytest /usr/local/bin/pytest
+    fi
+  fi
+}
+
 if [ -f uv.lock ]; then
   if ! command -v uv >/dev/null 2>&1; then
     python3 -m venv .pheragent-tools
@@ -397,6 +423,8 @@ if [ -f uv.lock ]; then
   uv sync --locked --all-extras --dev \
     || uv sync --frozen --all-extras --dev \
     || uv sync --all-extras --dev
+  ensure_pytest /workspace/repo/.venv/bin/python
+  expose_venv_tools
 else
   if [ ! -d .venv ]; then
     "$PYTHON_BIN" -m venv .venv
@@ -408,6 +436,8 @@ else
   if [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; then
     ./.venv/bin/python -m pip install -e '.[dev]' || ./.venv/bin/python -m pip install -e .
   fi
+  ensure_pytest /workspace/repo/.venv/bin/python
+  expose_venv_tools
 fi
 """.strip()
 

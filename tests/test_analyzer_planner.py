@@ -35,6 +35,7 @@ def test_rule_based_planner_writes_preflight_and_python_blocks(tmp_path: Path) -
 
     assert [block.id for block in blocks] == ["00-preflight", "01-python-deps"]
     assert "pip install" in blocks[1].script
+    assert "pip install pytest" in blocks[1].script
     assert blocks[1].script.startswith("#!/bin/sh")
 
 
