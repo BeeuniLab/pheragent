@@ -125,11 +125,16 @@ class OpenAIResponsesBlockPlanner:
             validation_command = _sanitize_validation_command(
                 _optional_str(item.get("validation_command"))
             )
+            script_rejection = _repo_code_modification_rejection_reason(script)
             if _is_python_dependency_block(block_id, title):
                 script = _safe_python_dependency_script()
                 validation_command = _safe_python_dependency_validation_command()
             elif _is_build_test_prep_block(block_id, title):
                 validation_command = _safe_build_test_validation_command(validation_command)
+                if script_rejection or _uses_python_test_tooling(script, validation_command):
+                    script = _safe_build_test_prep_script()
+            elif script_rejection:
+                raise ValueError(f"block {block_id} modifies repository code: {script_rejection}")
             blocks.append(
                 CommandBlock(
                     id=block_id,
@@ -375,6 +380,64 @@ def _safe_build_test_validation_command(command: str | None) -> str | None:
         "python -m pytest --collect-only -q; "
         "else python3 -m pytest --collect-only -q; fi"
     )
+
+
+def _uses_python_test_tooling(script: str, validation_command: str | None) -> bool:
+    haystack = f"{script}\n{validation_command or ''}".lower()
+    return "pytest" in haystack or "python -m pip" in haystack or "pip install" in haystack
+
+
+def _repo_code_modification_rejection_reason(script: str) -> str | None:
+    normalized = re.sub(r"\s+", " ", script.strip().lower())
+    for token in ("conftest.py", "sitecustomize.py"):
+        if token in normalized:
+            return f"test monkeypatch file {token!r}"
+    for token in (".write_text(", ".write_bytes(", "open("):
+        if token in normalized:
+            return f"python file write token {token!r}"
+    if re.search(r"\b(?:sed\s+-i|perl\s+-pi)\b", normalized):
+        return "in-place source edit command"
+    if re.search(
+        r"(?:^|[;&|]\s*)(?:cat|tee)\b[^;&|>]*>\s*(?:/workspace/repo/)?"
+        r"[^;&|\s]+\.(?:py|pyi|js|jsx|ts|tsx|java|go|rs|c|cc|cpp|h|hpp|rb|php|sh)",
+        normalized,
+    ):
+        return "redirect writes to source-like file"
+    return None
+
+
+def _safe_build_test_prep_script() -> str:
+    return """
+cd /workspace/repo
+
+echo "[pheragent] build/test prep"
+if [ ! -f pyproject.toml ] && [ ! -f setup.py ] && [ ! -f setup.cfg ] \
+  && [ ! -f requirements.txt ] && [ ! -d tests ]; then
+  echo "[pheragent] no python test prep needed"
+  exit 0
+fi
+
+if [ -x .venv/bin/python ]; then
+  PYTHON_BIN=./.venv/bin/python
+elif command -v python >/dev/null 2>&1; then
+  PYTHON_BIN=python
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON_BIN=python3
+else
+  echo "python executable not found" >&2
+  exit 127
+fi
+
+"$PYTHON_BIN" -m pip --version >/dev/null 2>&1 \
+  || "$PYTHON_BIN" -m ensurepip --upgrade \
+  || true
+"$PYTHON_BIN" -m pytest --version >/dev/null 2>&1 || "$PYTHON_BIN" -m pip install pytest
+if [ -d tests ] && grep -R "@pytest.mark.asyncio\\|pytest_asyncio" tests pyproject.toml \
+  >/dev/null 2>&1; then
+  "$PYTHON_BIN" -m pip install pytest-asyncio
+fi
+"$PYTHON_BIN" -m pytest --version
+""".strip()
 
 
 def _safe_python_dependency_script() -> str:

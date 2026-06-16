@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from pheragent.analyzer import RepoAnalyzer
 from pheragent.llm_planner import (
     OpenAIResponsesBlockPlanner,
@@ -292,3 +294,56 @@ def test_openai_responses_planner_uses_collect_only_for_build_test_validation() 
     assert blocks[0].validation_command is not None
     assert "--collect-only" in blocks[0].validation_command
     assert "pytest -q" not in blocks[0].validation_command
+    assert "conftest.py" not in blocks[0].script
+
+
+def test_openai_responses_planner_replaces_repo_code_modifying_build_test_script() -> None:
+    planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
+
+    blocks = planner._parse_blocks(
+        json.dumps(
+            {
+                "blocks": [
+                    {
+                        "id": "03-build-test-prep",
+                        "order": 3,
+                        "title": "Build/Test Prep",
+                        "goal": "prepare tests",
+                        "script": "cat > conftest.py <<'PY'\nprint('patch')\nPY",
+                        "validation_command": "python -m pytest -q",
+                    }
+                ]
+            }
+        )
+    )
+
+    assert "build/test prep" in blocks[0].script
+    assert "conftest.py" not in blocks[0].script
+    assert "--collect-only" in (blocks[0].validation_command or "")
+
+
+def test_openai_responses_planner_rejects_repo_code_modifying_setup_blocks() -> None:
+    planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
+    source_write_script = (
+        "python - <<'PY'\n"
+        "from pathlib import Path\n"
+        "Path('pkg/app.py').write_text('x')\n"
+        "PY"
+    )
+
+    with pytest.raises(ValueError, match="modifies repository code"):
+        planner._parse_blocks(
+            json.dumps(
+                {
+                    "blocks": [
+                        {
+                            "id": "01-system-deps",
+                            "order": 1,
+                            "title": "System Dependencies",
+                            "goal": "install deps",
+                            "script": source_write_script,
+                        }
+                    ]
+                }
+            )
+        )

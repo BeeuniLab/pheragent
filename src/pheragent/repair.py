@@ -746,10 +746,6 @@ def _repair_command_rejection_reason(command: str) -> str | None:
         "/tmp/pheragent/blocks/",
         "/tmp/pheragent/blocks",
     )
-    test_monkeypatch_files = (
-        "conftest.py",
-        "sitecustomize.py",
-    )
     for token in dangerous_tokens:
         if token in normalized:
             return f"unsafe token {token!r}"
@@ -759,9 +755,27 @@ def _repair_command_rejection_reason(command: str) -> str | None:
     for token in transient_runtime_paths:
         if token in normalized:
             return f"transient runtime path {token!r}"
-    for token in test_monkeypatch_files:
-        if token in normalized:
+    repo_modification = _repo_code_modification_rejection_reason(normalized)
+    if repo_modification:
+        return repo_modification
+    return None
+
+
+def _repo_code_modification_rejection_reason(normalized_command: str) -> str | None:
+    for token in ("conftest.py", "sitecustomize.py"):
+        if token in normalized_command:
             return f"test monkeypatch file {token!r}"
+    for token in (".write_text(", ".write_bytes(", "open("):
+        if token in normalized_command:
+            return f"python file write token {token!r}"
+    if re.search(r"\b(?:sed\s+-i|perl\s+-pi)\b", normalized_command):
+        return "in-place source edit command"
+    if re.search(
+        r"(?:^|[;&|]\s*)(?:cat|tee)\b[^;&|>]*>\s*(?:/workspace/repo/)?"
+        r"[^;&|\s]+\.(?:py|pyi|js|jsx|ts|tsx|java|go|rs|c|cc|cpp|h|hpp|rb|php|sh)",
+        normalized_command,
+    ):
+        return "redirect writes to source-like file"
     return None
 
 

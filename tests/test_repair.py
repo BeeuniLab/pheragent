@@ -369,6 +369,40 @@ def test_openai_responses_repair_parser_filters_test_monkeypatch_files() -> None
     assert "test monkeypatch file" in planner.last_parse_diagnostics[0]
 
 
+def test_openai_responses_repair_parser_filters_python_source_writes() -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
+    source_write_command = (
+        "python - <<'PY'\n"
+        "from pathlib import Path\n"
+        "Path('fastmlx/utils.py').write_text('patch')\n"
+        "PY"
+    )
+
+    repairs = planner._parse_repairs(
+        json.dumps(
+            {
+                "repairs": [
+                    {
+                        "title": "Patch source",
+                        "command": source_write_command,
+                        "patch_script": source_write_command,
+                    },
+                    {
+                        "title": "Collect tests",
+                        "command": "python -m pytest --collect-only -q",
+                        "patch_script": "true",
+                        "validation_command": "python -m pytest --collect-only -q",
+                    },
+                ]
+            }
+        )
+    )
+
+    assert len(repairs) == 1
+    assert repairs[0].title == "Collect tests"
+    assert "python file write token" in planner.last_parse_diagnostics[0]
+
+
 def test_openai_responses_repair_parser_allows_apt_cache_cleanup() -> None:
     planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
     command = (
