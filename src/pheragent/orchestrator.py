@@ -215,6 +215,8 @@ class EnvironmentBuilder:
 
     def _save_manifest(self, result: BuildResult) -> None:
         result.llm_usage = self._llm_usage_summary()
+        result.llm_usage_path = self.store.llm_usage_path
+        self.store.save_llm_usage(result)
         self.store.save_manifest(result)
 
     def _llm_usage_summary(self) -> dict[str, dict[str, int]]:

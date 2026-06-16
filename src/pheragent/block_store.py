@@ -23,6 +23,7 @@ class BlockStore:
         self.executions_path = run_dir / "executions.jsonl"
         self.context_path = run_dir / "context.json"
         self.manifest_path = run_dir / "manifest.json"
+        self.llm_usage_path = run_dir / "llm-usage.json"
         self.blocks_dir.mkdir(parents=True, exist_ok=True)
         self.scripts_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
@@ -117,5 +118,11 @@ class BlockStore:
     def save_manifest(self, result: BuildResult) -> None:
         self.manifest_path.write_text(
             json.dumps(to_jsonable(result), indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+    def save_llm_usage(self, result: BuildResult) -> None:
+        self.llm_usage_path.write_text(
+            json.dumps(to_jsonable(result.llm_usage), indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )

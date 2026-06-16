@@ -176,6 +176,7 @@ class BuildResult:
     state_dir: Path
     scripts_dir: Path
     manifest_path: Path
+    llm_usage_path: Path | None = None
     blocks: list[CommandBlock] = field(default_factory=list)
     checkpoints: list[Checkpoint] = field(default_factory=list)
     executions: list[BlockExecution] = field(default_factory=list)

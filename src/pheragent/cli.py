@@ -269,6 +269,8 @@ def _print_result(result, *, as_json: bool) -> None:
     print(f"state: {result.state_dir}")
     print(f"scripts: {result.scripts_dir}")
     print(f"manifest: {result.manifest_path}")
+    if result.llm_usage_path:
+        print(f"llm usage: {result.llm_usage_path}")
     if result.final_image:
         print(f"final image: {result.final_image}")
     if result.error:
@@ -289,6 +291,8 @@ def _print_batch_result(result, *, as_json: bool) -> None:
         print(f"no repo: {result.no_repo_log_path}")
     if result.version_mismatch_log_path:
         print(f"version mismatches: {result.version_mismatch_log_path}")
+    if result.llm_usage_log_path:
+        print(f"llm usage: {result.llm_usage_log_path}")
     for project_result in result.results:
         project_status = (
             "skipped" if project_result.skipped else "ok" if project_result.ok else "failed"

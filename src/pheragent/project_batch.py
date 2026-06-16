@@ -60,6 +60,7 @@ class BatchBuildResult:
     failures_log_path: Path | None = None
     no_repo_log_path: Path | None = None
     version_mismatch_log_path: Path | None = None
+    llm_usage_log_path: Path | None = None
 
 
 @dataclass(slots=True)
@@ -325,6 +326,9 @@ class ProjectBatchBuilder:
         failures_log_path = self.projects_dir / "failed-projects.log"
         if failures_log_path.exists():
             failures_log_path.unlink()
+        llm_usage_log_path = self.projects_dir / "llm-usage-projects.jsonl"
+        if llm_usage_log_path.exists():
+            llm_usage_log_path.unlink()
         no_repo_log_path = self.projects_dir / "no-repo-projects.log"
         known_no_repo_keys = _read_no_repo_log_keys(no_repo_log_path)
         version_mismatch_log_path = self.projects_dir / "version-mismatch-projects.log"
@@ -344,6 +348,7 @@ class ProjectBatchBuilder:
                         f"{existing_result.run_id}"
                     )
                     results.append(existing_result)
+                    self._append_llm_usage_log(existing_result, llm_usage_log_path)
                     continue
                 if _project_log_key(spec) in known_no_repo_keys:
                     result = ProjectRunResult(
@@ -355,6 +360,7 @@ class ProjectBatchBuilder:
                         error="previously marked unavailable in no-repo-projects.log",
                     )
                     results.append(result)
+                    self._append_llm_usage_log(result, llm_usage_log_path)
                     self._emit(
                         f"project {spec.owner_repo}: skip previously unavailable repository"
                     )
@@ -444,6 +450,7 @@ class ProjectBatchBuilder:
                 self._append_no_repo_log(result, no_repo_log_path, known_no_repo_keys)
             elif not result.ok:
                 self._append_failure_log(result, failures_log_path)
+            self._append_llm_usage_log(result, llm_usage_log_path)
             status = "skipped" if result.skipped else "ok" if result.ok else "failed"
             self._emit(f"project {spec.owner_repo}: {status}")
             if self.stop_on_failure and not result.ok and not result.skipped:
@@ -459,6 +466,7 @@ class ProjectBatchBuilder:
             version_mismatch_log_path=(
                 version_mismatch_log_path if version_mismatch_log_path.exists() else None
             ),
+            llm_usage_log_path=llm_usage_log_path if llm_usage_log_path.exists() else None,
         )
 
     def _request_for(self, spec: ProjectSpec, repo_path: Path) -> BuildRequest:
@@ -590,6 +598,37 @@ class ProjectBatchBuilder:
                 + "\n"
             )
         known_no_repo_keys.add(key)
+
+    def _append_llm_usage_log(
+        self,
+        result: ProjectRunResult,
+        llm_usage_log_path: Path,
+    ) -> None:
+        llm_usage_log_path.parent.mkdir(parents=True, exist_ok=True)
+        usage_total = result.llm_usage.get("total", {})
+        record = {
+            "owner_repo": result.project.owner_repo,
+            "commit": result.project.commit,
+            "checkout_dir_name": result.project.checkout_dir_name,
+            "repo_path": str(result.repo_path),
+            "ok": result.ok,
+            "skipped": result.skipped,
+            "version_mismatch": result.version_mismatch,
+            "actual_commit": result.actual_commit,
+            "run_id": result.run_id,
+            "final_image": result.final_image,
+            "manifest_path": str(result.manifest_path) if result.manifest_path else None,
+            "oracle_path": str(result.oracle_path) if result.oracle_path else None,
+            "failure_stage": result.failure_stage,
+            "error": result.error,
+            "requests": int(usage_total.get("requests", 0)),
+            "input_tokens": int(usage_total.get("input_tokens", 0)),
+            "output_tokens": int(usage_total.get("output_tokens", 0)),
+            "total_tokens": int(usage_total.get("total_tokens", 0)),
+            "llm_usage": result.llm_usage,
+        }
+        with llm_usage_log_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def _upsert_version_mismatch_log(
         self,

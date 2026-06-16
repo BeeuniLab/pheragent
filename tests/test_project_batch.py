@@ -789,3 +789,103 @@ def test_project_batch_builder_logs_build_failures_concisely(tmp_path: Path) -> 
     assert "pallets/flask" in failure_log
     assert "build_failed" in failure_log
     assert "20-python-deps" not in failure_log
+
+
+def test_project_batch_builder_writes_llm_usage_jsonl(tmp_path: Path) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text("pallets/flask 2579ce9\n", encoding="utf-8")
+
+    def fake_runner(command: list[str], cwd: Path | None) -> CommandResult:
+        del cwd
+        if command[:2] == ["git", "clone"]:
+            repo_path = Path(command[-1])
+            (repo_path / ".git").mkdir(parents=True)
+        return CommandResult(exit_code=0, stdout="ok")
+
+    class UsageBuilder:
+        def __init__(self, request: BuildRequest):
+            self.request = request
+
+        def build(self) -> BuildResult:
+            state_dir = self.request.repo_path / ".pheragent" / "runs" / "batch-flask"
+            return BuildResult(
+                ok=True,
+                run_id=self.request.run_id or "batch-flask",
+                state_dir=state_dir,
+                scripts_dir=state_dir / "scripts",
+                manifest_path=state_dir / "manifest.json",
+                final_image="pheragent:batch-flask-final",
+                llm_usage={
+                    "planner": {
+                        "requests": 1,
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "total_tokens": 15,
+                    },
+                    "total": {
+                        "requests": 1,
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "total_tokens": 15,
+                    },
+                },
+            )
+
+    result = ProjectBatchBuilder(
+        projects_file=projects_file,
+        projects_dir=tmp_path / "projects",
+        base_request=BuildRequest(
+            repo_path=tmp_path,
+            base_dockerfile=tmp_path / "Dockerfile",
+            run_id=None,
+        ),
+        run_id_prefix="batch",
+        command_runner=fake_runner,
+        builder_factory=UsageBuilder,
+    ).build_all()
+
+    assert result.ok
+    assert result.llm_usage_log_path == tmp_path / "projects" / "llm-usage-projects.jsonl"
+    expected_manifest_path = (
+        tmp_path / "projects" / "flask" / ".pheragent" / "runs" / "batch-flask" / "manifest.json"
+    )
+    records = [
+        json.loads(line)
+        for line in result.llm_usage_log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert records == [
+        {
+            "owner_repo": "pallets/flask",
+            "commit": "2579ce9",
+            "checkout_dir_name": "flask",
+            "repo_path": str(tmp_path / "projects" / "flask"),
+            "ok": True,
+            "skipped": False,
+            "version_mismatch": False,
+            "actual_commit": "ok",
+            "run_id": "batch-flask",
+            "final_image": "pheragent:batch-flask-final",
+            "manifest_path": str(expected_manifest_path),
+            "oracle_path": None,
+            "failure_stage": None,
+            "error": None,
+            "requests": 1,
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "total_tokens": 15,
+            "llm_usage": {
+                "planner": {
+                    "requests": 1,
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "total_tokens": 15,
+                },
+                "total": {
+                    "requests": 1,
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "total_tokens": 15,
+                },
+            },
+        }
+    ]

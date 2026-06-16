@@ -201,6 +201,9 @@ def test_environment_builder_records_llm_usage_in_manifest(tmp_path: Path) -> No
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
 
     assert result.ok
+    assert result.llm_usage_path == result.state_dir / "llm-usage.json"
+    usage_file = json.loads(result.llm_usage_path.read_text(encoding="utf-8"))
+    assert usage_file["total"]["total_tokens"] == 43
     assert manifest["llm_usage"]["planner"]["total_tokens"] == 15
     assert manifest["llm_usage"]["repair"]["total_tokens"] == 28
     assert manifest["llm_usage"]["total"] == {
