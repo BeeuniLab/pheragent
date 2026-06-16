@@ -38,6 +38,7 @@ class ProjectRunResult:
     project: ProjectSpec
     repo_path: Path
     ok: bool
+    skipped: bool = False
     run_id: str | None = None
     final_image: str | None = None
     manifest_path: Path | None = None
@@ -53,6 +54,7 @@ class BatchBuildResult:
     oracles_dir: Path
     results: list[ProjectRunResult]
     failures_log_path: Path | None = None
+    no_repo_log_path: Path | None = None
 
 
 def parse_projects_file(path: Path) -> list[ProjectSpec]:
@@ -254,6 +256,9 @@ class ProjectBatchBuilder:
         failures_log_path = self.projects_dir / "failed-projects.log"
         if failures_log_path.exists():
             failures_log_path.unlink()
+        no_repo_log_path = self.projects_dir / "no-repo-projects.log"
+        if no_repo_log_path.exists():
+            no_repo_log_path.unlink()
 
         results: list[ProjectRunResult] = []
         for spec in specs:
@@ -309,27 +314,43 @@ class ProjectBatchBuilder:
                     error=build_result.error,
                 )
             except Exception as exc:
-                result = ProjectRunResult(
-                    project=spec,
-                    repo_path=repo_path,
-                    ok=False,
-                    oracle_path=oracle_path,
-                    failure_stage=failure_stage,
-                    error=str(exc),
-                )
+                error = str(exc)
+                if failure_stage == "prepare_failed" and _is_unavailable_project_error(error):
+                    result = ProjectRunResult(
+                        project=spec,
+                        repo_path=repo_path,
+                        ok=False,
+                        skipped=True,
+                        oracle_path=oracle_path,
+                        failure_stage="unavailable_project",
+                        error=error,
+                    )
+                else:
+                    result = ProjectRunResult(
+                        project=spec,
+                        repo_path=repo_path,
+                        ok=False,
+                        oracle_path=oracle_path,
+                        failure_stage=failure_stage,
+                        error=error,
+                    )
             results.append(result)
-            if not result.ok:
+            if result.skipped:
+                self._append_no_repo_log(result, no_repo_log_path)
+            elif not result.ok:
                 self._append_failure_log(result, failures_log_path)
-            self._emit(f"project {spec.owner_repo}: {'ok' if result.ok else 'failed'}")
-            if self.stop_on_failure and not result.ok:
+            status = "skipped" if result.skipped else "ok" if result.ok else "failed"
+            self._emit(f"project {spec.owner_repo}: {status}")
+            if self.stop_on_failure and not result.ok and not result.skipped:
                 break
 
         return BatchBuildResult(
-            ok=all(result.ok for result in results),
+            ok=all(result.ok or result.skipped for result in results),
             projects_dir=self.projects_dir,
             oracles_dir=self.oracles_dir,
             results=results,
             failures_log_path=failures_log_path if failures_log_path.exists() else None,
+            no_repo_log_path=no_repo_log_path if no_repo_log_path.exists() else None,
         )
 
     def _request_for(self, spec: ProjectSpec, repo_path: Path) -> BuildRequest:
@@ -435,6 +456,32 @@ class ProjectBatchBuilder:
                 )
                 + "\n"
             )
+
+    def _append_no_repo_log(self, result: ProjectRunResult, no_repo_log_path: Path) -> None:
+        no_repo_log_path.parent.mkdir(parents=True, exist_ok=True)
+        with no_repo_log_path.open("a", encoding="utf-8") as handle:
+            handle.write(
+                "\t".join(
+                    [
+                        result.project.owner_repo,
+                        result.project.commit,
+                        result.project.checkout_dir_name,
+                        str(result.repo_path),
+                        result.failure_stage or "unavailable_project",
+                    ]
+                )
+                + "\n"
+            )
+
+
+def _is_unavailable_project_error(error: str) -> bool:
+    return error.startswith(
+        (
+            "clone failed for ",
+            "fetch failed for ",
+            "checkout failed for ",
+        )
+    )
 
 
 def _run_or_raise(

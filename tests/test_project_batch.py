@@ -375,7 +375,9 @@ def test_project_batch_builder_resets_unrecognized_existing_project_state(
     assert result.results[0].final_image == "pheragent:batch-flask-rebuilt"
 
 
-def test_project_batch_builder_writes_failed_projects_log(tmp_path: Path) -> None:
+def test_project_batch_builder_writes_no_repo_log_for_unavailable_projects(
+    tmp_path: Path,
+) -> None:
     projects_file = tmp_path / "projects.txt"
     projects_file.write_text("example/missing missingref\n", encoding="utf-8")
 
@@ -398,13 +400,72 @@ def test_project_batch_builder_writes_failed_projects_log(tmp_path: Path) -> Non
         command_runner=fake_runner,
     ).build_all()
 
-    assert not result.ok
-    assert result.failures_log_path == tmp_path / "projects" / "failed-projects.log"
-    failure_log = result.failures_log_path.read_text(encoding="utf-8")
-    assert "example/missing" in failure_log
-    assert "missingref" in failure_log
-    assert "prepare_failed" in failure_log
-    assert "fatal: couldn't find remote ref" not in failure_log
+    assert result.ok
+    assert result.failures_log_path is None
+    assert result.no_repo_log_path == tmp_path / "projects" / "no-repo-projects.log"
+    assert result.results[0].skipped
+    assert result.results[0].failure_stage == "unavailable_project"
+    no_repo_log = result.no_repo_log_path.read_text(encoding="utf-8")
+    assert "example/missing" in no_repo_log
+    assert "missingref" in no_repo_log
+    assert "unavailable_project" in no_repo_log
+    assert "fatal: couldn't find remote ref" not in no_repo_log
+
+
+def test_project_batch_builder_continues_after_unavailable_project_with_stop_on_failure(
+    tmp_path: Path,
+) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text(
+        "example/missing missingref\npallets/flask 2579ce9\n",
+        encoding="utf-8",
+    )
+    built_repos: list[Path] = []
+
+    def fake_runner(command: list[str], cwd: Path | None) -> CommandResult:
+        if command[:2] == ["git", "clone"]:
+            repo_path = Path(command[-1])
+            (repo_path / ".git").mkdir(parents=True)
+            return CommandResult(exit_code=0, stdout="ok")
+        if cwd is not None and cwd.name == "missing":
+            return CommandResult(exit_code=128, stderr="fatal: couldn't find remote ref")
+        return CommandResult(exit_code=0, stdout="ok")
+
+    class FakeBuilder:
+        def __init__(self, request: BuildRequest):
+            self.request = request
+
+        def build(self) -> BuildResult:
+            built_repos.append(self.request.repo_path)
+            state_dir = self.request.repo_path / ".pheragent" / "runs" / "batch-flask"
+            return BuildResult(
+                ok=True,
+                run_id=self.request.run_id or "batch-flask",
+                state_dir=state_dir,
+                scripts_dir=state_dir / "scripts",
+                manifest_path=state_dir / "manifest.json",
+                final_image="pheragent:batch-flask-final",
+            )
+
+    result = ProjectBatchBuilder(
+        projects_file=projects_file,
+        projects_dir=tmp_path / "projects",
+        base_request=BuildRequest(
+            repo_path=tmp_path,
+            base_dockerfile=tmp_path / "Dockerfile",
+            run_id=None,
+        ),
+        run_id_prefix="batch",
+        stop_on_failure=True,
+        command_runner=fake_runner,
+        builder_factory=FakeBuilder,
+    ).build_all()
+
+    assert result.ok
+    assert [project_result.skipped for project_result in result.results] == [True, False]
+    assert built_repos == [tmp_path / "projects" / "flask"]
+    assert result.no_repo_log_path is not None
+    assert result.failures_log_path is None
 
 
 def test_project_batch_builder_logs_build_failures_concisely(tmp_path: Path) -> None:

@@ -285,8 +285,12 @@ def _print_batch_result(result, *, as_json: bool) -> None:
     print(f"oracles: {result.oracles_dir}")
     if result.failures_log_path:
         print(f"failures: {result.failures_log_path}")
+    if result.no_repo_log_path:
+        print(f"no repo: {result.no_repo_log_path}")
     for project_result in result.results:
-        project_status = "ok" if project_result.ok else "failed"
+        project_status = (
+            "skipped" if project_result.skipped else "ok" if project_result.ok else "failed"
+        )
         print(
             f"- {project_result.project.owner_repo}@{project_result.project.commit}: "
             f"{project_status}"
@@ -300,5 +304,7 @@ def _print_batch_result(result, *, as_json: bool) -> None:
             print(f"  manifest: {project_result.manifest_path}")
         if project_result.oracle_path:
             print(f"  oracle: {project_result.oracle_path}")
-        if project_result.error:
+        if project_result.skipped and project_result.failure_stage:
+            print(f"  reason: {project_result.failure_stage}")
+        elif project_result.error:
             print(f"  error: {project_result.error}")
