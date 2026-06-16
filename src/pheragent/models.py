@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 BlockStatus = Literal["planned", "running", "succeeded", "failed", "repaired", "skipped"]
 PlannerMode = Literal["auto", "rules", "llm"]
+LLMApiMode = Literal["responses", "chat-completions"]
 
 
 @dataclass(slots=True)
@@ -24,6 +25,7 @@ class BuildRequest:
     cleanup_images: bool = False
     stream_logs: bool = False
     planner_mode: PlannerMode = "auto"
+    llm_api: LLMApiMode = "responses"
     llm_model: str | None = None
     openai_base_url: str | None = None
     openai_api_key_env: str = "OPENAI_API_KEY"
@@ -61,6 +63,7 @@ class BuildRequest:
             cleanup_images=self.cleanup_images,
             stream_logs=self.stream_logs,
             planner_mode=self.planner_mode,
+            llm_api=self.llm_api,
             llm_model=self.llm_model,
             openai_base_url=self.openai_base_url,
             openai_api_key_env=self.openai_api_key_env,

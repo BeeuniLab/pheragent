@@ -674,6 +674,90 @@ def test_openai_responses_repair_payload_includes_repair_context(tmp_path: Path)
     assert "temperature" not in probe_payload
 
 
+def test_openai_chat_completions_repair_uses_chat_payload_and_usage() -> None:
+    class FakeChatCompletions:
+        def __init__(self):
+            self.calls: list[dict[str, object]] = []
+
+        def create(self, **payload):
+            self.calls.append(payload)
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "repairs": [
+                                        {
+                                            "title": "Install cmake",
+                                            "command": "apt-get update && apt-get install -y cmake",
+                                            "patch_script": (
+                                                "apt-get update && apt-get install -y cmake"
+                                            ),
+                                        }
+                                    ]
+                                }
+                            )
+                        }
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 21,
+                    "completion_tokens": 9,
+                    "completion_tokens_details": {"reasoning_tokens": 4},
+                    "total_tokens": 30,
+                },
+            }
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = type("FakeChat", (), {"completions": FakeChatCompletions()})()
+
+    planner = OpenAIResponsesRepairPlanner(
+        OpenAIResponsesRepairConfig(api_mode="chat-completions")
+    )
+    block = CommandBlock(
+        id="02-build",
+        title="Build",
+        goal="compile",
+        script="#!/bin/sh\nmake\n",
+    )
+    result = CommandResult(exit_code=1, stderr="cmake: not found")
+
+    payload = planner._request_payload(block, result)
+    assert payload["response_format"] == {"type": "json_object"}
+    assert "input" not in payload
+    assert "text" not in payload
+    assert "stream" not in payload
+    assert payload["messages"][0]["role"] == "system"
+    assert payload["messages"][1]["role"] == "user"
+    assert "json" in payload["messages"][1]["content"].lower()
+
+    probe_payload = planner._probe_request_payload(block, result)
+    assert probe_payload["response_format"] == {"type": "json_object"}
+    assert "input" not in probe_payload
+    assert "stream" not in probe_payload
+
+    client = FakeClient()
+    content = planner._create_response(
+        client,
+        payload,
+        error_context="LLM repair",
+        usage_phase="repair",
+    )
+
+    repairs = planner._parse_repairs(content)
+    assert repairs[0].title == "Install cmake"
+    assert client.chat.completions.calls[0] == payload
+    assert planner.usage_summary()["total"] == {
+        "requests": 1,
+        "input_tokens": 21,
+        "output_tokens": 9,
+        "reasoning_tokens": 4,
+        "total_tokens": 30,
+    }
+
+
 def test_make_repair_planner_auto_uses_rules_without_api_key(monkeypatch) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 

@@ -8,18 +8,22 @@ from typing import Any
 
 from .llm_planner import (
     _add_token_usage,
+    _chat_completion_payload,
     _copy_token_usage,
+    _create_chat_completion_with_usage,
     _empty_token_usage,
     _format_llm_error,
+    _normalize_llm_api_mode,
     _openai_client,
     _parse_json_object,
     _read_streamed_response_with_usage,
-    _response_text_input,
+    _resolve_openai_base_url,
+    _responses_payload,
     _retryable_llm_error,
     _sleep_before_retry,
     merge_usage_summaries,
 )
-from .models import CommandBlock, CommandResult, RepairContext, to_jsonable
+from .models import CommandBlock, CommandResult, LLMApiMode, RepairContext, to_jsonable
 from .utils import shell_script, tail_text
 
 
@@ -40,6 +44,7 @@ class RepairProbeCommand:
 @dataclass(slots=True)
 class OpenAIResponsesRepairConfig:
     model: str = "gpt-5.5"
+    api_mode: LLMApiMode = "responses"
     api_key_env: str = "OPENAI_API_KEY"
     base_url_env: str = "OPENAI_BASE_URL"
     base_url: str | None = None
@@ -52,6 +57,7 @@ class OpenAIResponsesRepairConfig:
 class OpenAIResponsesRepairPlanner:
     def __init__(self, config: OpenAIResponsesRepairConfig):
         self.config = config
+        self.config.api_mode = _normalize_llm_api_mode(self.config.api_mode)
         self.last_raw_response: str | None = None
         self.last_parse_diagnostics: list[str] = []
         self.last_probe_raw_response: str | None = None
@@ -72,9 +78,11 @@ class OpenAIResponsesRepairPlanner:
         api_key = os.getenv(self.config.api_key_env)
         if not api_key:
             raise RuntimeError(f"missing API key in env var {self.config.api_key_env}")
-        base_url = (self.config.base_url or os.getenv(self.config.base_url_env) or "").rstrip("/")
-        if not base_url:
-            base_url = "https://api.openai.com/v1"
+        base_url = _resolve_openai_base_url(
+            configured_base_url=self.config.base_url,
+            base_url_env=self.config.base_url_env,
+            api_mode=self.config.api_mode,
+        )
 
         self.last_probe_raw_response = None
         self.last_probe_parse_diagnostics = []
@@ -103,9 +111,11 @@ class OpenAIResponsesRepairPlanner:
         api_key = os.getenv(self.config.api_key_env)
         if not api_key:
             raise RuntimeError(f"missing API key in env var {self.config.api_key_env}")
-        base_url = (self.config.base_url or os.getenv(self.config.base_url_env) or "").rstrip("/")
-        if not base_url:
-            base_url = "https://api.openai.com/v1"
+        base_url = _resolve_openai_base_url(
+            configured_base_url=self.config.base_url,
+            base_url_env=self.config.base_url_env,
+            api_mode=self.config.api_mode,
+        )
 
         self.last_raw_response = None
         self.last_parse_diagnostics = []
@@ -137,13 +147,10 @@ class OpenAIResponsesRepairPlanner:
             context,
             heuristic_hints=heuristic_hints,
         )
-        return {
-            "model": self.config.model,
-            "instructions": _REPAIR_SYSTEM_PROMPT,
-            "input": _response_text_input(json.dumps(payload, ensure_ascii=False, indent=2)),
-            "text": {"format": {"type": "json_object"}},
-            "stream": True,
-        }
+        user_text = json.dumps(payload, ensure_ascii=False, indent=2)
+        if self.config.api_mode == "chat-completions":
+            return _chat_completion_payload(self.config.model, _REPAIR_SYSTEM_PROMPT, user_text)
+        return _responses_payload(self.config.model, _REPAIR_SYSTEM_PROMPT, user_text)
 
     def _probe_request_payload(
         self,
@@ -159,13 +166,10 @@ class OpenAIResponsesRepairPlanner:
             context,
             heuristic_hints=heuristic_hints,
         )
-        return {
-            "model": self.config.model,
-            "instructions": _PROBE_SYSTEM_PROMPT,
-            "input": _response_text_input(json.dumps(payload, ensure_ascii=False, indent=2)),
-            "text": {"format": {"type": "json_object"}},
-            "stream": True,
-        }
+        user_text = json.dumps(payload, ensure_ascii=False, indent=2)
+        if self.config.api_mode == "chat-completions":
+            return _chat_completion_payload(self.config.model, _PROBE_SYSTEM_PROMPT, user_text)
+        return _responses_payload(self.config.model, _PROBE_SYSTEM_PROMPT, user_text)
 
     def _failure_payload(
         self,
@@ -204,11 +208,18 @@ class OpenAIResponsesRepairPlanner:
         last_error: Exception | None = None
         for attempt in range(1, max_attempts + 1):
             try:
-                stream = client.responses.create(**payload)
-                content, usage = _read_streamed_response_with_usage(
-                    stream,
-                    error_context=error_context,
-                )
+                if self.config.api_mode == "chat-completions":
+                    content, usage = _create_chat_completion_with_usage(
+                        client,
+                        payload,
+                        error_context=error_context,
+                    )
+                else:
+                    stream = client.responses.create(**payload)
+                    content, usage = _read_streamed_response_with_usage(
+                        stream,
+                        error_context=error_context,
+                    )
                 _add_token_usage(self.token_usage_by_phase[usage_phase], usage)
                 break
             except Exception as exc:
@@ -554,6 +565,7 @@ def make_repair_planner(
     max_tokens: int,
     retries: int,
     retry_delay: float,
+    api_mode: str = "responses",
 ) -> RepairPlanner:
     if mode == "rules":
         return RepairPlanner()
@@ -562,6 +574,7 @@ def make_repair_planner(
         return RepairPlanner()
     if mode not in {"auto", "llm"}:
         raise ValueError(f"unsupported planner mode for repair: {mode}")
+    normalized_api_mode = _normalize_llm_api_mode(api_mode)
     return RepairPlanner(
         llm_planner=OpenAIResponsesRepairPlanner(
             OpenAIResponsesRepairConfig(
@@ -571,6 +584,7 @@ def make_repair_planner(
                     or os.getenv("OPENAI_MODEL")
                     or "gpt-5.5"
                 ),
+                api_mode=normalized_api_mode,
                 api_key_env=api_key_env,
                 base_url_env=base_url_env,
                 base_url=base_url,

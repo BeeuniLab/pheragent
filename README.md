@@ -41,6 +41,18 @@ export PHERAGENT_MODEL="gpt-5.5"
 uv run pheragent plan --repo /path/to/repo --planner llm
 ```
 
+For a Chat Completions compatible endpoint, switch the API surface:
+
+```bash
+export OPENAI_API_KEY="..."
+export OPENAI_BASE_URL="https://example.test/v1/chat/completions"
+
+uv run pheragent plan \
+  --repo /path/to/repo \
+  --planner llm \
+  --llm-api chat-completions
+```
+
 You can force the deterministic planner with:
 
 ```bash
@@ -81,10 +93,12 @@ Use `--stream-logs` when you want live Docker, git, block, validation, repair,
 and oracle command output in the terminal while still keeping complete logs
 under `logs/`.
 
-LLM planning and repair use the OpenAI Python SDK Responses API with
-`stream=True`. The streamed JSON response is reconstructed from
-`response.output_text.delta` events. LLM repair request failures or empty repair
-responses are recorded as `llm_repair` executions under the failed block's logs.
+LLM planning and repair use the OpenAI Python SDK. The default `--llm-api
+responses` mode calls the Responses API with `stream=True` and reconstructs JSON
+from `response.output_text.delta` events. `--llm-api chat-completions` calls
+`client.chat.completions.create(...)` with `response_format={"type":
+"json_object"}`. LLM repair request failures or empty repair responses are
+recorded as `llm_repair` executions under the failed block's logs.
 
 Project checkout first tries to fetch the requested commit/ref directly. If a
 short commit hash cannot be fetched as a remote ref, `pheragent` fetches remote
@@ -189,9 +203,8 @@ rolled back to the block baseline before each repair/replay attempt.
   preflight runtime context.
 - Repair is local to the failed block. When LLM support is active, the failed
   block, stdout/stderr tails, runtime context, and heuristic hints are sent to
-  the OpenAI SDK Responses repair planner. Deterministic heuristics are prompt
+  the configured OpenAI SDK repair planner. Deterministic heuristics are prompt
   guidance only and are not executed directly.
-- LLM planning uses the OpenAI Python SDK Responses API with streaming and does
-  not store API keys on disk. Transient LLM request failures are retried; `auto`
-  mode falls back to deterministic rules if the LLM planner cannot produce a
-  plan.
+- LLM planning uses the OpenAI Python SDK and does not store API keys on disk.
+  Transient LLM request failures are retried; `auto` mode falls back to
+  deterministic rules if the LLM planner cannot produce a plan.

@@ -113,8 +113,14 @@ def _add_common_args(parser: argparse.ArgumentParser, *, include_dockerfile: boo
         default="auto",
         help="Block planner. auto uses LLM when an API key is present, otherwise rules.",
     )
+    parser.add_argument(
+        "--llm-api",
+        choices=("responses", "chat-completions"),
+        default="responses",
+        help="OpenAI API surface used for LLM planner/repair requests.",
+    )
     parser.add_argument("--model", default=None, help="LLM model name, for example gpt-5.5.")
-    parser.add_argument("--openai-base-url", default=None, help="OpenAI Responses API base URL.")
+    parser.add_argument("--openai-base-url", default=None, help="OpenAI-compatible API base URL.")
     parser.add_argument("--openai-api-key-env", default="OPENAI_API_KEY")
     parser.add_argument("--openai-base-url-env", default="OPENAI_BASE_URL")
     parser.add_argument("--llm-timeout", type=float, default=120.0)
@@ -176,8 +182,14 @@ def _add_batch_args(parser: argparse.ArgumentParser) -> None:
         default="auto",
         help="Block planner. auto uses LLM when an API key is present, otherwise rules.",
     )
+    parser.add_argument(
+        "--llm-api",
+        choices=("responses", "chat-completions"),
+        default="responses",
+        help="OpenAI API surface used for LLM planner/repair requests.",
+    )
     parser.add_argument("--model", default=None, help="LLM model name, for example gpt-5.5.")
-    parser.add_argument("--openai-base-url", default=None, help="OpenAI Responses API base URL.")
+    parser.add_argument("--openai-base-url", default=None, help="OpenAI-compatible API base URL.")
     parser.add_argument("--openai-api-key-env", default="OPENAI_API_KEY")
     parser.add_argument("--openai-base-url-env", default="OPENAI_BASE_URL")
     parser.add_argument("--llm-timeout", type=float, default=120.0)
@@ -216,6 +228,7 @@ def _request_from_args(args: argparse.Namespace, *, require_dockerfile: bool) ->
         cleanup_images=bool(getattr(args, "cleanup_images", False)),
         stream_logs=bool(getattr(args, "stream_logs", False)),
         planner_mode=args.planner,
+        llm_api=args.llm_api,
         llm_model=args.model,
         openai_base_url=args.openai_base_url,
         openai_api_key_env=args.openai_api_key_env,
@@ -247,6 +260,7 @@ def _batch_base_request_from_args(args: argparse.Namespace) -> BuildRequest:
         cleanup_images=bool(getattr(args, "cleanup_images", False)),
         stream_logs=bool(getattr(args, "stream_logs", False)),
         planner_mode=args.planner,
+        llm_api=args.llm_api,
         llm_model=args.model,
         openai_base_url=args.openai_base_url,
         openai_api_key_env=args.openai_api_key_env,

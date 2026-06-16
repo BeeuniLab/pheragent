@@ -494,6 +494,7 @@ class ProjectBatchBuilder:
             cleanup_images=self.base_request.cleanup_images,
             stream_logs=self.base_request.stream_logs,
             planner_mode=self.base_request.planner_mode,
+            llm_api=self.base_request.llm_api,
             llm_model=self.base_request.llm_model,
             openai_base_url=self.base_request.openai_base_url,
             openai_api_key_env=self.base_request.openai_api_key_env,

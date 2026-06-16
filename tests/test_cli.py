@@ -28,6 +28,25 @@ def test_build_resume_from_does_not_require_base_dockerfile(tmp_path: Path) -> N
     assert request.start_at_block == "02-tests"
 
 
+def test_build_accepts_chat_completions_llm_api(tmp_path: Path) -> None:
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "build",
+            "--repo",
+            str(tmp_path),
+            "--base-dockerfile",
+            str(tmp_path / "Dockerfile"),
+            "--llm-api",
+            "chat-completions",
+        ]
+    )
+
+    request = _request_from_args(args, require_dockerfile=True)
+
+    assert request.llm_api == "chat-completions"
+
+
 def test_build_without_resume_requires_base_dockerfile(tmp_path: Path) -> None:
     parser = _build_parser()
     args = parser.parse_args(["build", "--repo", str(tmp_path)])

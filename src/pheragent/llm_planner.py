@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from .models import CommandBlock, RepoContext, to_jsonable
+from .models import CommandBlock, LLMApiMode, RepoContext, to_jsonable
 from .planner import BlockPlanner, RuleBasedBlockPlanner, _preflight_script
 from .utils import shell_script, slugify
 
@@ -15,6 +15,7 @@ from .utils import shell_script, slugify
 @dataclass(slots=True)
 class OpenAIResponsesPlannerConfig:
     model: str = "gpt-5.5"
+    api_mode: LLMApiMode = "responses"
     api_key_env: str = "OPENAI_API_KEY"
     base_url_env: str = "OPENAI_BASE_URL"
     base_url: str | None = None
@@ -33,6 +34,7 @@ class OpenAIResponsesBlockPlanner:
         fallback: BlockPlanner | None = None,
     ):
         self.config = config
+        self.config.api_mode = _normalize_llm_api_mode(self.config.api_mode)
         self.fallback = fallback or RuleBasedBlockPlanner()
         self.token_usage = _empty_token_usage()
 
@@ -40,9 +42,11 @@ class OpenAIResponsesBlockPlanner:
         api_key = os.getenv(self.config.api_key_env)
         if not api_key:
             raise RuntimeError(f"missing API key in env var {self.config.api_key_env}")
-        base_url = (self.config.base_url or os.getenv(self.config.base_url_env) or "").rstrip("/")
-        if not base_url:
-            base_url = "https://api.openai.com/v1"
+        base_url = _resolve_openai_base_url(
+            configured_base_url=self.config.base_url,
+            base_url_env=self.config.base_url_env,
+            api_mode=self.config.api_mode,
+        )
 
         try:
             content = self._create_response(
@@ -56,25 +60,18 @@ class OpenAIResponsesBlockPlanner:
             raise
 
     def _request_payload(self, context: RepoContext) -> dict[str, Any]:
-        return {
-            "model": self.config.model,
-            "instructions": _SYSTEM_PROMPT,
-            "input": _response_text_input(
-                json.dumps(
-                    {
-                        "output_instructions": "Return JSON only.",
-                        "repo_context": to_jsonable(context),
-                        "fallback_blocks": [
-                            to_jsonable(block) for block in self.fallback.plan(context)
-                        ],
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                )
-            ),
-            "text": {"format": {"type": "json_object"}},
-            "stream": True,
-        }
+        user_text = json.dumps(
+            {
+                "output_instructions": "Return JSON only.",
+                "repo_context": to_jsonable(context),
+                "fallback_blocks": [to_jsonable(block) for block in self.fallback.plan(context)],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        if self.config.api_mode == "chat-completions":
+            return _chat_completion_payload(self.config.model, _SYSTEM_PROMPT, user_text)
+        return _responses_payload(self.config.model, _SYSTEM_PROMPT, user_text)
 
     def _create_response(
         self,
@@ -86,11 +83,18 @@ class OpenAIResponsesBlockPlanner:
         last_error: Exception | None = None
         for attempt in range(1, max_attempts + 1):
             try:
-                stream = client.responses.create(**payload)
-                content, usage = _read_streamed_response_with_usage(
-                    stream,
-                    error_context="LLM planner",
-                )
+                if self.config.api_mode == "chat-completions":
+                    content, usage = _create_chat_completion_with_usage(
+                        client,
+                        payload,
+                        error_context="LLM planner",
+                    )
+                else:
+                    stream = client.responses.create(**payload)
+                    content, usage = _read_streamed_response_with_usage(
+                        stream,
+                        error_context="LLM planner",
+                    )
                 _add_token_usage(self.token_usage, usage)
                 break
             except Exception as exc:
@@ -171,6 +175,7 @@ def make_planner(
     max_tokens: int,
     retries: int,
     retry_delay: float,
+    api_mode: str = "responses",
 ) -> BlockPlanner:
     fallback = RuleBasedBlockPlanner()
     if mode == "rules":
@@ -180,9 +185,11 @@ def make_planner(
         return fallback
     if mode not in {"auto", "llm"}:
         raise ValueError(f"unsupported planner mode: {mode}")
+    normalized_api_mode = _normalize_llm_api_mode(api_mode)
     return OpenAIResponsesBlockPlanner(
         OpenAIResponsesPlannerConfig(
             model=model or os.getenv("PHERAGENT_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.5",
+            api_mode=normalized_api_mode,
             api_key_env=api_key_env,
             base_url_env=base_url_env,
             base_url=base_url,
@@ -210,6 +217,60 @@ def _openai_client(*, base_url: str, api_key: str, timeout: float) -> Any:
     )
 
 
+def _normalize_llm_api_mode(value: str | None) -> LLMApiMode:
+    normalized = (value or "responses").strip().lower().replace("_", "-")
+    if normalized in {"response", "responses"}:
+        return "responses"
+    if normalized in {"chat", "chat-completion", "chat-completions", "chatcompletions"}:
+        return "chat-completions"
+    raise ValueError(f"unsupported LLM API mode: {value}")
+
+
+def _resolve_openai_base_url(
+    *,
+    configured_base_url: str | None,
+    base_url_env: str,
+    api_mode: str,
+) -> str:
+    base_url = (configured_base_url or os.getenv(base_url_env) or "").strip().rstrip("/")
+    if not base_url:
+        base_url = "https://api.openai.com/v1"
+    return _normalize_openai_base_url(base_url, api_mode=api_mode)
+
+
+def _normalize_openai_base_url(base_url: str, *, api_mode: str) -> str:
+    normalized_api_mode = _normalize_llm_api_mode(api_mode)
+    endpoint_suffix = (
+        "/chat/completions" if normalized_api_mode == "chat-completions" else "/responses"
+    )
+    if base_url.lower().endswith(endpoint_suffix):
+        stripped = base_url[: -len(endpoint_suffix)].rstrip("/")
+        if stripped:
+            return stripped
+    return base_url
+
+
+def _responses_payload(model: str, system_prompt: str, user_text: str) -> dict[str, Any]:
+    return {
+        "model": model,
+        "instructions": system_prompt,
+        "input": _response_text_input(user_text),
+        "text": {"format": {"type": "json_object"}},
+        "stream": True,
+    }
+
+
+def _chat_completion_payload(model: str, system_prompt: str, user_text: str) -> dict[str, Any]:
+    return {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_text},
+        ],
+        "response_format": {"type": "json_object"},
+    }
+
+
 def _response_text_input(text: str) -> list[dict[str, Any]]:
     return [
         {
@@ -227,6 +288,45 @@ def _response_text_input(text: str) -> list[dict[str, Any]]:
 def _read_streamed_response(stream: Any, *, error_context: str) -> str:
     content, _usage = _read_streamed_response_with_usage(stream, error_context=error_context)
     return content
+
+
+def _create_chat_completion_with_usage(
+    client: Any,
+    payload: dict[str, Any],
+    *,
+    error_context: str,
+) -> tuple[str, dict[str, int]]:
+    response = client.chat.completions.create(**payload)
+    content = _extract_chat_completion_text(response)
+    if not content:
+        raise RuntimeError(f"{error_context} request returned no content")
+    usage = _extract_token_usage(response) or _empty_token_usage()
+    usage["requests"] = max(usage.get("requests", 0), 1)
+    return content, usage
+
+
+def _extract_chat_completion_text(response: Any) -> str:
+    choices = _event_value(response, "choices")
+    if not isinstance(choices, list) or not choices:
+        return _extract_response_output_text(response)
+    text_parts: list[str] = []
+    for choice in choices:
+        message = _event_value(choice, "message")
+        if message is None:
+            message = _event_value(choice, "delta")
+        content = _event_value(message, "content")
+        if isinstance(content, str):
+            text_parts.append(content)
+            continue
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, str):
+                    text_parts.append(part)
+                    continue
+                text = _event_value(part, "text") or _event_value(part, "content")
+                if text is not None:
+                    text_parts.append(str(text))
+    return "".join(text_parts)
 
 
 def _read_streamed_response_with_usage(

@@ -227,6 +227,7 @@ def test_project_batch_builder_builds_each_prepared_project(tmp_path: Path) -> N
             repo_path=tmp_path,
             base_dockerfile=tmp_path / "Dockerfile",
             run_id=None,
+            llm_api="chat-completions",
         ),
         run_id_prefix="batch",
         command_runner=fake_runner,
@@ -237,6 +238,7 @@ def test_project_batch_builder_builds_each_prepared_project(tmp_path: Path) -> N
     assert requests[0].repo_path == tmp_path / "projects" / "flask"
     assert not (requests[0].repo_path / ".github").exists()
     assert requests[0].run_id == "batch-flask"
+    assert requests[0].llm_api == "chat-completions"
     assert result.results[0].final_image == "pheragent:batch-flask-final"
     assert result.results[0].oracle_path == tmp_path / "oracles" / "flask" / ".github"
     assert (result.results[0].oracle_path / "workflows" / "ci.yml").is_file()

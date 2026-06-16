@@ -164,6 +164,103 @@ def test_openai_responses_planner_uses_sdk_streaming(tmp_path: Path, monkeypatch
     assert "repo_context" in content
 
 
+def test_openai_chat_completions_planner_uses_chat_payload(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class FakeChatCompletions:
+        def __init__(self):
+            self.calls: list[dict[str, Any]] = []
+
+        def create(self, **payload):
+            self.calls.append(payload)
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "blocks": [
+                                        {
+                                            "id": "00-chat",
+                                            "order": 0,
+                                            "title": "Chat",
+                                            "goal": "chat setup",
+                                            "script": "echo chat",
+                                        }
+                                    ]
+                                }
+                            )
+                        }
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 13,
+                    "completion_tokens": 5,
+                    "completion_tokens_details": {"reasoning_tokens": 2},
+                    "total_tokens": 18,
+                },
+            }
+
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeChatCompletions()
+
+    class FakeChatOpenAI:
+        clients: list[FakeChatOpenAI] = []
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.chat = FakeChat()
+            type(self).clients.append(self)
+
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    context = RepoAnalyzer().analyze(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://example.test/v1/chat/completions")
+    monkeypatch.setattr("pheragent.llm_planner._openai_client", FakeChatOpenAI)
+
+    planner = make_planner(
+        mode="llm",
+        model="gpt-5.5",
+        api_key_env="OPENAI_API_KEY",
+        base_url_env="OPENAI_BASE_URL",
+        base_url=None,
+        timeout=120.0,
+        max_tokens=4096,
+        retries=3,
+        retry_delay=1.0,
+        api_mode="chat-completions",
+    )
+
+    blocks = planner.plan(context)
+
+    assert blocks[0].id == "00-chat"
+    assert "echo chat" in blocks[0].script
+    assert planner.usage_summary()["total"] == {
+        "requests": 1,
+        "input_tokens": 13,
+        "output_tokens": 5,
+        "reasoning_tokens": 2,
+        "total_tokens": 18,
+    }
+
+    client = FakeChatOpenAI.clients[0]
+    assert client.kwargs["base_url"] == "https://example.test/v1"
+    payload = client.chat.completions.calls[0]
+    assert payload["model"] == "gpt-5.5"
+    assert payload["response_format"] == {"type": "json_object"}
+    assert "input" not in payload
+    assert "text" not in payload
+    assert "stream" not in payload
+    assert payload["messages"][0]["role"] == "system"
+    assert payload["messages"][1]["role"] == "user"
+    assert "json" in payload["messages"][1]["content"].lower()
+    content = json.loads(payload["messages"][1]["content"])
+    assert content["output_instructions"] == "Return JSON only."
+    assert "repo_context" in content
+
+
 def test_openai_client_disables_sdk_retries() -> None:
     client = _openai_client(
         base_url="https://example.test/v1",
