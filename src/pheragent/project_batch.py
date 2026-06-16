@@ -15,6 +15,7 @@ from .utils import slugify
 
 CommandRunner = Callable[[list[str], Path | None], CommandResult]
 BuilderFactory = Callable[[BuildRequest], EnvironmentBuilder]
+ProjectLogKey = tuple[str, str, str]
 
 
 @dataclass(slots=True)
@@ -324,11 +325,8 @@ class ProjectBatchBuilder:
         if failures_log_path.exists():
             failures_log_path.unlink()
         no_repo_log_path = self.projects_dir / "no-repo-projects.log"
-        if no_repo_log_path.exists():
-            no_repo_log_path.unlink()
+        known_no_repo_keys = _read_no_repo_log_keys(no_repo_log_path)
         version_mismatch_log_path = self.projects_dir / "version-mismatch-projects.log"
-        if version_mismatch_log_path.exists():
-            version_mismatch_log_path.unlink()
 
         results: list[ProjectRunResult] = []
         for spec in specs:
@@ -345,6 +343,20 @@ class ProjectBatchBuilder:
                         f"{existing_result.run_id}"
                     )
                     results.append(existing_result)
+                    continue
+                if _project_log_key(spec) in known_no_repo_keys:
+                    result = ProjectRunResult(
+                        project=spec,
+                        repo_path=repo_path,
+                        ok=False,
+                        skipped=True,
+                        failure_stage="unavailable_project",
+                        error="previously marked unavailable in no-repo-projects.log",
+                    )
+                    results.append(result)
+                    self._emit(
+                        f"project {spec.owner_repo}: skip previously unavailable repository"
+                    )
                     continue
                 if repo_path.exists():
                     self._emit(
@@ -368,7 +380,7 @@ class ProjectBatchBuilder:
                 actual_commit = prepared_project.actual_commit
                 version_mismatch = prepared_project.version_mismatch
                 if version_mismatch:
-                    self._append_version_mismatch_log(
+                    self._upsert_version_mismatch_log(
                         spec,
                         prepared_project,
                         version_mismatch_log_path,
@@ -427,7 +439,7 @@ class ProjectBatchBuilder:
                     )
             results.append(result)
             if result.skipped:
-                self._append_no_repo_log(result, no_repo_log_path)
+                self._append_no_repo_log(result, no_repo_log_path, known_no_repo_keys)
             elif not result.ok:
                 self._append_failure_log(result, failures_log_path)
             status = "skipped" if result.skipped else "ok" if result.ok else "failed"
@@ -551,7 +563,15 @@ class ProjectBatchBuilder:
                 + "\n"
             )
 
-    def _append_no_repo_log(self, result: ProjectRunResult, no_repo_log_path: Path) -> None:
+    def _append_no_repo_log(
+        self,
+        result: ProjectRunResult,
+        no_repo_log_path: Path,
+        known_no_repo_keys: set[ProjectLogKey],
+    ) -> None:
+        key = _project_log_key(result.project)
+        if key in known_no_repo_keys:
+            return
         no_repo_log_path.parent.mkdir(parents=True, exist_ok=True)
         with no_repo_log_path.open("a", encoding="utf-8") as handle:
             handle.write(
@@ -566,27 +586,60 @@ class ProjectBatchBuilder:
                 )
                 + "\n"
             )
+        known_no_repo_keys.add(key)
 
-    def _append_version_mismatch_log(
+    def _upsert_version_mismatch_log(
         self,
         spec: ProjectSpec,
         prepared_project: PreparedProject,
         version_mismatch_log_path: Path,
     ) -> None:
         version_mismatch_log_path.parent.mkdir(parents=True, exist_ok=True)
-        with version_mismatch_log_path.open("a", encoding="utf-8") as handle:
-            handle.write(
-                "\t".join(
-                    [
-                        spec.owner_repo,
-                        spec.commit,
-                        prepared_project.actual_commit or "",
-                        spec.checkout_dir_name,
-                        str(prepared_project.repo_path),
-                    ]
-                )
-                + "\n"
-            )
+        key = _project_log_key(spec)
+        new_line = "\t".join(
+            [
+                spec.owner_repo,
+                spec.commit,
+                prepared_project.actual_commit or "",
+                spec.checkout_dir_name,
+                str(prepared_project.repo_path),
+            ]
+        )
+        lines: list[str] = []
+        replaced = False
+        if version_mismatch_log_path.exists():
+            for line in version_mismatch_log_path.read_text(encoding="utf-8").splitlines():
+                if _version_mismatch_log_key(line) == key:
+                    if not replaced:
+                        lines.append(new_line)
+                        replaced = True
+                    continue
+                lines.append(line)
+        if not replaced:
+            lines.append(new_line)
+        version_mismatch_log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _project_log_key(spec: ProjectSpec) -> ProjectLogKey:
+    return (spec.owner_repo, spec.commit, spec.checkout_dir_name)
+
+
+def _read_no_repo_log_keys(path: Path) -> set[ProjectLogKey]:
+    keys: set[ProjectLogKey] = set()
+    if not path.exists():
+        return keys
+    for line in path.read_text(encoding="utf-8").splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 3:
+            keys.add((parts[0], parts[1], parts[2]))
+    return keys
+
+
+def _version_mismatch_log_key(line: str) -> ProjectLogKey | None:
+    parts = line.split("\t")
+    if len(parts) < 4:
+        return None
+    return (parts[0], parts[1], parts[3])
 
 
 def _is_unavailable_project_error(error: str) -> bool:

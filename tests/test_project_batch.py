@@ -458,6 +458,76 @@ def test_project_batch_builder_writes_no_repo_log_for_unavailable_projects(
     assert "fatal: couldn't find remote ref" not in no_repo_log
 
 
+def test_project_batch_builder_skips_projects_recorded_in_no_repo_log(
+    tmp_path: Path,
+) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text(
+        "example/missing missingref\npallets/flask 2579ce9\n",
+        encoding="utf-8",
+    )
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    no_repo_log_path = projects_dir / "no-repo-projects.log"
+    no_repo_log_path.write_text(
+        "\t".join(
+            [
+                "example/missing",
+                "missingref",
+                "missing",
+                str(projects_dir / "missing"),
+                "unavailable_project",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    built_repos: list[Path] = []
+
+    def fake_runner(command: list[str], cwd: Path | None) -> CommandResult:
+        del cwd
+        if command[:2] == ["git", "clone"]:
+            repo_path = Path(command[-1])
+            assert repo_path.name != "missing"
+            (repo_path / ".git").mkdir(parents=True)
+        return CommandResult(exit_code=0, stdout="ok")
+
+    class FakeBuilder:
+        def __init__(self, request: BuildRequest):
+            self.request = request
+
+        def build(self) -> BuildResult:
+            built_repos.append(self.request.repo_path)
+            state_dir = self.request.repo_path / ".pheragent" / "runs" / "batch-flask"
+            return BuildResult(
+                ok=True,
+                run_id=self.request.run_id or "batch-flask",
+                state_dir=state_dir,
+                scripts_dir=state_dir / "scripts",
+                manifest_path=state_dir / "manifest.json",
+                final_image="pheragent:batch-flask-final",
+            )
+
+    result = ProjectBatchBuilder(
+        projects_file=projects_file,
+        projects_dir=projects_dir,
+        base_request=BuildRequest(
+            repo_path=tmp_path,
+            base_dockerfile=tmp_path / "Dockerfile",
+            run_id=None,
+        ),
+        run_id_prefix="batch",
+        stop_on_failure=True,
+        command_runner=fake_runner,
+        builder_factory=FakeBuilder,
+    ).build_all()
+
+    assert result.ok
+    assert [project_result.skipped for project_result in result.results] == [True, False]
+    assert built_repos == [projects_dir / "flask"]
+    assert no_repo_log_path.read_text(encoding="utf-8").count("example/missing") == 1
+
+
 def test_project_batch_builder_logs_version_mismatch_and_builds_default_checkout(
     tmp_path: Path,
 ) -> None:
@@ -529,6 +599,95 @@ def test_project_batch_builder_logs_version_mismatch_and_builds_default_checkout
     assert "example/repo" in mismatch_log
     assert "missingref" in mismatch_log
     assert actual_hash in mismatch_log
+
+
+def test_project_batch_builder_preserves_and_updates_version_mismatch_log(
+    tmp_path: Path,
+) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text("example/repo missingref\n", encoding="utf-8")
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    old_hash = "c" * 40
+    actual_hash = "d" * 40
+    version_mismatch_log_path = projects_dir / "version-mismatch-projects.log"
+    version_mismatch_log_path.write_text(
+        "\n".join(
+            [
+                "\t".join(
+                    [
+                        "example/repo",
+                        "missingref",
+                        old_hash,
+                        "repo",
+                        str(projects_dir / "repo"),
+                    ]
+                ),
+                "\t".join(
+                    [
+                        "other/repo",
+                        "oldref",
+                        "e" * 40,
+                        "other",
+                        str(projects_dir / "other"),
+                    ]
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_runner(command: list[str], cwd: Path | None) -> CommandResult:
+        if command[:2] == ["git", "clone"]:
+            repo_path = Path(command[-1])
+            (repo_path / ".git").mkdir(parents=True)
+            return CommandResult(exit_code=0, stdout="ok")
+        if command == ["git", "fetch", "--depth", "1", "origin", "missingref"]:
+            return CommandResult(exit_code=128, stderr="fatal: couldn't find remote ref")
+        if command == ["git", "fetch", "origin", "missingref"]:
+            return CommandResult(exit_code=128, stderr="fatal: couldn't find remote ref")
+        if command == ["git", "fetch", "--depth", "1", "origin", "HEAD"]:
+            return CommandResult(exit_code=0, stdout="default fetched")
+        if command == ["git", "rev-parse", "--verify", "HEAD"]:
+            return CommandResult(exit_code=0, stdout=f"{actual_hash}\n")
+        del cwd
+        return CommandResult(exit_code=0, stdout="ok")
+
+    class FakeBuilder:
+        def __init__(self, request: BuildRequest):
+            self.request = request
+
+        def build(self) -> BuildResult:
+            state_dir = self.request.repo_path / ".pheragent" / "runs" / "batch-repo"
+            return BuildResult(
+                ok=True,
+                run_id=self.request.run_id or "batch-repo",
+                state_dir=state_dir,
+                scripts_dir=state_dir / "scripts",
+                manifest_path=state_dir / "manifest.json",
+                final_image="pheragent:batch-repo-final",
+            )
+
+    result = ProjectBatchBuilder(
+        projects_file=projects_file,
+        projects_dir=projects_dir,
+        base_request=BuildRequest(
+            repo_path=tmp_path,
+            base_dockerfile=tmp_path / "Dockerfile",
+            run_id=None,
+        ),
+        run_id_prefix="batch",
+        command_runner=fake_runner,
+        builder_factory=FakeBuilder,
+    ).build_all()
+
+    assert result.ok
+    mismatch_log = version_mismatch_log_path.read_text(encoding="utf-8")
+    assert old_hash not in mismatch_log
+    assert actual_hash in mismatch_log
+    assert mismatch_log.count("example/repo") == 1
+    assert "other/repo" in mismatch_log
 
 
 def test_project_batch_builder_continues_after_unavailable_project_with_stop_on_failure(
