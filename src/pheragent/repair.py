@@ -526,6 +526,8 @@ def _heuristic_repair_hints(block: CommandBlock, result: CommandResult) -> list[
                 patch_script=_node_compatible_pnpm_command(),
             )
         )
+    if "double requirement given" in output and "requirements.txt" in output:
+        suggestions.append(_dedupe_requirements_repair())
     if "attributeerror" in output and "__version__" in output and block.validation_command:
         patched_validation = _strip_dunder_version_probe(block.validation_command)
         if patched_validation != block.validation_command:
@@ -697,6 +699,40 @@ def _node_compatible_pnpm_command() -> str:
         ">/dev/null 2>&1; then PNPM_PACKAGE=pnpm; fi && "
         "npm install -g \"$PNPM_PACKAGE\" && "
         "pnpm --version"
+    )
+
+
+def _dedupe_requirements_repair() -> RepairCommand:
+    command = (
+        "if [ -f requirements.txt ]; then "
+        "python3 - <<'PY' > /tmp/pheragent-requirements.dedup.txt\n"
+        "import re\n"
+        "from pathlib import Path\n"
+        "seen = set()\n"
+        "for raw in Path('requirements.txt').read_text().splitlines():\n"
+        "    line = raw.strip()\n"
+        "    if not line or line.startswith('#'):\n"
+        "        print(raw)\n"
+        "        continue\n"
+        "    passthrough = ('-r ', '--requirement', '-c ', '--constraint', '-e ', '--editable')\n"
+        "    if line.startswith(passthrough):\n"
+        "        print(raw)\n"
+        "        continue\n"
+        "    name = re.split(r'\\s*(?:===|==|~=|!=|<=|>=|<|>|;)', line, 1)[0]\n"
+        "    name = name.split('[', 1)[0].strip().lower().replace('_', '-')\n"
+        "    if name and name in seen:\n"
+        "        continue\n"
+        "    if name:\n"
+        "        seen.add(name)\n"
+        "    print(raw)\n"
+        "PY\n"
+        "./.venv/bin/python -m pip install -r /tmp/pheragent-requirements.dedup.txt; "
+        "else echo 'requirements.txt not found' >&2; exit 1; fi"
+    )
+    return RepairCommand(
+        title="Install deduplicated requirements copy",
+        command=command,
+        patch_script=command,
     )
 
 
@@ -877,6 +913,10 @@ Rules:
 - Make command validate only the repair itself from the failed block baseline
   (for example, install a missing package and run a small import/version check).
 - Prefer package-manager fixes, missing tool installs, compatibility pins, and validation fixes.
+- For pip "Double requirement given" or duplicated requirement entries, do not
+  edit requirements.txt and do not rely on the legacy resolver as the primary
+  fix. Generate a temporary sanitized requirements file under /tmp and install
+  from that file, preserving the original repo file unchanged.
 - Do not edit application source, tests, conftest.py, or sitecustomize.py to make
   tests pass. If validation is running the full test suite and failures are
   application behavior, replace validation with a tool/import/pytest collect-only

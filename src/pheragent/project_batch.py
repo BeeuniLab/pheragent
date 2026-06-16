@@ -55,7 +55,7 @@ class ProjectRunResult:
 class BatchBuildResult:
     ok: bool
     projects_dir: Path
-    oracles_dir: Path
+    oracles_dir: Path | None
     results: list[ProjectRunResult]
     failures_log_path: Path | None = None
     no_repo_log_path: Path | None = None
@@ -298,7 +298,7 @@ class ProjectBatchBuilder:
         *,
         projects_file: Path,
         projects_dir: Path,
-        oracles_dir: Path = Path("oracles"),
+        oracles_dir: Path | None = None,
         base_request: BuildRequest,
         clone_timeout: float = 900.0,
         run_id_prefix: str | None = None,
@@ -309,7 +309,7 @@ class ProjectBatchBuilder:
     ):
         self.projects_file = projects_file.expanduser().resolve()
         self.projects_dir = projects_dir.expanduser().resolve()
-        self.oracles_dir = oracles_dir.expanduser().resolve()
+        self.oracles_dir = None if oracles_dir is None else oracles_dir.expanduser().resolve()
         self.base_request = base_request
         self.clone_timeout = clone_timeout
         self.run_id_prefix = run_id_prefix
@@ -396,13 +396,16 @@ class ProjectBatchBuilder:
                         f"project {spec.owner_repo}: requested {spec.commit} not found; "
                         f"using {actual_commit or prepared_project.checkout_ref}"
                     )
-                oracle_path = isolate_project_oracles(
-                    spec,
-                    repo_path=repo_path,
-                    oracles_dir=self.oracles_dir,
-                )
-                if oracle_path is not None:
-                    self._emit(f"project {spec.owner_repo}: isolated oracle data at {oracle_path}")
+                if self.oracles_dir is not None:
+                    oracle_path = isolate_project_oracles(
+                        spec,
+                        repo_path=repo_path,
+                        oracles_dir=self.oracles_dir,
+                    )
+                    if oracle_path is not None:
+                        self._emit(
+                            f"project {spec.owner_repo}: isolated oracle data at {oracle_path}"
+                        )
                 self._emit(f"project {spec.owner_repo}: build")
                 failure_stage = "build_failed"
                 build_result = self.builder_factory(self._request_for(spec, repo_path)).build()
@@ -526,11 +529,13 @@ class ProjectBatchBuilder:
         final_image = manifest.get("final_image")
         if manifest.get("ok") is not True or not isinstance(final_image, str) or not final_image:
             return None
-        oracle_path = isolate_project_oracles(
-            spec,
-            repo_path=repo_path,
-            oracles_dir=self.oracles_dir,
-        )
+        oracle_path = None
+        if self.oracles_dir is not None:
+            oracle_path = isolate_project_oracles(
+                spec,
+                repo_path=repo_path,
+                oracles_dir=self.oracles_dir,
+            )
         return ProjectRunResult(
             project=spec,
             repo_path=repo_path,

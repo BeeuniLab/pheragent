@@ -242,6 +242,59 @@ def test_project_batch_builder_builds_each_prepared_project(tmp_path: Path) -> N
     assert (result.results[0].oracle_path / "workflows" / "ci.yml").is_file()
 
 
+def test_project_batch_builder_keeps_github_when_oracles_dir_is_not_set(
+    tmp_path: Path,
+) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text("pallets/flask 2579ce9\n", encoding="utf-8")
+    requests: list[BuildRequest] = []
+
+    def fake_runner(command: list[str], cwd: Path | None) -> CommandResult:
+        if command[:2] == ["git", "clone"]:
+            repo_path = Path(command[-1])
+            (repo_path / ".git").mkdir(parents=True)
+        if command[:2] == ["git", "checkout"] and cwd is not None:
+            github_dir = cwd / ".github" / "workflows"
+            github_dir.mkdir(parents=True)
+            (github_dir / "ci.yml").write_text("name: ci\n", encoding="utf-8")
+        return CommandResult(exit_code=0, stdout="ok")
+
+    class FakeBuilder:
+        def __init__(self, request: BuildRequest):
+            self.request = request
+            requests.append(request)
+
+        def build(self) -> BuildResult:
+            state_dir = self.request.repo_path / ".pheragent" / "runs" / "batch-flask"
+            return BuildResult(
+                ok=True,
+                run_id=self.request.run_id or "batch-flask",
+                state_dir=state_dir,
+                scripts_dir=state_dir / "scripts",
+                manifest_path=state_dir / "manifest.json",
+                final_image="pheragent:batch-flask-final",
+            )
+
+    result = ProjectBatchBuilder(
+        projects_file=projects_file,
+        projects_dir=tmp_path / "projects",
+        base_request=BuildRequest(
+            repo_path=tmp_path,
+            base_dockerfile=tmp_path / "Dockerfile",
+            run_id=None,
+        ),
+        run_id_prefix="batch",
+        command_runner=fake_runner,
+        builder_factory=FakeBuilder,
+    ).build_all()
+
+    assert result.ok
+    assert result.oracles_dir is None
+    assert result.results[0].oracle_path is None
+    assert (requests[0].repo_path / ".github" / "workflows" / "ci.yml").is_file()
+    assert not (tmp_path / "oracles").exists()
+
+
 def test_project_batch_builder_skips_existing_successful_project(tmp_path: Path) -> None:
     projects_file = tmp_path / "projects.txt"
     projects_file.write_text("pallets/flask 2579ce9\n", encoding="utf-8")
@@ -297,6 +350,53 @@ def test_project_batch_builder_skips_existing_successful_project(tmp_path: Path)
     assert result.results[0].manifest_path == manifest_path
     assert result.results[0].oracle_path == tmp_path / "oracles" / "flask" / ".github"
     assert not (repo_path / ".github").exists()
+
+
+def test_project_batch_builder_keeps_github_for_existing_success_without_oracles_dir(
+    tmp_path: Path,
+) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text("pallets/flask 2579ce9\n", encoding="utf-8")
+    repo_path = tmp_path / "projects" / "flask"
+    github_dir = repo_path / ".github" / "workflows"
+    github_dir.mkdir(parents=True)
+    (github_dir / "ci.yml").write_text("name: ci\n", encoding="utf-8")
+    run_dir = repo_path / ".pheragent" / "runs" / "batch-flask"
+    run_dir.mkdir(parents=True)
+    manifest_path = run_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "run_id": "batch-flask",
+                "final_image": "pheragent:batch-flask-final",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class UnexpectedBuilder:
+        def __init__(self, request: BuildRequest):
+            del request
+            raise AssertionError("builder should not be created for successful existing run")
+
+    result = ProjectBatchBuilder(
+        projects_file=projects_file,
+        projects_dir=tmp_path / "projects",
+        base_request=BuildRequest(
+            repo_path=tmp_path,
+            base_dockerfile=tmp_path / "Dockerfile",
+            run_id=None,
+        ),
+        run_id_prefix="batch",
+        builder_factory=UnexpectedBuilder,
+    ).build_all()
+
+    assert result.ok
+    assert result.oracles_dir is None
+    assert result.results[0].manifest_path == manifest_path
+    assert result.results[0].oracle_path is None
+    assert (repo_path / ".github" / "workflows" / "ci.yml").is_file()
 
 
 def test_project_batch_builder_reruns_existing_failed_project_and_clears_failure_log(

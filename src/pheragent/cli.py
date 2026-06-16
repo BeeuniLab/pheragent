@@ -142,8 +142,8 @@ def _add_batch_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--oracles-dir",
         type=Path,
-        default=Path("oracles"),
-        help="Directory where .github oracle data is moved before building.",
+        default=None,
+        help="Move .github oracle data to this directory before building.",
     )
     parser.add_argument(
         "--base-dockerfile",
@@ -284,7 +284,8 @@ def _print_batch_result(result, *, as_json: bool) -> None:
     status = "ok" if result.ok else "failed"
     print(f"pheragent project batch: {status}")
     print(f"projects: {result.projects_dir}")
-    print(f"oracles: {result.oracles_dir}")
+    if result.oracles_dir:
+        print(f"oracles: {result.oracles_dir}")
     if result.failures_log_path:
         print(f"failures: {result.failures_log_path}")
     if result.no_repo_log_path:

@@ -134,6 +134,36 @@ def test_repair_hints_include_qt_opencv_runtime_bundle() -> None:
     assert "libglib2.0-0t64" in qt_hint.command
 
 
+def test_repair_hints_dedupe_duplicate_requirements_without_repo_edit() -> None:
+    block = CommandBlock(
+        id="02-python-deps",
+        title="Python Dependencies",
+        goal="Install deps",
+        script="#!/bin/sh\n.venv/bin/python -m pip install -r requirements.txt\n",
+    )
+    result = CommandResult(
+        exit_code=1,
+        stderr=(
+            "ERROR: Double requirement given: Jinja2 (from -r requirements.txt "
+            "(line 30)) (already in Jinja2==3.1.2 (from -r requirements.txt "
+            "(line 5)), name='Jinja2')"
+        ),
+    )
+
+    suggestions = _heuristic_repair_hints(block, result)
+
+    hint = next(
+        suggestion
+        for suggestion in suggestions
+        if suggestion.title == "Install deduplicated requirements copy"
+    )
+    assert "/tmp/pheragent-requirements.dedup.txt" in hint.command
+    assert "pip install -r /tmp/pheragent-requirements.dedup.txt" in hint.command
+    assert "requirements.txt').read_text()" in hint.command
+    assert ".write_text(" not in hint.command
+    assert "sed -i" not in hint.command
+
+
 def test_repair_hints_relax_dunder_version_validation() -> None:
     block = CommandBlock(
         id="02-python-deps",
