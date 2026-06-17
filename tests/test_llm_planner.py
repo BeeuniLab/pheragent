@@ -383,6 +383,41 @@ def test_openai_responses_planner_uses_safe_python_dependency_script() -> None:
     assert ".venv/bin/python" in blocks[0].validation_command
 
 
+def test_openai_responses_planner_treats_python_language_deps_as_safe_dependency_block() -> None:
+    planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
+
+    blocks = planner._parse_blocks(
+        json.dumps(
+            {
+                "blocks": [
+                    {
+                        "id": "02-language-deps",
+                        "order": 2,
+                        "title": "Language Dependencies",
+                        "goal": "install python deps",
+                        "script": (
+                            "python3 -m venv .venv && "
+                            ".venv/bin/python -m pip install -r requirements.txt && "
+                            ".venv/bin/python -m pip install -e ."
+                        ),
+                        "validation_command": (
+                            "cd /workspace/repo && .venv/bin/python -m pytest --version"
+                        ),
+                    }
+                ]
+            }
+        )
+    )
+
+    assert "python dependencies" in blocks[0].script
+    assert "pip install --no-deps -e ." in blocks[0].script
+    assert "ensure_pytest /workspace/repo/.venv/bin/python" in blocks[0].script
+    assert blocks[0].validation_command == (
+        "cd /workspace/repo && test -x .venv/bin/python && "
+        '.venv/bin/python -c "import sys; print(sys.version)"'
+    )
+
+
 def test_openai_responses_planner_uses_collect_only_for_build_test_validation() -> None:
     planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
 

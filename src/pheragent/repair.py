@@ -926,6 +926,10 @@ Rules:
   command succeeds.
 - Make command validate only the repair itself from the failed block baseline
   (for example, install a missing package and run a small import/version check).
+- patch_script must be the persistent, replayable form of the successful repair.
+  If command installs a package, exports an environment variable, changes pip
+  flags, or replaces validation assumptions, patch_script must include the same
+  durable setup needed when the whole block is rerun from the baseline.
 - Prefer package-manager fixes, missing tool installs, compatibility pins, and validation fixes.
 - For pip "Double requirement given" or duplicated requirement entries, do not
   edit requirements.txt and do not rely on the legacy resolver as the primary

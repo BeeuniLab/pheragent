@@ -142,7 +142,7 @@ class OpenAIResponsesBlockPlanner:
                 _optional_str(item.get("validation_command"))
             )
             script_rejection = _repo_code_modification_rejection_reason(script)
-            if _is_python_dependency_block(block_id, title):
+            if _is_python_dependency_block(block_id, title, script, validation_command):
                 script = _safe_python_dependency_script()
                 validation_command = _safe_python_dependency_validation_command()
             elif _is_build_test_prep_block(block_id, title):
@@ -567,9 +567,19 @@ def _sanitize_validation_command(command: str | None) -> str | None:
     return re.sub(r"([A-Za-z_][A-Za-z0-9_]*)\.__version__", r"\1", patched)
 
 
-def _is_python_dependency_block(block_id: str, title: str) -> bool:
+def _is_python_dependency_block(
+    block_id: str,
+    title: str,
+    script: str = "",
+    validation_command: str | None = None,
+) -> bool:
     haystack = f"{block_id} {title}".lower()
-    return "python" in haystack and ("dep" in haystack or "environment" in haystack)
+    if "python" in haystack and ("dep" in haystack or "environment" in haystack):
+        return True
+    return "language" in haystack and "dep" in haystack and _uses_python_dependency_tooling(
+        script,
+        validation_command,
+    )
 
 
 def _is_build_test_prep_block(block_id: str, title: str) -> bool:
@@ -596,6 +606,25 @@ def _safe_build_test_validation_command(command: str | None) -> str | None:
 def _uses_python_test_tooling(script: str, validation_command: str | None) -> bool:
     haystack = f"{script}\n{validation_command or ''}".lower()
     return "pytest" in haystack or "python -m pip" in haystack or "pip install" in haystack
+
+
+def _uses_python_dependency_tooling(script: str, validation_command: str | None) -> bool:
+    haystack = f"{script}\n{validation_command or ''}".lower()
+    return any(
+        token in haystack
+        for token in (
+            ".venv",
+            "pip install",
+            "python -m pip",
+            "python3 -m pip",
+            "python -m venv",
+            "python3 -m venv",
+            "requirements.txt",
+            "pyproject.toml",
+            "setup.py",
+            "uv sync",
+        )
+    )
 
 
 def _repo_code_modification_rejection_reason(script: str) -> str | None:
@@ -731,7 +760,9 @@ else
     ./.venv/bin/python -m pip install -r requirements.txt
   fi
   if [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; then
-    ./.venv/bin/python -m pip install -e '.[dev]' || ./.venv/bin/python -m pip install -e .
+    ./.venv/bin/python -m pip install -e '.[dev]' \
+      || ./.venv/bin/python -m pip install -e . \
+      || ./.venv/bin/python -m pip install --no-deps -e .
   fi
   ensure_pytest /workspace/repo/.venv/bin/python
   expose_venv_tools
