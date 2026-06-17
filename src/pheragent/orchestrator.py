@@ -27,6 +27,33 @@ from .utils import new_run_id, tail_text
 RuntimeFactory = Callable[[BuildRequest, str], DockerRuntime]
 
 
+def _should_continue_llm_repair_failure(error: str | None) -> bool:
+    if not error:
+        return False
+    if error == "LLM repair returned no usable suggestions":
+        return True
+    normalized = error.lower()
+    if "llm repair request failed" not in normalized:
+        return False
+    transient_markers = (
+        "http 408",
+        "http 429",
+        "http 500",
+        "http 502",
+        "http 503",
+        "http 504",
+        "timeout",
+        "timed out",
+        "rate limit",
+        "temporarily unavailable",
+        "service unavailable",
+        "bad gateway",
+        "gateway timeout",
+        "connection",
+    )
+    return any(marker in normalized for marker in transient_markers)
+
+
 class EnvironmentBuilder:
     def __init__(
         self,
@@ -441,7 +468,7 @@ class EnvironmentBuilder:
                         f"run {self.run_id}: block {block.id} LLM repair attempt "
                         f"{repair_attempt} failed: {tail_text(error, max_chars=500)}"
                     )
-                if error == "LLM repair returned no usable suggestions":
+                if _should_continue_llm_repair_failure(error):
                     continue
                 break
             repair = suggestions[min(repair_attempt - 1, len(suggestions) - 1)]

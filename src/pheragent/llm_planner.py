@@ -784,7 +784,7 @@ for raw in source.read_text(encoding="utf-8").splitlines():
         print("[pheragent] relaxed numpy<1.24 requirement for Python 3.12", file=sys.stderr)
         continue
     lines.append(raw)
-target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+target.write_text("\\n".join(lines) + "\\n", encoding="utf-8")
 if not changed:
     target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
 PY

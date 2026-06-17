@@ -699,6 +699,78 @@ def test_environment_builder_retries_empty_llm_repair_suggestions(
     assert "repairs list is empty" in first_log
 
 
+def test_environment_builder_continues_repair_after_transient_llm_failure(
+    tmp_path: Path,
+) -> None:
+    class UnknownFailureRuntime(FakeRuntime):
+        def execute_script(self, script_path: Path, *, timeout: float) -> CommandResult:
+            del timeout
+            self.block_runs += 1
+            script = script_path.read_text(encoding="utf-8")
+            if "build-essential" not in script:
+                return CommandResult(exit_code=1, stderr="mystery failure")
+            return CommandResult(exit_code=0, stdout="ok")
+
+    class FlakyLLMRepairPlanner:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def suggest(self, block, result, *, context=None, heuristic_hints=None):
+            del block, result, context, heuristic_hints
+            self.calls += 1
+            if self.calls < 3:
+                raise RuntimeError(
+                    "LLM repair request failed: HTTP 408: request timed out"
+                )
+            return [
+                RepairCommand(
+                    title="Install build tools",
+                    command="apt-get update && apt-get install -y build-essential",
+                    patch_script="apt-get update && apt-get install -y build-essential",
+                )
+            ]
+
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="llm-repair-transient",
+        max_repair_attempts=3,
+    )
+    planner = StaticPlanner(
+        [
+            CommandBlock(
+                id="01-custom",
+                title="Custom",
+                goal="install",
+                script="#!/bin/sh\necho custom\n",
+                order=1,
+            )
+        ]
+    )
+    llm_planner = FlakyLLMRepairPlanner()
+
+    result = EnvironmentBuilder(
+        request,
+        planner=planner,
+        repair_planner=RepairPlanner(llm_planner=llm_planner),
+        runtime_factory=UnknownFailureRuntime,
+    ).build()
+
+    assert result.ok
+    assert llm_planner.calls == 3
+    llm_executions = [
+        execution for execution in result.executions if execution.phase == "llm_repair"
+    ]
+    assert [execution.attempt for execution in llm_executions] == [1, 2]
+    assert "HTTP 408" in Path(llm_executions[0].log_path or "").read_text(
+        encoding="utf-8"
+    )
+    assert any(execution.phase == "repair" for execution in result.executions)
+
+
 def test_environment_builder_continues_repair_after_probe_failure_budget(
     tmp_path: Path,
 ) -> None:
