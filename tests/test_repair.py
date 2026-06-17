@@ -208,6 +208,62 @@ def test_patch_block_applies_script_when_validation_is_replaced() -> None:
     assert patched.repair_attempts == 1
 
 
+def test_patch_block_prepends_patch_even_when_same_snippet_exists_later() -> None:
+    patch_script = 'PYTHON_BIN="${PYTHON_BIN:-python3}"\nexport PYTHON_BIN'
+    block = CommandBlock(
+        id="02-language-deps",
+        title="Language Dependencies",
+        goal="Install deps",
+        script=(
+            "#!/bin/sh\n"
+            "set -eu\n\n"
+            'echo "[pheragent] repair: old broken patch"\n'
+            'if [ ! -d .venv ]; then "$PYTHON_BIN" -m venv .venv; fi\n\n'
+            f"{patch_script}\n"
+        ),
+    )
+    repair = RepairCommand(
+        title="Define PYTHON_BIN before use",
+        command="python3 --version",
+        patch_script=patch_script,
+    )
+
+    patched = RepairPlanner().patch_block(block, repair)
+    lines = patched.script.splitlines()
+
+    assert lines[3] == 'echo "[pheragent] repair: Define PYTHON_BIN before use"'
+    assert lines[4] == 'PYTHON_BIN="${PYTHON_BIN:-python3}"'
+    assert patched.script.index("Define PYTHON_BIN before use") < patched.script.index(
+        "old broken patch"
+    )
+
+
+def test_patch_block_does_not_duplicate_same_leading_patch() -> None:
+    patch_script = "python3 --version"
+    block = CommandBlock(
+        id="02-language-deps",
+        title="Language Dependencies",
+        goal="Install deps",
+        script=(
+            "#!/bin/sh\n"
+            "set -eu\n\n"
+            'echo "[pheragent] repair: Check python"\n'
+            "python3 --version\n\n"
+            "echo original\n"
+        ),
+    )
+    repair = RepairCommand(
+        title="Check python",
+        command="python3 --version",
+        patch_script=patch_script,
+    )
+
+    patched = RepairPlanner().patch_block(block, repair)
+
+    assert patched.script.count('echo "[pheragent] repair: Check python"') == 1
+    assert patched.script.count("python3 --version") == 1
+
+
 def test_repair_planner_prefers_llm_suggestions_and_passes_heuristic_hints() -> None:
     class FakeLLMRepairPlanner:
         heuristic_hints: list[RepairCommand] | None = None

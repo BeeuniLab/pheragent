@@ -376,6 +376,9 @@ def test_openai_responses_planner_uses_safe_python_dependency_script() -> None:
     assert "ln -sf /workspace/repo/.pheragent-tools/bin/uv /usr/local/bin/uv" in blocks[
         0
     ].script
+    assert "editable install failed; continuing with dependency-only environment" in blocks[
+        0
+    ].script
     assert "ensure_pytest /workspace/repo/.venv/bin/python" in blocks[0].script
     assert "ln -sf /workspace/repo/.venv/bin/python /usr/local/bin/python" in blocks[0].script
     assert "ln -sf /workspace/repo/.venv/bin/pytest /usr/local/bin/pytest" in blocks[0].script

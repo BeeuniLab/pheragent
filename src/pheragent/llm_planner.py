@@ -762,7 +762,8 @@ else
   if [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; then
     ./.venv/bin/python -m pip install -e '.[dev]' \
       || ./.venv/bin/python -m pip install -e . \
-      || ./.venv/bin/python -m pip install --no-deps -e .
+      || ./.venv/bin/python -m pip install --no-deps -e . \
+      || echo "[pheragent] editable install failed; continuing with dependency-only environment" >&2
   fi
   ensure_pytest /workspace/repo/.venv/bin/python
   expose_venv_tools

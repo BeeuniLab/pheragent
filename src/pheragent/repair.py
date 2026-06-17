@@ -432,24 +432,41 @@ class RepairPlanner:
             block.validation_command = repair.patch_validation_command
 
         original = block.script
-        if repair.patch_script and repair.patch_script not in original:
+        if repair.patch_script:
             repair_header = f'echo "[pheragent] repair: {repair.title}"'
+            patch_chunk = f"{repair_header}\n{repair.patch_script}".strip()
+        else:
+            patch_chunk = ""
+        if repair.patch_script and not _repair_patch_is_leading(original, patch_chunk):
             if original.startswith("#!/"):
                 lines = original.splitlines()
                 shebang = lines[0]
                 rest = "\n".join(lines[1:]).lstrip()
                 block.script = (
                     f"{shebang}\nset -eu\n\n"
-                    f"{repair_header}\n{repair.patch_script}\n\n"
+                    f"{patch_chunk}\n\n"
                     f"{rest}\n"
                 )
             else:
-                block.script = shell_script(
-                    f"{repair_header}\n{repair.patch_script}\n\n{original}"
-                )
+                block.script = shell_script(f"{patch_chunk}\n\n{original}")
         block.repair_attempts += 1
         block.status = "repaired"
         return block
+
+
+def _repair_patch_is_leading(script: str, patch_chunk: str) -> bool:
+    if not patch_chunk:
+        return True
+    lines = script.splitlines()
+    if lines and lines[0].startswith("#!"):
+        lines = lines[1:]
+    while lines and not lines[0].strip():
+        lines = lines[1:]
+    if lines and lines[0].strip() == "set -eu":
+        lines = lines[1:]
+    while lines and not lines[0].strip():
+        lines = lines[1:]
+    return "\n".join(lines).lstrip().startswith(patch_chunk)
 
 
 def _heuristic_repair_hints(block: CommandBlock, result: CommandResult) -> list[RepairCommand]:
