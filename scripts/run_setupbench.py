@@ -79,15 +79,6 @@ def main(argv: list[str] | None = None) -> int:
         fresh=args.fresh_results,
     )
     if args.rerun_failures:
-        selected_owner_repos = {item["owner_repo"] for item in items}
-        write_failure_records(
-            failures_path,
-            [
-                record
-                for record in previous_failures
-                if record["owner_repo"] not in selected_owner_repos
-            ],
-        )
         reset_selected_failed_workspaces(
             items,
             projects_root=projects_root,
@@ -176,11 +167,16 @@ def main(argv: list[str] | None = None) -> int:
 
         if result.returncode != 0:
             failure_count += 1
-            append_failure(failures_path, payload)
+            if args.rerun_failures:
+                update_failure_record(failures_path, payload, failed=True)
+            else:
+                append_failure(failures_path, payload)
             print(f"[setupbench] failed: {owner_repo} rc={result.returncode}", flush=True)
             if args.stop_on_failure:
                 break
         else:
+            if args.rerun_failures:
+                update_failure_record(failures_path, payload, failed=False)
             print(f"[setupbench] ok: {owner_repo}", flush=True)
 
     summary = {
@@ -621,6 +617,16 @@ def append_failure(path: Path, payload: dict[str, Any]) -> None:
         handle.write(_failure_record_line(payload) + "\n")
 
 
+def update_failure_record(path: Path, payload: dict[str, Any], *, failed: bool) -> None:
+    owner_repo = str(payload["owner_repo"])
+    records = [
+        record for record in load_failure_records(path) if record["owner_repo"] != owner_repo
+    ]
+    if failed:
+        records.append(_failure_record(payload))
+    write_failure_records(path, records)
+
+
 def load_failure_records(path: Path) -> list[dict[str, str]]:
     if not path.is_file():
         return []
@@ -648,6 +654,17 @@ def write_failure_records(path: Path, records: list[dict[str, str]]) -> None:
     with path.open("w", encoding="utf-8") as handle:
         for record in records:
             handle.write(_failure_record_line(record) + "\n")
+
+
+def _failure_record(payload: dict[str, Any]) -> dict[str, str]:
+    return {
+        "owner_repo": str(payload["owner_repo"]),
+        "commit_version": str(payload["commit_version"]),
+        "returncode": str(payload.get("returncode", "")),
+        "manifest_path": str(payload.get("manifest_path") or ""),
+        "oracle_file": str(payload.get("oracle_file") or ""),
+        "log_path": str(payload.get("log_path") or ""),
+    }
 
 
 def _failure_record_line(payload: dict[str, Any]) -> str:

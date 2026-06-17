@@ -140,6 +140,80 @@ def test_failure_records_round_trip_and_replace_selected_failures(tmp_path: Path
     ]
 
 
+def test_update_failure_record_is_interruption_safe(tmp_path: Path) -> None:
+    run_setupbench = load_run_setupbench()
+    failures_path = tmp_path / "failures.tsv"
+    run_setupbench.write_failure_records(
+        failures_path,
+        [
+            {
+                "owner_repo": "one/rerun",
+                "commit_version": "abc",
+                "returncode": "1",
+                "manifest_path": "/old-m1",
+                "oracle_file": "/old-o1",
+                "log_path": "/old-l1",
+            },
+            {
+                "owner_repo": "two/unprocessed",
+                "commit_version": "def",
+                "returncode": "1",
+                "manifest_path": "/old-m2",
+                "oracle_file": "/old-o2",
+                "log_path": "/old-l2",
+            },
+        ],
+    )
+
+    run_setupbench.update_failure_record(
+        failures_path,
+        {
+            "owner_repo": "one/rerun",
+            "commit_version": "abc",
+            "returncode": 0,
+            "manifest_path": "/new-m1",
+            "oracle_file": "/new-o1",
+            "log_path": "/new-l1",
+        },
+        failed=False,
+    )
+
+    assert run_setupbench.load_failure_records(failures_path) == [
+        {
+            "owner_repo": "two/unprocessed",
+            "commit_version": "def",
+            "returncode": "1",
+            "manifest_path": "/old-m2",
+            "oracle_file": "/old-o2",
+            "log_path": "/old-l2",
+        }
+    ]
+
+    run_setupbench.update_failure_record(
+        failures_path,
+        {
+            "owner_repo": "two/unprocessed",
+            "commit_version": "def",
+            "returncode": 1,
+            "manifest_path": "/new-m2",
+            "oracle_file": "/new-o2",
+            "log_path": "/new-l2",
+        },
+        failed=True,
+    )
+
+    assert run_setupbench.load_failure_records(failures_path) == [
+        {
+            "owner_repo": "two/unprocessed",
+            "commit_version": "def",
+            "returncode": "1",
+            "manifest_path": "/new-m2",
+            "oracle_file": "/new-o2",
+            "log_path": "/new-l2",
+        }
+    ]
+
+
 def test_reset_selected_failed_workspaces_removes_project_and_state_only(
     tmp_path: Path,
 ) -> None:
