@@ -376,6 +376,9 @@ def test_openai_responses_planner_uses_safe_python_dependency_script() -> None:
     assert "ln -sf /workspace/repo/.pheragent-tools/bin/uv /usr/local/bin/uv" in blocks[
         0
     ].script
+    assert "install_requirements requirements.txt" in blocks[0].script
+    assert "skipped vllm requirement because CUDA/nvcc is unavailable" in blocks[0].script
+    assert "numpy>=1.26,<2" in blocks[0].script
     assert "editable install failed; continuing with dependency-only environment" in blocks[
         0
     ].script

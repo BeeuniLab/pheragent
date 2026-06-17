@@ -735,6 +735,63 @@ expose_venv_tools() {
   fi
 }
 
+install_requirements() {
+  req_file="$1"
+  target_file="$req_file"
+  if [ -f "$req_file" ]; then
+    target_file=/tmp/pheragent-requirements.sanitized.txt
+    PHERAGENT_SKIP_CUDA_DEPS=0
+    if [ -z "${CUDA_HOME:-}" ] && ! command -v nvcc >/dev/null 2>&1; then
+      PHERAGENT_SKIP_CUDA_DEPS=1
+    fi
+    export PHERAGENT_SKIP_CUDA_DEPS
+    ./.venv/bin/python - "$req_file" "$target_file" <<'PY'
+import os
+import re
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+skip_cuda_deps = os.environ.get("PHERAGENT_SKIP_CUDA_DEPS") == "1"
+changed = False
+lines: list[str] = []
+for raw in source.read_text(encoding="utf-8").splitlines():
+    stripped = raw.strip()
+    if not stripped or stripped.startswith("#"):
+        lines.append(raw)
+        continue
+    passthrough = ("-r ", "--requirement", "-c ", "--constraint", "-e ", "--editable")
+    if stripped.startswith(passthrough):
+        lines.append(raw)
+        continue
+    name = re.split(r"\\s*(?:===|==|~=|!=|<=|>=|<|>|;)", stripped, 1)[0]
+    name = name.split("[", 1)[0].strip().lower().replace("_", "-")
+    if skip_cuda_deps and name == "vllm":
+        changed = True
+        print(
+            "[pheragent] skipped vllm requirement because CUDA/nvcc is unavailable",
+            file=sys.stderr,
+        )
+        continue
+    if (
+        sys.version_info >= (3, 12)
+        and name == "numpy"
+        and re.search(r"(?:<|<=)\\s*1\\.2[0-3](?:\\.|$)", stripped)
+    ):
+        lines.append("numpy>=1.26,<2")
+        changed = True
+        print("[pheragent] relaxed numpy<1.24 requirement for Python 3.12", file=sys.stderr)
+        continue
+    lines.append(raw)
+target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+if not changed:
+    target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+PY
+  fi
+  ./.venv/bin/python -m pip install -r "$target_file"
+}
+
 if [ -f uv.lock ]; then
   if ! command -v uv >/dev/null 2>&1; then
     python3 -m venv .pheragent-tools
@@ -757,7 +814,7 @@ else
   fi
   ./.venv/bin/python -m pip install --upgrade pip setuptools wheel
   if [ -f requirements.txt ]; then
-    ./.venv/bin/python -m pip install -r requirements.txt
+    install_requirements requirements.txt
   fi
   if [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; then
     ./.venv/bin/python -m pip install -e '.[dev]' \
