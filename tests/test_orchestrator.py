@@ -573,6 +573,7 @@ def test_environment_builder_plans_with_container_preflight_context(tmp_path: Pa
         base_dockerfile=tmp_path / "Dockerfile",
         state_dir=tmp_path / ".pheragent",
         run_id="runtime-context",
+        task_description="Setup target: import demo and run the demo CLI.",
     )
 
     result = EnvironmentBuilder(
@@ -584,11 +585,17 @@ def test_environment_builder_plans_with_container_preflight_context(tmp_path: Pa
 
     assert result.ok
     assert planner.calls == 1
+    assert planner.contexts[0].task_description == (
+        "Setup target: import demo and run the demo CLI."
+    )
     assert "tool:python3=/usr/bin/python3" in planner.contexts[0].runtime_notes
     runtime = FakeRuntime.instances[-1]
     assert runtime.recreated == []
     assert any(execution.phase == "container_preflight" for execution in result.executions)
     assert "python.version=3.12.0" in (result.state_dir / "context.json").read_text(
+        encoding="utf-8"
+    )
+    assert "Setup target: import demo" in (result.state_dir / "context.json").read_text(
         encoding="utf-8"
     )
 

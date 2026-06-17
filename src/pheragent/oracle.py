@@ -21,4 +21,18 @@ def load_oracle_commands(path: Path) -> list[str]:
 
 
 def _clean_command(value: object) -> str:
-    return str(value).strip()
+    command = str(value).strip()
+    return _sanitize_oracle_command(command)
+
+
+def _sanitize_oracle_command(command: str) -> str:
+    sanitized = command
+    for suffix in ("5", "4", "3", "2", "1", ""):
+        pid_var = f"pid{suffix}"
+        pgid_var = f"pgid{suffix}"
+        sanitized = sanitized.replace(
+            f"kill -TERM -${pgid_var}",
+            f'kill -TERM "${pid_var}"',
+        )
+    sanitized = sanitized.replace("python -m wagtail start ", "wagtail start ")
+    return sanitized

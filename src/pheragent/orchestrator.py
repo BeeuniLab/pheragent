@@ -97,7 +97,7 @@ class EnvironmentBuilder:
 
     def plan_only(self) -> BuildResult:
         self._emit(f"run {self.run_id}: analyze repo {self.request.repo_path}")
-        context = self.analyzer.analyze(self.request.repo_path)
+        context = self._analyze_repo_context()
         self.store.save_context(context)
         self._emit(f"run {self.run_id}: plan blocks")
         blocks = self.store.write_blocks(self.planner.plan(context))
@@ -114,7 +114,7 @@ class EnvironmentBuilder:
 
     def build(self) -> BuildResult:
         self._emit(f"run {self.run_id}: analyze repo {self.request.repo_path}")
-        context = self.analyzer.analyze(self.request.repo_path)
+        context = self._analyze_repo_context()
         self.store.save_context(context)
         runtime = self.runtime_factory(self.request, self.run_id)
         checkpoints: list[Checkpoint] = []
@@ -255,6 +255,11 @@ class EnvironmentBuilder:
             if callable(usage_summary):
                 summaries.append(usage_summary())
         return merge_usage_summaries(*summaries)
+
+    def _analyze_repo_context(self) -> RepoContext:
+        context = self.analyzer.analyze(self.request.repo_path)
+        context.task_description = self.request.task_description
+        return context
 
     def _load_or_plan_blocks(self, context: RepoContext) -> list[CommandBlock]:
         if self.request.resume_from:

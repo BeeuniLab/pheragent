@@ -93,6 +93,17 @@ def _add_common_args(parser: argparse.ArgumentParser, *, include_dockerfile: boo
         )
     parser.add_argument("--state-dir", type=Path, default=None)
     parser.add_argument("--run-id", default=None)
+    parser.add_argument(
+        "--task-description",
+        default=None,
+        help="Task/setup goal text to include in repo context for planning and repair.",
+    )
+    parser.add_argument(
+        "--task-file",
+        type=Path,
+        default=None,
+        help="File containing task/setup goal text to include in repo context.",
+    )
     parser.add_argument("--container-workdir", default="/workspace/repo")
     parser.add_argument("--image-prefix", default="pheragent")
     parser.add_argument("--max-repair-attempts", type=int, default=2)
@@ -159,6 +170,17 @@ def _add_batch_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--state-dir", type=Path, default=None)
     parser.add_argument("--run-id-prefix", default=None)
+    parser.add_argument(
+        "--task-description",
+        default=None,
+        help="Task/setup goal text to include in repo context for each project.",
+    )
+    parser.add_argument(
+        "--task-file",
+        type=Path,
+        default=None,
+        help="File containing task/setup goal text to include in repo context.",
+    )
     parser.add_argument("--container-workdir", default="/workspace/repo")
     parser.add_argument("--image-prefix", default="pheragent")
     parser.add_argument("--max-repair-attempts", type=int, default=2)
@@ -218,6 +240,7 @@ def _request_from_args(args: argparse.Namespace, *, require_dockerfile: bool) ->
         base_dockerfile=base_dockerfile,
         state_dir=args.state_dir,
         run_id=args.run_id,
+        task_description=_task_description_from_args(args),
         container_workdir=args.container_workdir,
         image_prefix=args.image_prefix,
         max_repair_attempts=args.max_repair_attempts,
@@ -250,6 +273,7 @@ def _batch_base_request_from_args(args: argparse.Namespace) -> BuildRequest:
         base_dockerfile=args.base_dockerfile,
         state_dir=args.state_dir,
         run_id=None,
+        task_description=_task_description_from_args(args),
         container_workdir=args.container_workdir,
         image_prefix=args.image_prefix,
         max_repair_attempts=args.max_repair_attempts,
@@ -272,6 +296,22 @@ def _batch_base_request_from_args(args: argparse.Namespace) -> BuildRequest:
         oracle_file=args.oracle_file,
         oracle_timeout=args.oracle_timeout,
     )
+
+
+def _task_description_from_args(args: argparse.Namespace) -> str | None:
+    parts: list[str] = []
+    task_file = getattr(args, "task_file", None)
+    if task_file is not None:
+        try:
+            file_text = task_file.expanduser().read_text(encoding="utf-8")
+        except OSError as exc:
+            raise SystemExit(f"failed to read --task-file {task_file}: {exc}") from exc
+        if file_text.strip():
+            parts.append(file_text.strip())
+    task_description = getattr(args, "task_description", None)
+    if isinstance(task_description, str) and task_description.strip():
+        parts.append(task_description.strip())
+    return "\n\n".join(parts) or None
 
 
 def _print_result(result, *, as_json: bool) -> None:

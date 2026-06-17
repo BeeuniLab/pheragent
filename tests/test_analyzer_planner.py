@@ -46,7 +46,23 @@ def test_rule_based_planner_collects_pytest_without_running_full_suite(tmp_path:
 
     blocks = RuleBasedBlockPlanner().plan(context)
 
-    assert blocks[1].validation_command == "python -m pytest --collect-only -q"
+    assert blocks[1].validation_command is not None
+    assert ".venv/bin/python" in blocks[1].validation_command
+    assert "--collect-only" in blocks[1].validation_command
+    assert "no pytest tests collected" in blocks[1].validation_command
+
+
+def test_rule_based_planner_validates_go_without_vcs_stamping(tmp_path: Path) -> None:
+    (tmp_path / "go.mod").write_text("module example.com/demo\n\ngo 1.24\n", encoding="utf-8")
+    context = RepoAnalyzer().analyze(tmp_path)
+
+    blocks = RuleBasedBlockPlanner().plan(context)
+    go_block = next(block for block in blocks if block.id.endswith("go-deps"))
+
+    assert "go mod download" in go_block.script
+    assert go_block.validation_command is not None
+    assert "-buildvcs=false" in go_block.validation_command
+    assert "go list -mod=mod ./..." in go_block.validation_command
 
 
 def test_rule_based_planner_installs_node_compatible_pnpm(tmp_path: Path) -> None:

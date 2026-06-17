@@ -136,7 +136,8 @@ class OpenAIResponsesBlockPlanner:
             script = str(item.get("script", "")).strip()
             if not script:
                 raise ValueError(f"block {block_id} has empty script")
-            if "preflight" in block_id or "preflight" in title.lower():
+            is_preflight = "preflight" in block_id or "preflight" in title.lower()
+            if is_preflight:
                 script = _preflight_script()
             validation_command = _sanitize_validation_command(
                 _optional_str(item.get("validation_command"))
@@ -145,6 +146,14 @@ class OpenAIResponsesBlockPlanner:
             if _is_python_dependency_block(block_id, title, script, validation_command):
                 script = _safe_python_dependency_script()
                 validation_command = _safe_python_dependency_validation_command()
+            elif not is_preflight and _is_go_dependency_block(
+                block_id,
+                title,
+                script,
+                validation_command,
+            ):
+                script = _safe_go_dependency_script()
+                validation_command = _safe_go_dependency_validation_command()
             elif _is_build_test_prep_block(block_id, title):
                 validation_command = _safe_build_test_validation_command(validation_command)
                 if script_rejection or _uses_python_test_tooling(script, validation_command):
@@ -587,19 +596,42 @@ def _is_build_test_prep_block(block_id: str, title: str) -> bool:
     return ("build" in haystack or "test" in haystack) and "prep" in haystack
 
 
+def _is_go_dependency_block(
+    block_id: str,
+    title: str,
+    script: str = "",
+    validation_command: str | None = None,
+) -> bool:
+    haystack = f"{block_id} {title}".lower()
+    has_go_label = re.search(r"(?:^|[^a-z0-9])(?:go|golang)(?:[^a-z0-9]|$)", haystack)
+    command_haystack = f"{script}\n{validation_command or ''}".lower()
+    has_go_command = re.search(r"(?:^|[;&|]\s*)go\s+(?:mod|list|test|version)\b", command_haystack)
+    if not has_go_label and not has_go_command:
+        return False
+    if "dep" in haystack or "language" in haystack or "module" in haystack:
+        return True
+    return bool(has_go_command)
+
+
 def _safe_build_test_validation_command(command: str | None) -> str | None:
     if command is None:
         return command
     normalized = " ".join(command.split()).lower()
-    if "pytest" not in normalized or "--collect-only" in normalized:
+    if "pytest" not in normalized:
         return command
     return (
         "cd /workspace/repo && "
         "if [ -x .venv/bin/python ]; then "
-        "./.venv/bin/python -m pytest --collect-only -q; "
+        "PYTHON_BIN=./.venv/bin/python; "
         "elif command -v python >/dev/null 2>&1; then "
-        "python -m pytest --collect-only -q; "
-        "else python3 -m pytest --collect-only -q; fi"
+        "PYTHON_BIN=python; "
+        "else PYTHON_BIN=python3; fi; "
+        '"$PYTHON_BIN" -m pytest --collect-only -q; '
+        "status=$?; "
+        'if [ "$status" -eq 5 ]; then '
+        'echo "[pheragent] no pytest tests collected"; exit 0; '
+        "fi; "
+        'exit "$status"'
     )
 
 
@@ -726,8 +758,10 @@ expose_venv_tools() {
   fi
   if [ -w /usr/local/bin ] || [ "$(id -u)" = "0" ]; then
     ln -sf /workspace/repo/.venv/bin/python /usr/local/bin/python
+    ln -sf /workspace/repo/.venv/bin/python /usr/local/bin/python3
     if [ -x /workspace/repo/.venv/bin/pip ]; then
       ln -sf /workspace/repo/.venv/bin/pip /usr/local/bin/pip
+      ln -sf /workspace/repo/.venv/bin/pip /usr/local/bin/pip3
     fi
     if [ -x /workspace/repo/.venv/bin/pytest ]; then
       ln -sf /workspace/repo/.venv/bin/pytest /usr/local/bin/pytest
@@ -828,6 +862,72 @@ fi
 """.strip()
 
 
+def _safe_go_dependency_script() -> str:
+    return """
+cd /workspace/repo
+
+echo "[pheragent] go dependencies"
+export PATH="/usr/local/go/bin:$PATH"
+
+required_go_version() {
+  awk '/^go[[:space:]]+[0-9]+[.][0-9]+/ { print $2; exit }' go.mod 2>/dev/null || true
+}
+
+go_minor_version() {
+  "$1" version 2>/dev/null | sed -n 's/.*go1[.]\\([0-9][0-9]*\\).*/\\1/p' | head -1
+}
+
+install_go_release() {
+  version="$1"
+  case "$version" in
+    *.*.*) ;;
+    *) version="${version}.0" ;;
+  esac
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64|amd64) go_arch=amd64 ;;
+    aarch64|arm64) go_arch=arm64 ;;
+    *) echo "unsupported go architecture: $arch" >&2; exit 1 ;;
+  esac
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends ca-certificates curl tar
+  fi
+  rm -rf /usr/local/go
+  curl -fsSL "https://go.dev/dl/go${version}.linux-${go_arch}.tar.gz" -o /tmp/pheragent-go.tgz
+  tar -C /usr/local -xzf /tmp/pheragent-go.tgz
+  rm -f /tmp/pheragent-go.tgz
+  export PATH="/usr/local/go/bin:$PATH"
+}
+
+required_go="$(required_go_version)"
+required_minor=""
+if [ -n "$required_go" ]; then
+  required_minor="$(printf '%s\n' "$required_go" | awk -F. '{ print $2 + 0 }')"
+fi
+current_minor=""
+if command -v go >/dev/null 2>&1; then
+  current_minor="$(go_minor_version "$(command -v go)")"
+fi
+if [ -n "$required_minor" ] && [ "$required_minor" -ge 24 ]; then
+  if [ -z "$current_minor" ] || [ "$current_minor" -lt "$required_minor" ]; then
+    install_go_release "$required_go"
+  fi
+fi
+
+go version
+go mod download
+""".strip()
+
+
+def _safe_go_dependency_validation_command() -> str:
+    return (
+        'cd /workspace/repo && PATH="/usr/local/go/bin:$PATH" '
+        'GOFLAGS="${GOFLAGS:-} -buildvcs=false" go list -mod=mod ./... >/dev/null'
+    )
+
+
 def _safe_python_dependency_validation_command() -> str:
     return (
         "cd /workspace/repo && test -x .venv/bin/python && "
@@ -854,6 +954,9 @@ Return JSON only. The JSON object must have this shape:
 
 Rules:
 - Generate command blocks for a Docker container whose repo working directory is /workspace/repo.
+- If repo_context.task_description is present, use it as the target setup goal:
+  install the tools/dependencies needed for that task, while keeping validation
+  lightweight and environment-focused.
 - Split setup into coarse, replayable blocks: preflight, system deps, language deps,
   build/test prep.
 - Use POSIX sh, not bash-specific syntax.

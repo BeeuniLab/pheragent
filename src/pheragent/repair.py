@@ -541,9 +541,9 @@ def _heuristic_repair_hints(block: CommandBlock, result: CommandResult) -> list[
     if "externally-managed-environment" in output or "pep 668" in output:
         suggestions.append(
             RepairCommand(
-                title="Install uv in an isolated tool venv",
-                command=_uv_tool_venv_command(),
-                patch_script=_uv_tool_venv_command(),
+                title="Use project virtualenv pip",
+                command=_project_venv_pip_command(),
+                patch_script=_project_venv_pip_command(),
             )
         )
     if "pnpm" in output and "requires at least node.js" in output:
@@ -717,6 +717,17 @@ def _uv_tool_venv_command() -> str:
         "if [ -w /usr/local/bin ] || [ \"$(id -u)\" = \"0\" ]; then "
         "ln -sf /workspace/repo/.pheragent-tools/bin/uv /usr/local/bin/uv; "
         "else export PATH=\"/workspace/repo/.pheragent-tools/bin:$PATH\"; fi"
+    )
+
+
+def _project_venv_pip_command() -> str:
+    return (
+        "cd /workspace/repo && "
+        "if [ ! -x .venv/bin/python ]; then python3 -m venv .venv; fi && "
+        "./.venv/bin/python -m pip --version >/dev/null 2>&1 || "
+        "./.venv/bin/python -m ensurepip --upgrade || true; "
+        "./.venv/bin/python -m pip install --upgrade pip setuptools wheel pytest && "
+        "./.venv/bin/python -m pytest --version"
     )
 
 
@@ -948,6 +959,12 @@ Rules:
   flags, or replaces validation assumptions, patch_script must include the same
   durable setup needed when the whole block is rerun from the baseline.
 - Prefer package-manager fixes, missing tool installs, compatibility pins, and validation fixes.
+- If repair_context.repo_context.task_description is present, repair toward that
+  task/setup goal without editing project source code or turning validation into
+  a full application correctness test.
+- For Python projects with `.venv/bin/python`, use `.venv/bin/python -m pip`
+  and `.venv/bin/python -m pytest`. Do not use system `python3 -m pip install`
+  when PEP 668 or externally-managed-environment is present.
 - For pip "Double requirement given" or duplicated requirement entries, do not
   edit requirements.txt and do not rely on the legacy resolver as the primary
   fix. Generate a temporary sanitized requirements file under /tmp and install
@@ -989,6 +1006,8 @@ Rules:
   start services, use docker/podman, or call /tmp/pheragent/blocks/*.sh.
 - Prefer commands like ls, find with shallow depth, sed/head on manifests,
   python/node version checks, import checks, dpkg/apt-cache queries, and env probes.
+- If repair_context.repo_context.task_description is present, probes may inspect
+  task-relevant manifests, CLIs, and imports, but must still be read-only.
 - Keep each command single-line, deterministic, and fast.
 - The orchestrator will run accepted probes from the failed block baseline and
   then ask for the actual repair command with probe_results included.

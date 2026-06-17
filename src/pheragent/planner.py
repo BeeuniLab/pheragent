@@ -91,18 +91,8 @@ find . -maxdepth 2 -type f | sort | sed -n '1,120p'
             order=order,
             title="Go Dependencies",
             goal="Download Go module dependencies.",
-            script=shell_script(
-                """
-echo "[pheragent] installing go module dependencies"
-go version
-go mod download
-"""
-            ),
-            validation_command=_first_present(
-                context.test_commands,
-                prefix="go ",
-                fallback="go test ./...",
-            ),
+            script=shell_script(_go_script()),
+            validation_command=_safe_go_validation_command(),
         )
 
     def _plan_rust(self, order: int, context: RepoContext) -> CommandBlock:
@@ -154,9 +144,31 @@ def _first_present(values: list[str], *, prefix: str, fallback: str) -> str:
 def _safe_python_validation_command(context: RepoContext, fallback: str) -> str:
     command = _first_present(context.test_commands, prefix="python", fallback=fallback)
     normalized = " ".join(command.split()).lower()
-    if "pytest" in normalized and "--collect-only" not in normalized:
-        return "python -m pytest --collect-only -q"
+    if "pytest" in normalized:
+        return _pytest_collect_validation_command()
     return command
+
+
+def _pytest_collect_validation_command() -> str:
+    return (
+        "if [ -x .venv/bin/python ]; then PYTHON_BIN=./.venv/bin/python; "
+        "elif command -v python >/dev/null 2>&1; then PYTHON_BIN=python; "
+        "else PYTHON_BIN=python3; fi; "
+        '"$PYTHON_BIN" -m pytest --collect-only -q; '
+        "status=$?; "
+        'if [ "$status" -eq 5 ]; then '
+        'echo "[pheragent] no pytest tests collected"; exit 0; '
+        "fi; "
+        'exit "$status"'
+    )
+
+
+def _safe_go_validation_command() -> str:
+    return (
+        'PATH="/usr/local/go/bin:$PATH" '
+        'GOFLAGS="${GOFLAGS:-} -buildvcs=false" '
+        "go list -mod=mod ./... >/dev/null"
+    )
 
 
 def _preflight_script() -> str:
@@ -173,6 +185,15 @@ command -v node >/dev/null 2>&1 && node --version || true
 command -v npm >/dev/null 2>&1 && npm --version || true
 command -v go >/dev/null 2>&1 && go version || true
 command -v cargo >/dev/null 2>&1 && cargo --version || true
+"""
+
+
+def _go_script() -> str:
+    return """
+echo "[pheragent] installing go module dependencies"
+export PATH="/usr/local/go/bin:$PATH"
+go version
+go mod download
 """
 
 

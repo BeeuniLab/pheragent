@@ -118,6 +118,7 @@ def test_make_planner_auto_uses_rules_without_api_key(monkeypatch) -> None:
 def test_openai_responses_planner_uses_sdk_streaming(tmp_path: Path, monkeypatch) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
     context = RepoAnalyzer().analyze(tmp_path)
+    context.task_description = "Setup target: flask CLI smoke test."
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://example.test/v1")
     FakeOpenAI.clients = []
@@ -162,6 +163,7 @@ def test_openai_responses_planner_uses_sdk_streaming(tmp_path: Path, monkeypatch
     assert content["output_instructions"] == "Return JSON only."
     assert "json" in input_text["text"].lower()
     assert "repo_context" in content
+    assert content["repo_context"]["task_description"] == "Setup target: flask CLI smoke test."
 
 
 def test_openai_chat_completions_planner_uses_chat_payload(
@@ -393,6 +395,9 @@ def test_openai_responses_planner_uses_safe_python_dependency_script() -> None:
     ].script
     assert "ensure_pytest /workspace/repo/.venv/bin/python" in blocks[0].script
     assert "ln -sf /workspace/repo/.venv/bin/python /usr/local/bin/python" in blocks[0].script
+    assert "ln -sf /workspace/repo/.venv/bin/python /usr/local/bin/python3" in blocks[
+        0
+    ].script
     assert "ln -sf /workspace/repo/.venv/bin/pytest /usr/local/bin/pytest" in blocks[0].script
     assert blocks[0].validation_command is not None
     assert ".venv/bin/python" in blocks[0].validation_command
@@ -457,8 +462,86 @@ def test_openai_responses_planner_uses_collect_only_for_build_test_validation() 
 
     assert blocks[0].validation_command is not None
     assert "--collect-only" in blocks[0].validation_command
+    assert ".venv/bin/python" in blocks[0].validation_command
     assert "pytest -q" not in blocks[0].validation_command
     assert "conftest.py" not in blocks[0].script
+
+
+def test_openai_responses_planner_rewrites_existing_collect_only_to_venv_python() -> None:
+    planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
+
+    blocks = planner._parse_blocks(
+        json.dumps(
+            {
+                "blocks": [
+                    {
+                        "id": "03-build-test-prep",
+                        "order": 3,
+                        "title": "Build/Test Prep",
+                        "goal": "validate tests",
+                        "script": "python3 -m pytest --version",
+                        "validation_command": "python3 -m pytest --collect-only -q",
+                    }
+                ]
+            }
+        )
+    )
+
+    assert blocks[0].validation_command is not None
+    assert ".venv/bin/python" in blocks[0].validation_command
+    assert "python3 -m pytest --collect-only" not in blocks[0].validation_command
+    assert "no pytest tests collected" in blocks[0].validation_command
+
+
+def test_openai_responses_planner_uses_safe_go_dependency_script() -> None:
+    planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
+
+    blocks = planner._parse_blocks(
+        json.dumps(
+            {
+                "blocks": [
+                    {
+                        "id": "02-go-deps",
+                        "order": 2,
+                        "title": "Go Dependencies",
+                        "goal": "download modules",
+                        "script": "go version && go mod download",
+                        "validation_command": "go list -mod=mod ./...",
+                    }
+                ]
+            }
+        )
+    )
+
+    assert "go dependencies" in blocks[0].script
+    assert "install_go_release" in blocks[0].script
+    assert "go1.24.0" not in blocks[0].script
+    assert blocks[0].validation_command is not None
+    assert "-buildvcs=false" in blocks[0].validation_command
+    assert "go list -mod=mod ./..." in blocks[0].validation_command
+
+
+def test_openai_responses_planner_does_not_treat_django_as_go_block() -> None:
+    planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
+
+    blocks = planner._parse_blocks(
+        json.dumps(
+            {
+                "blocks": [
+                    {
+                        "id": "02-django-deps",
+                        "order": 2,
+                        "title": "Django Dependencies",
+                        "goal": "install django deps",
+                        "script": "python -m pip install django",
+                        "validation_command": "python -c 'import django'",
+                    }
+                ]
+            }
+        )
+    )
+
+    assert "go dependencies" not in blocks[0].script
 
 
 def test_openai_responses_planner_replaces_repo_code_modifying_build_test_script() -> None:

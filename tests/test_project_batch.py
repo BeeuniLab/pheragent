@@ -227,6 +227,7 @@ def test_project_batch_builder_builds_each_prepared_project(tmp_path: Path) -> N
             repo_path=tmp_path,
             base_dockerfile=tmp_path / "Dockerfile",
             run_id=None,
+            task_description="Setup target: run flask import smoke test.",
             llm_api="chat-completions",
         ),
         run_id_prefix="batch",
@@ -236,6 +237,7 @@ def test_project_batch_builder_builds_each_prepared_project(tmp_path: Path) -> N
 
     assert result.ok
     assert requests[0].repo_path == tmp_path / "projects" / "flask"
+    assert requests[0].task_description == "Setup target: run flask import smoke test."
     assert not (requests[0].repo_path / ".github").exists()
     assert requests[0].run_id == "batch-flask"
     assert requests[0].llm_api == "chat-completions"

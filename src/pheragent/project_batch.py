@@ -484,6 +484,7 @@ class ProjectBatchBuilder:
             base_dockerfile=self.base_request.base_dockerfile,
             state_dir=state_dir,
             run_id=run_id,
+            task_description=self.base_request.task_description,
             container_workdir=self.base_request.container_workdir,
             image_prefix=self.base_request.image_prefix,
             max_repair_attempts=self.base_request.max_repair_attempts,

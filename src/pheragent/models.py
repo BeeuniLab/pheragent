@@ -9,12 +9,20 @@ PlannerMode = Literal["auto", "rules", "llm"]
 LLMApiMode = Literal["responses", "chat-completions"]
 
 
+def _normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
 @dataclass(slots=True)
 class BuildRequest:
     repo_path: Path
     base_dockerfile: Path | None = None
     state_dir: Path | None = None
     run_id: str | None = None
+    task_description: str | None = None
     container_workdir: str = "/workspace/repo"
     image_prefix: str = "pheragent"
     max_repair_attempts: int = 2
@@ -53,6 +61,7 @@ class BuildRequest:
             base_dockerfile=base_dockerfile,
             state_dir=state_dir.expanduser().resolve(),
             run_id=self.run_id,
+            task_description=_normalize_optional_text(self.task_description),
             container_workdir=self.container_workdir,
             image_prefix=self.image_prefix,
             max_repair_attempts=self.max_repair_attempts,
@@ -82,6 +91,7 @@ class BuildRequest:
 @dataclass(slots=True)
 class RepoContext:
     repo_path: Path
+    task_description: str | None = None
     package_files: list[str] = field(default_factory=list)
     languages: list[str] = field(default_factory=list)
     package_managers: list[str] = field(default_factory=list)

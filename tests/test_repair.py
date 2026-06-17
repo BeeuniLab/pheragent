@@ -21,7 +21,7 @@ from pheragent.repair import (
 )
 
 
-def test_repair_hints_include_pep_668_uv_install_failure() -> None:
+def test_repair_hints_use_project_venv_for_pep_668_failure() -> None:
     block = CommandBlock(
         id="02-python-deps",
         title="Python Dependencies",
@@ -36,12 +36,10 @@ def test_repair_hints_include_pep_668_uv_install_failure() -> None:
     suggestions = _heuristic_repair_hints(block, result)
 
     assert suggestions
-    assert "python3 -m venv .pheragent-tools" in suggestions[0].command
-    assert "python3-pip python3-venv" in suggestions[0].command
-    assert "PIP_BREAK_SYSTEM_PACKAGES=1" in suggestions[0].command
-    assert "ln -sf /workspace/repo/.pheragent-tools/bin/uv /usr/local/bin/uv" in suggestions[
-        0
-    ].command
+    assert suggestions[0].title == "Use project virtualenv pip"
+    assert "python3 -m venv .venv" in suggestions[0].command
+    assert "./.venv/bin/python -m pip install" in suggestions[0].command
+    assert "PIP_BREAK_SYSTEM_PACKAGES" not in suggestions[0].command
 
 
 def test_repair_hints_pin_pnpm_for_older_node_runtime() -> None:
@@ -649,6 +647,7 @@ def test_openai_responses_repair_payload_includes_repair_context(tmp_path: Path)
     context = RepairContext(
         repo_context=RepoContext(
             repo_path=tmp_path,
+            task_description="Setup target: run a CMake-backed import smoke test.",
             languages=["python"],
             runtime_notes=["tool:python3=/usr/bin/python3", "tool:cmake=missing"],
         ),
@@ -708,6 +707,9 @@ def test_openai_responses_repair_payload_includes_repair_context(tmp_path: Path)
     assert content["output_instructions"] == "Return JSON only."
     assert "json" in input_text["text"].lower()
     assert content["repair_context"]["checkpoint_before"] == "fake:baseline"
+    assert content["repair_context"]["repo_context"]["task_description"] == (
+        "Setup target: run a CMake-backed import smoke test."
+    )
     assert "tool:cmake=missing" in content["repair_context"]["repo_context"]["runtime_notes"]
     assert content["repair_context"]["previous_blocks"][0]["id"] == "00-preflight"
     assert content["repair_context"]["recent_executions"][0]["phase"] == "block"
@@ -726,6 +728,9 @@ def test_openai_responses_repair_payload_includes_repair_context(tmp_path: Path)
     assert probe_content["output_instructions"] == "Return JSON only."
     assert "json" in probe_text.lower()
     assert probe_content["repair_context"]["checkpoint_before"] == "fake:baseline"
+    assert probe_content["repair_context"]["repo_context"]["task_description"] == (
+        "Setup target: run a CMake-backed import smoke test."
+    )
     assert "max_output_tokens" not in probe_payload
     assert "temperature" not in probe_payload
 
