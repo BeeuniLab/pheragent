@@ -1,6 +1,6 @@
 # SetupBench Failure Triage
 
-Date: 2026-06-17
+Date: 2026-06-18
 
 Scope: server run at `/home/lix/EnvAgent/love/lix_pheragent`.
 
@@ -21,6 +21,7 @@ Scope: server run at `/home/lix/EnvAgent/love/lix_pheragent`.
 | LLM block hardening | Fixed | Go install commands embedded in `system-deps` are recognized as Go dependency blocks; build/test prep blocks that start dev servers or run project generators are replaced with lightweight tool checks. |
 | Oracle command safety | Fixed | Oracle loading rewrites known unsafe process cleanup; web-server oracles now run in their own session and clean up child processes. |
 | Oracle command correctness | Fixed | `python -m wagtail start` is normalized to `wagtail start`; Prometheus metrics oracles now start Prometheus before curling; full-suite pytest/tox oracles are reduced to environment-level checks. |
+| Latest rerun failures | Fixed locally | After commit `a793a92`, `setupbench-runs-oracle-rerun` had 11 projects: 7 ok, 4 oracle failures. Local fixes cover Prometheus VCS stamping, Caddy binary lookup/build, and web-oracle cleanup self-termination. |
 
 ## Observed Failures
 
@@ -47,6 +48,9 @@ Scope: server run at `/home/lix/EnvAgent/love/lix_pheragent`.
 - `DanWahlin/Angular-JumpStart`, `hoodiehq/hoodie`, `lhartikk/naivechain`, `microsoft/vscode-remote-try-python`: oracle exits 143 with little output. The oracle commands use `kill -TERM -$pgid`, which can kill the running oracle shell/process group.
 - `prometheus/prometheus`: oracle curls `localhost:9090/metrics` without starting Prometheus.
 - `wagtail/wagtail`: oracle uses `python -m wagtail start mysite`, but `wagtail` is a package without `__main__`; should use the `wagtail` CLI.
+- Latest rerun `prometheus/prometheus`: Prometheus oracle started the binary, but `go build` failed with VCS stamping (`Use -buildvcs=false`). The oracle now sets `GOFLAGS=-buildvcs=false`.
+- Latest rerun `caddyserver/caddy`: build/test prep produced a usable `./caddy`, but oracle ran `caddy list-modules` from PATH and failed with `caddy: not found`. The oracle now uses PATH `caddy`, `./caddy`, or builds `/tmp/pheragent-caddy`.
+- Latest rerun `hoodiehq/hoodie` and `melt-ui/melt-ui`: web oracle exited `143` immediately because cleanup matched the current `sh -lc` oracle process. Cleanup now records `$$` and excludes that PID.
 
 ### Oracle Failures That May Be Project/Test-Suite Issues
 
@@ -80,7 +84,10 @@ Scope: server run at `/home/lix/EnvAgent/love/lix_pheragent`.
    - Replace unsafe negative-process-group termination with direct child cleanup or isolated `setsid` cleanup.
    - Start Prometheus before curling metrics.
    - Use `wagtail start` instead of `python -m wagtail`.
-   - Status: unsafe cleanup and Wagtail CLI normalization are fixed in `src/pheragent/oracle.py`; Prometheus startup remains a project-specific oracle data fix.
+   - Build Prometheus with `GOFLAGS=-buildvcs=false`.
+   - Rewrite Caddy `list-modules` validation to use an available or temporary binary.
+   - Exclude the running oracle shell from web-process cleanup.
+   - Status: fixed in `src/pheragent/oracle.py`.
 
 5. Re-run focused validation:
    - Unit tests for runner manifest lookup and oracle validation.

@@ -34,6 +34,9 @@ def _sanitize_oracle_command(command: str) -> str:
     prometheus_command = _prometheus_oracle_replacement(sanitized)
     if prometheus_command is not None:
         return prometheus_command
+    caddy_command = _caddy_oracle_replacement(sanitized)
+    if caddy_command is not None:
+        return caddy_command
     sanitized = _downgrade_full_suite_setupbench_oracle(sanitized)
     for suffix in ("5", "4", "3", "2", "1", ""):
         pid_var = f"pid{suffix}"
@@ -83,8 +86,12 @@ def _web_server_oracle_replacement(command: str) -> str | None:
 
 def _safe_web_server_oracle(*, start_command: str, url: str, cleanup_pattern: str) -> str:
     return f"""
+set -eu
+oracle_pid="$$"
 cleanup_web_processes() {{
-  ps -eo pid=,args= | awk '/{cleanup_pattern}/ {{ print $1 }}' | while read -r stale_pid; do
+  ps -eo pid=,args= | awk -v oracle_pid="$oracle_pid" '
+    /{cleanup_pattern}/ && $1 != oracle_pid {{ print $1 }}
+  ' | while read -r stale_pid; do
     [ -n "$stale_pid" ] && kill "$stale_pid" 2>/dev/null || true
   done
 }}
@@ -125,12 +132,15 @@ def _prometheus_oracle_replacement(command: str) -> str | None:
     if "localhost:9090/metrics" not in command or "prometheus_build_info" not in command:
         return None
     return """
+set -eu
 cd /workspace/repo
 if [ -x ./prometheus ]; then
   prometheus_bin=./prometheus
 else
   prometheus_bin=/tmp/pheragent-prometheus
-  go build -o "$prometheus_bin" ./cmd/prometheus
+  PATH="/usr/local/go/bin:/usr/lib/go-1.22/bin:/usr/lib/go/bin:$PATH" \
+    GOFLAGS="${GOFLAGS:-} -buildvcs=false" \
+    go build -o "$prometheus_bin" ./cmd/prometheus
 fi
 rm -rf /tmp/pheragent-prometheus-data
 "$prometheus_bin" \
@@ -156,6 +166,31 @@ if [ "$ready" -eq 1 ]; then
   exit 0
 fi
 cat /tmp/pheragent-prometheus.log || true
+echo "Setup failed"
+exit 1
+""".strip()
+
+
+def _caddy_oracle_replacement(command: str) -> str | None:
+    if "caddy list-modules" not in command or "Setup successful" not in command:
+        return None
+    return """
+set -eu
+cd /workspace/repo
+export PATH="/usr/local/go/bin:/usr/lib/go-1.22/bin:/usr/lib/go/bin:$PATH"
+export GOFLAGS="${GOFLAGS:-} -buildvcs=false"
+if command -v caddy >/dev/null 2>&1; then
+  caddy_bin="$(command -v caddy)"
+elif [ -x ./caddy ]; then
+  caddy_bin=./caddy
+else
+  caddy_bin=/tmp/pheragent-caddy
+  go build -o "$caddy_bin" ./cmd/caddy
+fi
+if "$caddy_bin" list-modules | grep -q 'http'; then
+  echo "Setup successful"
+  exit 0
+fi
 echo "Setup failed"
 exit 1
 """.strip()

@@ -142,6 +142,8 @@ def test_load_oracle_commands_rewrites_web_server_oracle(tmp_path: Path) -> None
 
     assert "setsid sh -c \"npm run start\"" in command
     assert "cleanup_web_processes" in command
+    assert 'oracle_pid="$$"' in command
+    assert "$1 != oracle_pid" in command
     assert "127.0.0.1:8080" in command
     assert "kill -TERM -- \"-$pgid\"" in command
 
@@ -167,6 +169,33 @@ def test_load_oracle_commands_rewrites_prometheus_metrics_oracle(tmp_path: Path)
 
     command = load_oracle_commands(oracle_file)[0]
 
+    assert 'GOFLAGS="${GOFLAGS:-} -buildvcs=false"' in command
     assert "go build -o \"$prometheus_bin\" ./cmd/prometheus" in command
     assert "--web.listen-address=127.0.0.1:9090" in command
     assert "prometheus_build_info" in command
+
+
+def test_load_oracle_commands_rewrites_caddy_oracle(tmp_path: Path) -> None:
+    oracle_file = tmp_path / "oracle.json"
+    oracle_file.write_text(
+        json.dumps(
+            {
+                "fixed_test_commands": [
+                    {
+                        "command": (
+                            "caddy list-modules | grep -q 'http' && "
+                            "echo 'Setup successful' || echo 'Setup failed'"
+                        )
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    command = load_oracle_commands(oracle_file)[0]
+
+    assert "command -v caddy" in command
+    assert "[ -x ./caddy ]" in command
+    assert "go build -o \"$caddy_bin\" ./cmd/caddy" in command
+    assert "\"$caddy_bin\" list-modules | grep -q 'http'" in command
