@@ -76,7 +76,7 @@ def _web_server_oracle_replacement(command: str) -> str | None:
         )
     if "pnpm run dev" in command and "localhost:5173" in command:
         return _safe_web_server_oracle(
-            start_command="pnpm run dev",
+            start_command="CHOKIDAR_USEPOLLING=1 WATCHPACK_POLLING=true pnpm run dev",
             url="http://localhost:5173",
             wait_seconds=180,
         )

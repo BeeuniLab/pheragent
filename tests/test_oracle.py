@@ -175,7 +175,12 @@ def test_load_oracle_commands_rewrites_vite_web_server_oracle(tmp_path: Path) ->
 
     command = load_oracle_commands(oracle_file)[0]
 
-    assert "setsid sh -c \"pnpm run dev\"" in command
+    assert (
+        "setsid sh -c \"CHOKIDAR_USEPOLLING=1 WATCHPACK_POLLING=true pnpm run dev\""
+        in command
+    )
+    assert "CHOKIDAR_USEPOLLING=1" in command
+    assert "WATCHPACK_POLLING=true" in command
     assert "pnpm run dev -- --host" not in command
     assert "http://localhost:5173" in command
     assert 'while [ "$i" -lt 180 ]; do' in command
