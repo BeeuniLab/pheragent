@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from pathlib import Path
 
 from pheragent.models import BuildRequest, BuildResult, CommandResult
@@ -35,6 +37,28 @@ def test_parse_projects_file_uses_repo_name_unless_duplicate(tmp_path: Path) -> 
         "numpy",
     ]
     assert specs[0].line_no == 2
+
+
+def test_parse_projects_file_disambiguates_repeated_owner_repo(tmp_path: Path) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text(
+        "\n".join(
+            [
+                "pallets/flask 1111111",
+                "pallets/flask 2222222",
+                "example/flask 3333333",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    specs = parse_projects_file(projects_file)
+
+    assert [spec.checkout_dir_name for spec in specs] == [
+        "pallets-flask",
+        "pallets-flask-2",
+        "example-flask",
+    ]
 
 
 def test_prepare_project_clones_fetches_and_checks_out_in_repo_dir(tmp_path: Path) -> None:
@@ -244,6 +268,323 @@ def test_project_batch_builder_builds_each_prepared_project(tmp_path: Path) -> N
     assert result.results[0].final_image == "pheragent:batch-flask-final"
     assert result.results[0].oracle_path == tmp_path / "oracles" / "flask" / ".github"
     assert (result.results[0].oracle_path / "workflows" / "ci.yml").is_file()
+
+
+def test_project_batch_builder_can_build_projects_concurrently(tmp_path: Path) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text(
+        "\n".join(
+            [
+                "pallets/flask 2579ce9",
+                "numpy/numpy 3333333",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    lock = threading.Lock()
+    active_builds = 0
+    max_active_builds = 0
+
+    def fake_runner(command: list[str], cwd: Path | None) -> CommandResult:
+        del cwd
+        if command[:2] == ["git", "clone"]:
+            repo_path = Path(command[-1])
+            (repo_path / ".git").mkdir(parents=True)
+        return CommandResult(exit_code=0, stdout="ok")
+
+    class SlowBuilder:
+        def __init__(self, request: BuildRequest):
+            self.request = request
+
+        def build(self) -> BuildResult:
+            nonlocal active_builds, max_active_builds
+            with lock:
+                active_builds += 1
+                max_active_builds = max(max_active_builds, active_builds)
+            try:
+                time.sleep(0.05)
+            finally:
+                with lock:
+                    active_builds -= 1
+            state_dir = self.request.repo_path / ".pheragent" / "runs" / self.request.run_id
+            return BuildResult(
+                ok=True,
+                run_id=self.request.run_id or "batch-run",
+                state_dir=state_dir,
+                scripts_dir=state_dir / "scripts",
+                manifest_path=state_dir / "manifest.json",
+                final_image=f"pheragent:{self.request.run_id}",
+            )
+
+    result = ProjectBatchBuilder(
+        projects_file=projects_file,
+        projects_dir=tmp_path / "projects",
+        base_request=BuildRequest(
+            repo_path=tmp_path,
+            base_dockerfile=tmp_path / "Dockerfile",
+            run_id=None,
+        ),
+        run_id_prefix="batch",
+        jobs=2,
+        command_runner=fake_runner,
+        builder_factory=SlowBuilder,
+    ).build_all()
+
+    assert result.ok
+    assert [project.project.owner_repo for project in result.results] == [
+        "pallets/flask",
+        "numpy/numpy",
+    ]
+    assert max_active_builds == 2
+
+
+def test_project_batch_builder_parallel_stop_on_failure_stops_new_submissions(
+    tmp_path: Path,
+) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text(
+        "\n".join(
+            [
+                "owner/one 1111111",
+                "owner/two 2222222",
+                "owner/three 3333333",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    started_builds: list[str] = []
+    lock = threading.Lock()
+
+    def fake_runner(command: list[str], cwd: Path | None) -> CommandResult:
+        del cwd
+        if command[:2] == ["git", "clone"]:
+            repo_path = Path(command[-1])
+            (repo_path / ".git").mkdir(parents=True)
+        return CommandResult(exit_code=0, stdout="ok")
+
+    class MaybeFailingBuilder:
+        def __init__(self, request: BuildRequest):
+            self.request = request
+
+        def build(self) -> BuildResult:
+            repo_name = self.request.repo_path.name
+            with lock:
+                started_builds.append(repo_name)
+            if repo_name == "one":
+                time.sleep(0.02)
+                ok = False
+                error = "block failed: 01-system-deps"
+            else:
+                time.sleep(0.1)
+                ok = True
+                error = None
+            state_dir = self.request.repo_path / ".pheragent" / "runs" / self.request.run_id
+            return BuildResult(
+                ok=ok,
+                run_id=self.request.run_id or f"batch-{repo_name}",
+                state_dir=state_dir,
+                scripts_dir=state_dir / "scripts",
+                manifest_path=state_dir / "manifest.json",
+                final_image=f"pheragent:{repo_name}" if ok else None,
+                error=error,
+            )
+
+    result = ProjectBatchBuilder(
+        projects_file=projects_file,
+        projects_dir=tmp_path / "projects",
+        base_request=BuildRequest(
+            repo_path=tmp_path,
+            base_dockerfile=tmp_path / "Dockerfile",
+            run_id=None,
+        ),
+        run_id_prefix="batch",
+        jobs=2,
+        stop_on_failure=True,
+        command_runner=fake_runner,
+        builder_factory=MaybeFailingBuilder,
+    ).build_all()
+
+    assert not result.ok
+    assert [project.project.owner_repo for project in result.results] == [
+        "owner/one",
+        "owner/two",
+    ]
+    assert set(started_builds) == {"one", "two"}
+    assert "three" not in started_builds
+    assert result.failures_log_path is not None
+    failure_log = result.failures_log_path.read_text(encoding="utf-8")
+    assert "owner/one" in failure_log
+    assert "owner/three" not in failure_log
+
+
+def test_project_batch_builder_parallel_reruns_existing_failed_project(
+    tmp_path: Path,
+) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text(
+        "pallets/flask 2579ce9\nnumpy/numpy 1111111\n",
+        encoding="utf-8",
+    )
+    projects_dir = tmp_path / "projects"
+    failed_repo_path = projects_dir / "flask"
+    (failed_repo_path / ".git").mkdir(parents=True)
+    (failed_repo_path / "stale.log").write_text("old failure output\n", encoding="utf-8")
+    run_dir = failed_repo_path / ".pheragent" / "runs" / "batch-flask"
+    run_dir.mkdir(parents=True)
+    (run_dir / "manifest.json").write_text(
+        json.dumps({"ok": False, "run_id": "batch-flask", "error": "old failure"}),
+        encoding="utf-8",
+    )
+    stale_failure_log = projects_dir / "failed-projects.log"
+    stale_failure_log.write_text("old\tfailure\n", encoding="utf-8")
+    clone_paths: list[Path] = []
+    requests: list[BuildRequest] = []
+    lock = threading.Lock()
+
+    def fake_runner(command: list[str], cwd: Path | None) -> CommandResult:
+        del cwd
+        if command[:2] == ["git", "clone"]:
+            repo_path = Path(command[-1])
+            with lock:
+                clone_paths.append(repo_path)
+            assert not repo_path.exists()
+            (repo_path / ".git").mkdir(parents=True)
+        return CommandResult(exit_code=0, stdout="ok")
+
+    class FakeBuilder:
+        def __init__(self, request: BuildRequest):
+            self.request = request
+            with lock:
+                requests.append(request)
+
+        def build(self) -> BuildResult:
+            time.sleep(0.02)
+            state_dir = self.request.repo_path / ".pheragent" / "runs" / self.request.run_id
+            return BuildResult(
+                ok=True,
+                run_id=self.request.run_id or f"batch-{self.request.repo_path.name}",
+                state_dir=state_dir,
+                scripts_dir=state_dir / "scripts",
+                manifest_path=state_dir / "manifest.json",
+                final_image=f"pheragent:{self.request.repo_path.name}-rebuilt",
+            )
+
+    result = ProjectBatchBuilder(
+        projects_file=projects_file,
+        projects_dir=projects_dir,
+        base_request=BuildRequest(
+            repo_path=tmp_path,
+            base_dockerfile=tmp_path / "Dockerfile",
+            run_id=None,
+        ),
+        run_id_prefix="batch",
+        jobs=2,
+        command_runner=fake_runner,
+        builder_factory=FakeBuilder,
+    ).build_all()
+
+    assert result.ok
+    assert {path.name for path in clone_paths} == {"flask", "numpy"}
+    assert {request.repo_path.name for request in requests} == {"flask", "numpy"}
+    assert not (failed_repo_path / "stale.log").exists()
+    assert result.failures_log_path is None
+    assert not stale_failure_log.exists()
+
+
+def test_project_batch_builder_parallel_records_result_logs_without_lost_lines(
+    tmp_path: Path,
+) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text(
+        "\n".join(
+            [
+                "owner/one 1111111",
+                "owner/two 2222222",
+                "owner/three 3333333",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_runner(command: list[str], cwd: Path | None) -> CommandResult:
+        del cwd
+        if command[:2] == ["git", "clone"]:
+            repo_path = Path(command[-1])
+            (repo_path / ".git").mkdir(parents=True)
+        return CommandResult(exit_code=0, stdout="ok")
+
+    class MixedBuilder:
+        def __init__(self, request: BuildRequest):
+            self.request = request
+
+        def build(self) -> BuildResult:
+            repo_name = self.request.repo_path.name
+            if repo_name == "one":
+                time.sleep(0.03)
+            elif repo_name == "two":
+                time.sleep(0.01)
+            ok = repo_name == "two"
+            state_dir = self.request.repo_path / ".pheragent" / "runs" / self.request.run_id
+            return BuildResult(
+                ok=ok,
+                run_id=self.request.run_id or f"batch-{repo_name}",
+                state_dir=state_dir,
+                scripts_dir=state_dir / "scripts",
+                manifest_path=state_dir / "manifest.json",
+                final_image=f"pheragent:{repo_name}" if ok else None,
+                error=None if ok else f"block failed: {repo_name}",
+                llm_usage={
+                    "total": {
+                        "requests": 1,
+                        "input_tokens": len(repo_name),
+                        "output_tokens": 2,
+                        "reasoning_tokens": 0,
+                        "total_tokens": len(repo_name) + 2,
+                    }
+                },
+            )
+
+    result = ProjectBatchBuilder(
+        projects_file=projects_file,
+        projects_dir=tmp_path / "projects",
+        base_request=BuildRequest(
+            repo_path=tmp_path,
+            base_dockerfile=tmp_path / "Dockerfile",
+            run_id=None,
+        ),
+        run_id_prefix="batch",
+        jobs=3,
+        command_runner=fake_runner,
+        builder_factory=MixedBuilder,
+    ).build_all()
+
+    assert not result.ok
+    assert [project.project.owner_repo for project in result.results] == [
+        "owner/one",
+        "owner/two",
+        "owner/three",
+    ]
+    assert result.failures_log_path is not None
+    failure_lines = result.failures_log_path.read_text(encoding="utf-8").splitlines()
+    assert len(failure_lines) == 2
+    assert {line.split("\t")[0] for line in failure_lines} == {
+        "owner/one",
+        "owner/three",
+    }
+    assert result.llm_usage_log_path is not None
+    usage_records = [
+        json.loads(line)
+        for line in result.llm_usage_log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(usage_records) == 3
+    assert {record["owner_repo"] for record in usage_records} == {
+        "owner/one",
+        "owner/two",
+        "owner/three",
+    }
 
 
 def test_project_batch_builder_keeps_github_when_oracles_dir_is_not_set(

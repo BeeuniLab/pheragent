@@ -5,6 +5,7 @@ import shutil
 import sys
 from collections import Counter
 from collections.abc import Callable
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -88,11 +89,18 @@ def parse_projects_file(path: Path) -> list[ProjectSpec]:
 
     repo_name_counts = Counter(owner_repo.rsplit("/", 1)[-1] for owner_repo, _, _ in raw)
     specs: list[ProjectSpec] = []
+    used_checkout_dir_names: set[str] = set()
     for owner_repo, commit, line_no in raw:
         repo_name = owner_repo.rsplit("/", 1)[-1]
-        checkout_dir_name = repo_name
+        base_checkout_dir_name = repo_name
         if repo_name_counts[repo_name] > 1:
-            checkout_dir_name = slugify(owner_repo)
+            base_checkout_dir_name = slugify(owner_repo)
+        checkout_dir_name = base_checkout_dir_name
+        suffix = 2
+        while checkout_dir_name in used_checkout_dir_names:
+            checkout_dir_name = f"{base_checkout_dir_name}-{suffix}"
+            suffix += 1
+        used_checkout_dir_names.add(checkout_dir_name)
         specs.append(
             ProjectSpec(
                 owner_repo=owner_repo,
@@ -304,9 +312,12 @@ class ProjectBatchBuilder:
         run_id_prefix: str | None = None,
         limit: int | None = None,
         stop_on_failure: bool = False,
+        jobs: int = 1,
         command_runner: CommandRunner | None = None,
         builder_factory: BuilderFactory = EnvironmentBuilder,
     ):
+        if jobs < 1:
+            raise ValueError("jobs must be >= 1")
         self.projects_file = projects_file.expanduser().resolve()
         self.projects_dir = projects_dir.expanduser().resolve()
         self.oracles_dir = None if oracles_dir is None else oracles_dir.expanduser().resolve()
@@ -315,6 +326,7 @@ class ProjectBatchBuilder:
         self.run_id_prefix = run_id_prefix
         self.limit = limit
         self.stop_on_failure = stop_on_failure
+        self.jobs = jobs
         self.command_runner = command_runner
         self.builder_factory = builder_factory
 
@@ -333,131 +345,14 @@ class ProjectBatchBuilder:
         known_no_repo_keys = _read_no_repo_log_keys(no_repo_log_path)
         version_mismatch_log_path = self.projects_dir / "version-mismatch-projects.log"
 
-        results: list[ProjectRunResult] = []
-        for spec in specs:
-            repo_path = self.projects_dir / spec.checkout_dir_name
-            oracle_path: Path | None = None
-            actual_commit: str | None = None
-            version_mismatch = False
-            failure_stage = "prepare_failed"
-            try:
-                existing_result = self._existing_successful_result(spec, repo_path)
-                if existing_result is not None:
-                    self._emit(
-                        f"project {spec.owner_repo}: skip existing successful run "
-                        f"{existing_result.run_id}"
-                    )
-                    results.append(existing_result)
-                    self._append_llm_usage_log(existing_result, llm_usage_log_path)
-                    continue
-                if _project_log_key(spec) in known_no_repo_keys:
-                    result = ProjectRunResult(
-                        project=spec,
-                        repo_path=repo_path,
-                        ok=False,
-                        skipped=True,
-                        failure_stage="unavailable_project",
-                        error="previously marked unavailable in no-repo-projects.log",
-                    )
-                    results.append(result)
-                    self._append_llm_usage_log(result, llm_usage_log_path)
-                    self._emit(
-                        f"project {spec.owner_repo}: skip previously unavailable repository"
-                    )
-                    continue
-                if repo_path.exists():
-                    self._emit(
-                        f"project {spec.owner_repo}: reset existing incomplete project at "
-                        f"{repo_path}"
-                    )
-                    if repo_path.is_dir() and not repo_path.is_symlink():
-                        shutil.rmtree(repo_path)
-                    else:
-                        repo_path.unlink()
-
-                self._emit(f"project {spec.owner_repo}@{spec.commit}: prepare")
-                prepared_project = prepare_project(
-                    spec,
-                    projects_dir=self.projects_dir,
-                    clone_timeout=self.clone_timeout,
-                    stream_logs=self.base_request.stream_logs,
-                    command_runner=self.command_runner,
-                )
-                repo_path = prepared_project.repo_path
-                actual_commit = prepared_project.actual_commit
-                version_mismatch = prepared_project.version_mismatch
-                if version_mismatch:
-                    self._upsert_version_mismatch_log(
-                        spec,
-                        prepared_project,
-                        version_mismatch_log_path,
-                    )
-                    self._emit(
-                        f"project {spec.owner_repo}: requested {spec.commit} not found; "
-                        f"using {actual_commit or prepared_project.checkout_ref}"
-                    )
-                if self.oracles_dir is not None:
-                    oracle_path = isolate_project_oracles(
-                        spec,
-                        repo_path=repo_path,
-                        oracles_dir=self.oracles_dir,
-                    )
-                    if oracle_path is not None:
-                        self._emit(
-                            f"project {spec.owner_repo}: isolated oracle data at {oracle_path}"
-                        )
-                self._emit(f"project {spec.owner_repo}: build")
-                failure_stage = "build_failed"
-                build_result = self.builder_factory(self._request_for(spec, repo_path)).build()
-                result = ProjectRunResult(
-                    project=spec,
-                    repo_path=repo_path,
-                    ok=build_result.ok,
-                    version_mismatch=version_mismatch,
-                    run_id=build_result.run_id,
-                    final_image=build_result.final_image,
-                    manifest_path=build_result.manifest_path,
-                    oracle_path=oracle_path,
-                    actual_commit=actual_commit,
-                    failure_stage=None if build_result.ok else failure_stage,
-                    error=build_result.error,
-                    llm_usage=build_result.llm_usage,
-                )
-            except Exception as exc:
-                error = str(exc)
-                if failure_stage == "prepare_failed" and _is_unavailable_project_error(error):
-                    result = ProjectRunResult(
-                        project=spec,
-                        repo_path=repo_path,
-                        ok=False,
-                        skipped=True,
-                        version_mismatch=version_mismatch,
-                        oracle_path=oracle_path,
-                        actual_commit=actual_commit,
-                        failure_stage="unavailable_project",
-                        error=error,
-                    )
-                else:
-                    result = ProjectRunResult(
-                        project=spec,
-                        repo_path=repo_path,
-                        ok=False,
-                        version_mismatch=version_mismatch,
-                        oracle_path=oracle_path,
-                        actual_commit=actual_commit,
-                        failure_stage=failure_stage,
-                        error=error,
-                    )
-            results.append(result)
-            if result.skipped:
-                self._append_no_repo_log(result, no_repo_log_path, known_no_repo_keys)
-            elif not result.ok:
-                self._append_failure_log(result, failures_log_path)
-            self._append_llm_usage_log(result, llm_usage_log_path)
-            status = "skipped" if result.skipped else "ok" if result.ok else "failed"
-            self._emit(f"project {spec.owner_repo}: {status}")
-            if self.stop_on_failure and not result.ok and not result.skipped:
-                break
+        results = self._build_specs(
+            specs,
+            known_no_repo_keys=known_no_repo_keys,
+            failures_log_path=failures_log_path,
+            no_repo_log_path=no_repo_log_path,
+            version_mismatch_log_path=version_mismatch_log_path,
+            llm_usage_log_path=llm_usage_log_path,
+        )
 
         return BatchBuildResult(
             ok=all(result.ok or result.skipped for result in results),
@@ -471,6 +366,216 @@ class ProjectBatchBuilder:
             ),
             llm_usage_log_path=llm_usage_log_path if llm_usage_log_path.exists() else None,
         )
+
+    def _build_specs(
+        self,
+        specs: list[ProjectSpec],
+        *,
+        known_no_repo_keys: set[ProjectLogKey],
+        failures_log_path: Path,
+        no_repo_log_path: Path,
+        version_mismatch_log_path: Path,
+        llm_usage_log_path: Path,
+    ) -> list[ProjectRunResult]:
+        if self.jobs == 1:
+            results: list[ProjectRunResult] = []
+            for spec in specs:
+                result = self._build_one_project(spec, known_no_repo_keys)
+                results.append(result)
+                self._record_project_result(
+                    result,
+                    known_no_repo_keys=known_no_repo_keys,
+                    failures_log_path=failures_log_path,
+                    no_repo_log_path=no_repo_log_path,
+                    version_mismatch_log_path=version_mismatch_log_path,
+                    llm_usage_log_path=llm_usage_log_path,
+                )
+                if self.stop_on_failure and not result.ok and not result.skipped:
+                    break
+            return results
+
+        completed: list[tuple[int, ProjectRunResult]] = []
+        next_index = 0
+        stop_scheduling = False
+        futures: dict[Future[ProjectRunResult], tuple[int, ProjectSpec]] = {}
+        with ThreadPoolExecutor(max_workers=self.jobs) as executor:
+            while futures or (next_index < len(specs) and not stop_scheduling):
+                while (
+                    not stop_scheduling
+                    and next_index < len(specs)
+                    and len(futures) < self.jobs
+                ):
+                    spec = specs[next_index]
+                    future = executor.submit(
+                        self._build_one_project,
+                        spec,
+                        frozenset(known_no_repo_keys),
+                    )
+                    futures[future] = (next_index, spec)
+                    next_index += 1
+
+                if not futures:
+                    break
+
+                done, _ = wait(futures, return_when=FIRST_COMPLETED)
+                for future in done:
+                    index, spec = futures.pop(future)
+                    try:
+                        result = future.result()
+                    except Exception as exc:
+                        result = ProjectRunResult(
+                            project=spec,
+                            repo_path=self.projects_dir / spec.checkout_dir_name,
+                            ok=False,
+                            failure_stage="build_failed",
+                            error=str(exc),
+                        )
+                    completed.append((index, result))
+                    self._record_project_result(
+                        result,
+                        known_no_repo_keys=known_no_repo_keys,
+                        failures_log_path=failures_log_path,
+                        no_repo_log_path=no_repo_log_path,
+                        version_mismatch_log_path=version_mismatch_log_path,
+                        llm_usage_log_path=llm_usage_log_path,
+                    )
+                    if self.stop_on_failure and not result.ok and not result.skipped:
+                        stop_scheduling = True
+                        if futures:
+                            self._emit(
+                                "stop-on-failure triggered; waiting for "
+                                f"{len(futures)} in-flight project(s)"
+                            )
+
+        return [result for _, result in sorted(completed, key=lambda item: item[0])]
+
+    def _build_one_project(
+        self,
+        spec: ProjectSpec,
+        known_no_repo_keys: set[ProjectLogKey] | frozenset[ProjectLogKey],
+    ) -> ProjectRunResult:
+        repo_path = self.projects_dir / spec.checkout_dir_name
+        oracle_path: Path | None = None
+        actual_commit: str | None = None
+        version_mismatch = False
+        failure_stage = "prepare_failed"
+        try:
+            existing_result = self._existing_successful_result(spec, repo_path)
+            if existing_result is not None:
+                self._emit(
+                    f"project {spec.owner_repo}: skip existing successful run "
+                    f"{existing_result.run_id}"
+                )
+                return existing_result
+            if _project_log_key(spec) in known_no_repo_keys:
+                self._emit(
+                    f"project {spec.owner_repo}: skip previously unavailable repository"
+                )
+                return ProjectRunResult(
+                    project=spec,
+                    repo_path=repo_path,
+                    ok=False,
+                    skipped=True,
+                    failure_stage="unavailable_project",
+                    error="previously marked unavailable in no-repo-projects.log",
+                )
+            if repo_path.exists():
+                self._emit(
+                    f"project {spec.owner_repo}: reset existing incomplete project at "
+                    f"{repo_path}"
+                )
+                if repo_path.is_dir() and not repo_path.is_symlink():
+                    shutil.rmtree(repo_path)
+                else:
+                    repo_path.unlink()
+
+            self._emit(f"project {spec.owner_repo}@{spec.commit}: prepare")
+            prepared_project = prepare_project(
+                spec,
+                projects_dir=self.projects_dir,
+                clone_timeout=self.clone_timeout,
+                stream_logs=self.base_request.stream_logs,
+                command_runner=self.command_runner,
+            )
+            repo_path = prepared_project.repo_path
+            actual_commit = prepared_project.actual_commit
+            version_mismatch = prepared_project.version_mismatch
+            if version_mismatch:
+                self._emit(
+                    f"project {spec.owner_repo}: requested {spec.commit} not found; "
+                    f"using {actual_commit or prepared_project.checkout_ref}"
+                )
+            if self.oracles_dir is not None:
+                oracle_path = isolate_project_oracles(
+                    spec,
+                    repo_path=repo_path,
+                    oracles_dir=self.oracles_dir,
+                )
+                if oracle_path is not None:
+                    self._emit(
+                        f"project {spec.owner_repo}: isolated oracle data at {oracle_path}"
+                    )
+            self._emit(f"project {spec.owner_repo}: build")
+            failure_stage = "build_failed"
+            build_result = self.builder_factory(self._request_for(spec, repo_path)).build()
+            return ProjectRunResult(
+                project=spec,
+                repo_path=repo_path,
+                ok=build_result.ok,
+                version_mismatch=version_mismatch,
+                run_id=build_result.run_id,
+                final_image=build_result.final_image,
+                manifest_path=build_result.manifest_path,
+                oracle_path=oracle_path,
+                actual_commit=actual_commit,
+                failure_stage=None if build_result.ok else failure_stage,
+                error=build_result.error,
+                llm_usage=build_result.llm_usage,
+            )
+        except Exception as exc:
+            error = str(exc)
+            if failure_stage == "prepare_failed" and _is_unavailable_project_error(error):
+                return ProjectRunResult(
+                    project=spec,
+                    repo_path=repo_path,
+                    ok=False,
+                    skipped=True,
+                    version_mismatch=version_mismatch,
+                    oracle_path=oracle_path,
+                    actual_commit=actual_commit,
+                    failure_stage="unavailable_project",
+                    error=error,
+                )
+            return ProjectRunResult(
+                project=spec,
+                repo_path=repo_path,
+                ok=False,
+                version_mismatch=version_mismatch,
+                oracle_path=oracle_path,
+                actual_commit=actual_commit,
+                failure_stage=failure_stage,
+                error=error,
+            )
+
+    def _record_project_result(
+        self,
+        result: ProjectRunResult,
+        *,
+        known_no_repo_keys: set[ProjectLogKey],
+        failures_log_path: Path,
+        no_repo_log_path: Path,
+        version_mismatch_log_path: Path,
+        llm_usage_log_path: Path,
+    ) -> None:
+        if result.version_mismatch:
+            self._upsert_version_mismatch_log(result, version_mismatch_log_path)
+        if result.skipped:
+            self._append_no_repo_log(result, no_repo_log_path, known_no_repo_keys)
+        elif not result.ok:
+            self._append_failure_log(result, failures_log_path)
+        self._append_llm_usage_log(result, llm_usage_log_path)
+        status = "skipped" if result.skipped else "ok" if result.ok else "failed"
+        self._emit(f"project {result.project.owner_repo}: {status}")
 
     def _request_for(self, spec: ProjectSpec, repo_path: Path) -> BuildRequest:
         run_id = self._run_id_for(spec)
@@ -640,19 +745,19 @@ class ProjectBatchBuilder:
 
     def _upsert_version_mismatch_log(
         self,
-        spec: ProjectSpec,
-        prepared_project: PreparedProject,
+        result: ProjectRunResult,
         version_mismatch_log_path: Path,
     ) -> None:
         version_mismatch_log_path.parent.mkdir(parents=True, exist_ok=True)
+        spec = result.project
         key = _project_log_key(spec)
         new_line = "\t".join(
             [
                 spec.owner_repo,
                 spec.commit,
-                prepared_project.actual_commit or "",
+                result.actual_commit or "",
                 spec.checkout_dir_name,
-                str(prepared_project.repo_path),
+                str(result.repo_path),
             ]
         )
         lines: list[str] = []

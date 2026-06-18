@@ -93,6 +93,44 @@ def test_build_projects_accepts_task_description(tmp_path: Path) -> None:
     assert request.task_description == "Setup repo for its SetupBench validation."
 
 
+def test_build_projects_accepts_jobs(tmp_path: Path) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text("owner/repo abc123\n", encoding="utf-8")
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "build-projects",
+            "--projects-file",
+            str(projects_file),
+            "--base-dockerfile",
+            str(tmp_path / "Dockerfile"),
+            "--jobs",
+            "3",
+        ]
+    )
+
+    assert args.jobs == 3
+
+
+def test_build_projects_rejects_zero_jobs(tmp_path: Path) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text("owner/repo abc123\n", encoding="utf-8")
+    parser = _build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "build-projects",
+                "--projects-file",
+                str(projects_file),
+                "--base-dockerfile",
+                str(tmp_path / "Dockerfile"),
+                "--jobs",
+                "0",
+            ]
+        )
+
+
 def test_build_without_resume_requires_base_dockerfile(tmp_path: Path) -> None:
     parser = _build_parser()
     args = parser.parse_args(["build", "--repo", str(tmp_path)])

@@ -38,6 +38,7 @@ def main(argv: list[str] | None = None) -> int:
             run_id_prefix=args.run_id_prefix,
             limit=args.limit,
             stop_on_failure=args.stop_on_failure,
+            jobs=args.jobs,
         ).build_all()
         _print_batch_result(result, as_json=args.json)
         return 0 if result.ok else 1
@@ -197,6 +198,12 @@ def _add_batch_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--docker-build-timeout", type=float, default=1800.0)
     parser.add_argument("--clone-timeout", type=float, default=900.0)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--jobs",
+        type=_positive_int,
+        default=1,
+        help="Number of projects to build concurrently. Default: 1.",
+    )
     parser.add_argument("--stop-on-failure", action="store_true")
     parser.add_argument(
         "--planner",
@@ -312,6 +319,13 @@ def _task_description_from_args(args: argparse.Namespace) -> str | None:
     if isinstance(task_description, str) and task_description.strip():
         parts.append(task_description.strip())
     return "\n\n".join(parts) or None
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be >= 1")
+    return parsed
 
 
 def _print_result(result, *, as_json: bool) -> None:
