@@ -21,7 +21,7 @@ Scope: server run at `/home/lix/EnvAgent/love/lix_pheragent`.
 | LLM block hardening | Fixed | Go install commands embedded in `system-deps` are recognized as Go dependency blocks; build/test prep blocks that start dev servers or run project generators are replaced with lightweight tool checks. |
 | Oracle command safety | Fixed | Oracle loading rewrites known unsafe process cleanup; web-server oracles now run in their own session and clean up child processes. |
 | Oracle command correctness | Fixed | `python -m wagtail start` is normalized to `wagtail start`; Prometheus metrics oracles now start Prometheus before curling; full-suite pytest/tox oracles are reduced to environment-level checks. |
-| Latest rerun failures | Fixed locally | After commit `a793a92`, `setupbench-runs-oracle-rerun` had 11 projects: 7 ok, 4 oracle failures. Local fixes cover Prometheus VCS stamping, Caddy binary lookup/build, and web-oracle cleanup self-termination. |
+| Latest rerun failures | Fixed locally | After commit `a793a92`, `setupbench-runs-oracle-rerun` had 11 projects: 7 ok, 4 oracle failures. Commit `e741faf` fixed Prometheus and Caddy. Hoodie and Melt UI still exited `143` because global web cleanup could kill its own pipeline; local web oracle now only cleans up the child process group it starts. Melt UI also needed a higher `nofile` limit and a longer first-start wait for Vite/Pagefind. |
 
 ## Observed Failures
 
@@ -50,7 +50,8 @@ Scope: server run at `/home/lix/EnvAgent/love/lix_pheragent`.
 - `wagtail/wagtail`: oracle uses `python -m wagtail start mysite`, but `wagtail` is a package without `__main__`; should use the `wagtail` CLI.
 - Latest rerun `prometheus/prometheus`: Prometheus oracle started the binary, but `go build` failed with VCS stamping (`Use -buildvcs=false`). The oracle now sets `GOFLAGS=-buildvcs=false`.
 - Latest rerun `caddyserver/caddy`: build/test prep produced a usable `./caddy`, but oracle ran `caddy list-modules` from PATH and failed with `caddy: not found`. The oracle now uses PATH `caddy`, `./caddy`, or builds `/tmp/pheragent-caddy`.
-- Latest rerun `hoodiehq/hoodie` and `melt-ui/melt-ui`: web oracle exited `143` immediately because cleanup matched the current `sh -lc` oracle process. Cleanup now records `$$` and excludes that PID.
+- Latest rerun `hoodiehq/hoodie` and `melt-ui/melt-ui`: web oracle exited `143` immediately because cleanup matched the current `sh -lc` oracle process. A second rerun on `e741faf` still exited `143`; the cleanup pipeline can spawn matching shell children even when `$$` is excluded. The web oracle now removes broad process scanning and only terminates the process group created by its own `setsid` start command. Manual server verification showed Hoodie succeeds with this change.
+- Latest rerun `melt-ui/melt-ui`: after avoiding cleanup self-termination, Vite failed with `EMFILE: too many open files` and then needed roughly 87 seconds for the first Pagefind/Vite startup. The web oracle now raises `ulimit -n`, uses the repository's original `pnpm run dev`, checks `localhost:5173`, and waits 180 seconds for Vite-style dev servers.
 
 ### Oracle Failures That May Be Project/Test-Suite Issues
 
@@ -86,7 +87,8 @@ Scope: server run at `/home/lix/EnvAgent/love/lix_pheragent`.
    - Use `wagtail start` instead of `python -m wagtail`.
    - Build Prometheus with `GOFLAGS=-buildvcs=false`.
    - Rewrite Caddy `list-modules` validation to use an available or temporary binary.
-   - Exclude the running oracle shell from web-process cleanup.
+   - Avoid broad web-process scanning and clean up only the child process group created by the oracle.
+   - Raise `nofile` before web-server oracle startup and allow a longer first-start window for Vite/Pagefind.
    - Status: fixed in `src/pheragent/oracle.py`.
 
 5. Re-run focused validation:

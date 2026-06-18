@@ -141,11 +141,44 @@ def test_load_oracle_commands_rewrites_web_server_oracle(tmp_path: Path) -> None
     command = load_oracle_commands(oracle_file)[0]
 
     assert "setsid sh -c \"npm run start\"" in command
-    assert "cleanup_web_processes" in command
-    assert 'oracle_pid="$$"' in command
-    assert "$1 != oracle_pid" in command
+    assert "cleanup_web_processes" not in command
+    assert "cleanup_web_child" in command
+    assert "ulimit -n 1048576" in command
+    assert "trap cleanup_web_child EXIT INT TERM" in command
     assert "127.0.0.1:8080" in command
+    assert 'while [ "$i" -lt 90 ]; do' in command
     assert "kill -TERM -- \"-$pgid\"" in command
+
+
+def test_load_oracle_commands_rewrites_vite_web_server_oracle(tmp_path: Path) -> None:
+    oracle_file = tmp_path / "oracle.json"
+    oracle_file.write_text(
+        json.dumps(
+            {
+                "fixed_test_commands": [
+                    {
+                        "command": (
+                            "verify_web() { pnpm run dev & pid=$!; sleep 90; "
+                            'code=$(curl -s -o /dev/null -w "%{http_code}" '
+                            "http://localhost:5173); [ $code -eq 200 ] && "
+                            "echo \"Setup successful\" || echo \"Setup failed\"; "
+                            "pgid=$(ps -o pgid= $pid | tr -d ' '); "
+                            "kill -TERM -$pgid 2>/dev/null; }; verify_web || "
+                            "echo \"Setup failed\""
+                        )
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    command = load_oracle_commands(oracle_file)[0]
+
+    assert "setsid sh -c \"pnpm run dev\"" in command
+    assert "pnpm run dev -- --host" not in command
+    assert "http://localhost:5173" in command
+    assert 'while [ "$i" -lt 180 ]; do' in command
 
 
 def test_load_oracle_commands_rewrites_prometheus_metrics_oracle(tmp_path: Path) -> None:

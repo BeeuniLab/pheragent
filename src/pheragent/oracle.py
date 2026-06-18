@@ -73,49 +73,50 @@ def _web_server_oracle_replacement(command: str) -> str | None:
         return _safe_web_server_oracle(
             start_command="npm run start",
             url="http://127.0.0.1:8080",
-            cleanup_pattern=r"[n]ode .*start\.js|[n]pm run start",
         )
     if "pnpm run dev" in command and "localhost:5173" in command:
         return _safe_web_server_oracle(
-            start_command="pnpm run dev -- --host 127.0.0.1",
-            url="http://127.0.0.1:5173",
-            cleanup_pattern=r"[v]ite dev|[p]npm run dev",
+            start_command="pnpm run dev",
+            url="http://localhost:5173",
+            wait_seconds=180,
         )
     return None
 
 
-def _safe_web_server_oracle(*, start_command: str, url: str, cleanup_pattern: str) -> str:
+def _safe_web_server_oracle(
+    *,
+    start_command: str,
+    url: str,
+    wait_seconds: int = 90,
+) -> str:
     return f"""
 set -eu
-oracle_pid="$$"
-cleanup_web_processes() {{
-  ps -eo pid=,args= | awk -v oracle_pid="$oracle_pid" '
-    /{cleanup_pattern}/ && $1 != oracle_pid {{ print $1 }}
-  ' | while read -r stale_pid; do
-    [ -n "$stale_pid" ] && kill "$stale_pid" 2>/dev/null || true
-  done
-}}
-cleanup_web_processes
+ulimit -n 1048576 2>/dev/null || ulimit -n 65535 2>/dev/null || true
 log_file="$(mktemp /tmp/pheragent-web-oracle.XXXXXX)"
 setsid sh -c {json.dumps(start_command)} >"$log_file" 2>&1 &
 pid=$!
+cleanup_web_child() {{
+  pgid="$(ps -o pgid= "$pid" 2>/dev/null | tr -d ' ' || true)"
+  if [ -n "$pgid" ]; then
+    kill -TERM -- "-$pgid" 2>/dev/null || true
+  fi
+  kill "$pid" 2>/dev/null || true
+}}
+trap cleanup_web_child EXIT INT TERM
 ready=0
 i=0
-while [ "$i" -lt 90 ]; do
+while [ "$i" -lt {wait_seconds} ]; do
   code="$(curl -s -o /dev/null -w "%{{http_code}}" {json.dumps(url)} || true)"
   if [ "$code" = "200" ]; then
     ready=1
     break
   fi
+  if ! kill -0 "$pid" 2>/dev/null; then
+    break
+  fi
   sleep 1
   i=$((i + 1))
 done
-pgid="$(ps -o pgid= "$pid" 2>/dev/null | tr -d ' ' || true)"
-if [ -n "$pgid" ]; then
-  kill -TERM -- "-$pgid" 2>/dev/null || true
-fi
-kill "$pid" 2>/dev/null || true
-cleanup_web_processes
 if [ "$ready" -eq 1 ]; then
   echo "Setup successful"
   rm -f "$log_file"
