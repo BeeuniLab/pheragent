@@ -9,17 +9,28 @@ Scope: server run at `/home/lix/EnvAgent/love/lix_pheragent`.
 | Area | Status | Notes |
 | --- | --- | --- |
 | Failure triage | Done | `setupbench-runs-oracle-rerun` has 25 projects: 8 ok, 17 failed. |
+| Rerun triage | Done | After rerun on commit `80f6fac`, 17 selected failures became 6 ok and 11 failed. The remaining failures were grouped into stale Docker containers, unsafe generated blocks, broken requirements include handling, and oracle commands that run full application/test validation. |
 | Runner result accounting | Fixed | `scripts/run_setupbench.py` now preserves result files unless `--fresh-results` is set, finds nested manifests, records manifest summary fields, and supports `--rerun-failures` with failed workspace reset. |
 | SetupBench task context | Fixed | Per-project task descriptions are passed into pheragent via `--task-description`; planner and repair LLM payloads receive them through `repo_context.task_description`. |
+| Interrupted reruns | Fixed | Failure records are now updated per completed project, so interrupting `--rerun-failures` does not erase unprocessed failures. |
+| Stale Docker containers | Fixed | Docker runtime removes a same-name pheragent container before `docker run`, avoiding conflicts after interrupted runs. |
+| SetupBench oracle scope | Fixed | Full-suite `pytest` and `tox` SetupBench oracle commands are normalized to environment-level collect/config checks; web-server oracles get bounded `setsid` startup and cleanup. |
 | Python venv handling | Fixed | Generated Python dependency scripts expose `.venv` as `python/python3/pip/pip3`; build-test validation now prefers `.venv/bin/python` and treats no collected pytest tests as a non-environment failure. Repair hints discourage system pip on PEP 668. |
+| Python requirements includes | Fixed | Sanitized requirements are installed from a temp mirror that preserves relative include paths such as `-r requirements/base.txt`. |
 | Go toolchain handling | Fixed | Go dependency blocks now install an official Go release when `go.mod` requires Go >= 1.24 and validate with `GOFLAGS=-buildvcs=false`. |
-| Oracle command safety | Fixed | Oracle loading rewrites known unsafe `kill -TERM -$pgid*` cleanup to direct child PID cleanup. |
-| Oracle command correctness | Partial | `python -m wagtail start` is normalized to `wagtail start`. Other project-specific oracle issues, such as missing Prometheus startup or full-suite failures, remain data/oracle quality issues. |
+| LLM block hardening | Fixed | Go install commands embedded in `system-deps` are recognized as Go dependency blocks; build/test prep blocks that start dev servers or run project generators are replaced with lightweight tool checks. |
+| Oracle command safety | Fixed | Oracle loading rewrites known unsafe process cleanup; web-server oracles now run in their own session and clean up child processes. |
+| Oracle command correctness | Fixed | `python -m wagtail start` is normalized to `wagtail start`; Prometheus metrics oracles now start Prometheus before curling; full-suite pytest/tox oracles are reduced to environment-level checks. |
 
 ## Observed Failures
 
 ### Environment Build Failures
 
+- `prometheus/prometheus`: interrupted run left a deterministic container name in Docker, causing a later `docker run --name ...` conflict.
+- `caddyserver/caddy`: LLM placed Go install into `01-system-deps`; the parser did not recognize `go version >/dev/null` validation as a Go dependency block, so Ubuntu Go 1.22 was installed for a repo requiring Go 1.24.
+- `laramies/theHarvester`: sanitized `requirements.txt` was installed from `/tmp`, breaking nested relative includes such as `-r requirements/base.txt`.
+- `wagtail/wagtail`: LLM build/test prep ran `python -m wagtail ...`, but Wagtail exposes a CLI entry point rather than a `__main__` module; the block also tried to create a generated project during setup.
+- `melt-ui/melt-ui`: LLM build/test prep started a Vite dev server; low file-descriptor/watch limits caused `EMFILE`, which should not be part of environment setup validation.
 - `bolsote/isoduration`: `03-build-test-prep` uses `/usr/bin/python3`; `.venv` has pytest, but system Python does not. Repair then uses system pip and hits PEP 668.
 - `fsspec/filesystem_spec`: same `.venv` vs system Python problem.
 - `pypa/packaging`: package installed into `.venv`; validation/repair import with system Python and report `ModuleNotFoundError: No module named 'packaging'`.
@@ -29,6 +40,10 @@ Scope: server run at `/home/lix/EnvAgent/love/lix_pheragent`.
 
 ### Oracle Failures Likely Caused By Oracle Commands
 
+- `fsspec/filesystem_spec`, `dstl/Stone-Soup`, `psf/black`, `pallets/flask`: oracle ran the full pytest suite; failures were application/test dependency compatibility, not missing environment setup. These are now normalized to `pytest --collect-only`.
+- `nedbat/coveragepy`: oracle ran a full tox env (`python -m tox -e py310`) on a Python 3.12 base. This is now normalized to `tox --showconfig` for environment/config readiness.
+- `hoodiehq/hoodie`, `melt-ui/melt-ui`: web oracle process cleanup could leave child Node/Vite processes alive and later cause port conflicts. Web oracles now use `setsid`, bounded polling, and cleanup.
+- `prometheus/prometheus`: oracle curled metrics without starting Prometheus. The oracle command now builds/starts Prometheus before curling `/metrics`.
 - `DanWahlin/Angular-JumpStart`, `hoodiehq/hoodie`, `lhartikk/naivechain`, `microsoft/vscode-remote-try-python`: oracle exits 143 with little output. The oracle commands use `kill -TERM -$pgid`, which can kill the running oracle shell/process group.
 - `prometheus/prometheus`: oracle curls `localhost:9090/metrics` without starting Prometheus.
 - `wagtail/wagtail`: oracle uses `python -m wagtail start mysite`, but `wagtail` is a package without `__main__`; should use the `wagtail` CLI.
@@ -75,7 +90,7 @@ Scope: server run at `/home/lix/EnvAgent/love/lix_pheragent`.
 
 ## Verification
 
-- `uv run pytest -q`: 100 passed.
+- `uv run pytest -q`: 109 passed.
 - `uv run ruff check .`: all checks passed.
 
 ## Rerun Failed Projects Only

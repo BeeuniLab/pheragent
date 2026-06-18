@@ -16,6 +16,8 @@ def test_start_seeds_repo_with_docker_cp_and_no_bind_mount(
     def fake_run_command(command: list[str], *, timeout: float, cwd=None) -> CommandResult:
         del timeout, cwd
         commands.append(command)
+        if command[:2] == ["docker", "inspect"]:
+            return CommandResult(exit_code=1, stderr="not found")
         if command[:2] == ["docker", "run"]:
             return CommandResult(exit_code=0, stdout="container-id")
         if command[:2] == ["docker", "exec"]:
@@ -34,13 +36,41 @@ def test_start_seeds_repo_with_docker_cp_and_no_bind_mount(
 
     runtime.start(seed_repo=True)
 
-    run_command = commands[0]
+    run_command = commands[1]
     assert "-v" not in run_command
     assert "--entrypoint" in run_command
-    assert commands[1][:2] == ["docker", "exec"]
-    assert commands[2] == [
+    assert commands[2][:2] == ["docker", "exec"]
+    assert commands[3] == [
         "docker",
         "cp",
         f"{tmp_path.resolve()}/.",
         f"{runtime.current_container}:/workspace/repo",
     ]
+
+
+def test_start_removes_stale_named_container_before_run(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run_command(command: list[str], *, timeout: float, cwd=None) -> CommandResult:
+        del timeout, cwd
+        commands.append(command)
+        if command[:2] == ["docker", "inspect"]:
+            return CommandResult(exit_code=0, stdout="stale")
+        if command[:3] == ["docker", "rm", "-f"]:
+            return CommandResult(exit_code=0)
+        if command[:2] == ["docker", "run"]:
+            return CommandResult(exit_code=0, stdout="container-id")
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr("pheragent.docker_runtime.run_command", fake_run_command)
+    request = BuildRequest(repo_path=tmp_path, base_dockerfile=tmp_path / "Dockerfile")
+    runtime = DockerRuntime(request, "test")
+
+    runtime.start()
+
+    assert commands[0][:2] == ["docker", "inspect"]
+    assert commands[1][:3] == ["docker", "rm", "-f"]
+    assert commands[2][:2] == ["docker", "run"]

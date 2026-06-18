@@ -136,6 +136,7 @@ class OpenAIResponsesBlockPlanner:
             script = str(item.get("script", "")).strip()
             if not script:
                 raise ValueError(f"block {block_id} has empty script")
+            script = _sanitize_script_command(script)
             is_preflight = "preflight" in block_id or "preflight" in title.lower()
             if is_preflight:
                 script = _preflight_script()
@@ -155,8 +156,16 @@ class OpenAIResponsesBlockPlanner:
                 script = _safe_go_dependency_script()
                 validation_command = _safe_go_dependency_validation_command()
             elif _is_build_test_prep_block(block_id, title):
-                validation_command = _safe_build_test_validation_command(validation_command)
-                if script_rejection or _uses_python_test_tooling(script, validation_command):
+                task_like = _uses_task_or_service_validation(script, validation_command)
+                validation_command = _safe_build_test_validation_command(
+                    validation_command,
+                    force_generic=task_like,
+                )
+                if (
+                    script_rejection
+                    or task_like
+                    or _uses_python_test_tooling(script, validation_command)
+                ):
                     script = _safe_build_test_prep_script()
             elif script_rejection:
                 raise ValueError(f"block {block_id} modifies repository code: {script_rejection}")
@@ -570,10 +579,20 @@ def _optional_str(value: object) -> str | None:
 
 
 def _sanitize_validation_command(command: str | None) -> str | None:
-    if command is None or "__version__" not in command:
+    if command is None:
+        return command
+    command = _sanitize_script_command(command)
+    if "__version__" not in command:
         return command
     patched = re.sub(r"print\(([A-Za-z_][A-Za-z0-9_]*)\.__version__\)", r"print(\1)", command)
     return re.sub(r"([A-Za-z_][A-Za-z0-9_]*)\.__version__", r"\1", patched)
+
+
+def _sanitize_script_command(command: str) -> str:
+    return command.replace("python -m wagtail start ", "wagtail start ").replace(
+        "python -m wagtail --help",
+        "wagtail --help",
+    )
 
 
 def _is_python_dependency_block(
@@ -605,7 +624,10 @@ def _is_go_dependency_block(
     haystack = f"{block_id} {title}".lower()
     has_go_label = re.search(r"(?:^|[^a-z0-9])(?:go|golang)(?:[^a-z0-9]|$)", haystack)
     command_haystack = f"{script}\n{validation_command or ''}".lower()
-    has_go_command = re.search(r"(?:^|[;&|]\s*)go\s+(?:mod|list|test|version)\b", command_haystack)
+    has_go_command = re.search(
+        r"(?:^|[^a-z0-9_-])go\s+(?:mod|list|test|version)\b",
+        command_haystack,
+    )
     if not has_go_label and not has_go_command:
         return False
     if "dep" in haystack or "language" in haystack or "module" in haystack:
@@ -613,7 +635,13 @@ def _is_go_dependency_block(
     return bool(has_go_command)
 
 
-def _safe_build_test_validation_command(command: str | None) -> str | None:
+def _safe_build_test_validation_command(
+    command: str | None,
+    *,
+    force_generic: bool = False,
+) -> str | None:
+    if force_generic:
+        return _generic_build_test_validation_command()
     if command is None:
         return command
     normalized = " ".join(command.split()).lower()
@@ -635,9 +663,48 @@ def _safe_build_test_validation_command(command: str | None) -> str | None:
     )
 
 
+def _generic_build_test_validation_command() -> str:
+    return """
+cd /workspace/repo
+if [ -f package.json ]; then
+  node --version >/dev/null 2>&1
+  if command -v pnpm >/dev/null 2>&1; then pnpm --version >/dev/null 2>&1; fi
+  if command -v npm >/dev/null 2>&1; then npm --version >/dev/null 2>&1; fi
+  if command -v yarn >/dev/null 2>&1; then yarn --version >/dev/null 2>&1; fi
+fi
+if [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ] || [ -f requirements.txt ]; then
+  if [ -x .venv/bin/python ]; then PYTHON_BIN=./.venv/bin/python;
+  elif command -v python >/dev/null 2>&1; then PYTHON_BIN=python;
+  else PYTHON_BIN=python3; fi
+  "$PYTHON_BIN" -m pip --version >/dev/null 2>&1 || true
+fi
+""".strip()
+
+
 def _uses_python_test_tooling(script: str, validation_command: str | None) -> bool:
     haystack = f"{script}\n{validation_command or ''}".lower()
     return "pytest" in haystack or "python -m pip" in haystack or "pip install" in haystack
+
+
+def _uses_task_or_service_validation(script: str, validation_command: str | None) -> bool:
+    haystack = f"{script}\n{validation_command or ''}".lower()
+    return any(
+        token in haystack
+        for token in (
+            "npm run start",
+            "pnpm run dev",
+            "yarn dev",
+            "vite dev",
+            "run dev",
+            "localhost:",
+            "127.0.0.1:",
+            "curl -s",
+            "sleep 90",
+            "sleep 20",
+            "wagtail start",
+            "django-admin startproject",
+        )
+    )
 
 
 def _uses_python_dependency_tooling(script: str, validation_command: str | None) -> bool:
@@ -683,32 +750,35 @@ def _safe_build_test_prep_script() -> str:
 cd /workspace/repo
 
 echo "[pheragent] build/test prep"
-if [ ! -f pyproject.toml ] && [ ! -f setup.py ] && [ ! -f setup.cfg ] \
-  && [ ! -f requirements.txt ] && [ ! -d tests ]; then
-  echo "[pheragent] no python test prep needed"
-  exit 0
+if [ -f package.json ]; then
+  node --version >/dev/null 2>&1
+  if command -v pnpm >/dev/null 2>&1; then pnpm --version >/dev/null 2>&1; fi
+  if command -v npm >/dev/null 2>&1; then npm --version >/dev/null 2>&1; fi
+  if command -v yarn >/dev/null 2>&1; then yarn --version >/dev/null 2>&1; fi
 fi
 
-if [ -x .venv/bin/python ]; then
-  PYTHON_BIN=./.venv/bin/python
-elif command -v python >/dev/null 2>&1; then
-  PYTHON_BIN=python
-elif command -v python3 >/dev/null 2>&1; then
-  PYTHON_BIN=python3
-else
-  echo "python executable not found" >&2
-  exit 127
-fi
+if [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ] || [ -f requirements.txt ]; then
+  if [ -x .venv/bin/python ]; then
+    PYTHON_BIN=./.venv/bin/python
+  elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN=python
+  elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN=python3
+  else
+    echo "python executable not found" >&2
+    exit 127
+  fi
 
-"$PYTHON_BIN" -m pip --version >/dev/null 2>&1 \
-  || "$PYTHON_BIN" -m ensurepip --upgrade \
-  || true
-"$PYTHON_BIN" -m pytest --version >/dev/null 2>&1 || "$PYTHON_BIN" -m pip install pytest
-if [ -d tests ] && grep -R "@pytest.mark.asyncio\\|pytest_asyncio" tests pyproject.toml \
-  >/dev/null 2>&1; then
-  "$PYTHON_BIN" -m pip install pytest-asyncio
+  "$PYTHON_BIN" -m pip --version >/dev/null 2>&1 \
+    || "$PYTHON_BIN" -m ensurepip --upgrade \
+    || true
+  "$PYTHON_BIN" -m pytest --version >/dev/null 2>&1 || "$PYTHON_BIN" -m pip install pytest
+  if [ -d tests ] && grep -R "@pytest.mark.asyncio\\|pytest_asyncio" tests pyproject.toml \
+    >/dev/null 2>&1; then
+    "$PYTHON_BIN" -m pip install pytest-asyncio
+  fi
+  "$PYTHON_BIN" -m pytest --version
 fi
-"$PYTHON_BIN" -m pytest --version
 """.strip()
 
 
@@ -773,12 +843,18 @@ install_requirements() {
   req_file="$1"
   target_file="$req_file"
   if [ -f "$req_file" ]; then
-    target_file=/tmp/pheragent-requirements.sanitized.txt
+    sanitized_root=/tmp/pheragent-requirements-sanitized
+    rm -rf "$sanitized_root"
+    mkdir -p "$sanitized_root/$(dirname "$req_file")"
+    target_file="$sanitized_root/$req_file"
     PHERAGENT_SKIP_CUDA_DEPS=0
     if [ -z "${CUDA_HOME:-}" ] && ! command -v nvcc >/dev/null 2>&1; then
       PHERAGENT_SKIP_CUDA_DEPS=1
     fi
     export PHERAGENT_SKIP_CUDA_DEPS
+    if [ -d requirements ]; then
+      cp -R requirements "$sanitized_root/requirements"
+    fi
     ./.venv/bin/python - "$req_file" "$target_file" <<'PY'
 import os
 import re

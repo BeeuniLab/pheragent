@@ -38,6 +38,7 @@ class DockerRuntime:
         image = image_ref or self.base_image
         self._container_counter += 1
         name = f"{slugify(self.request.image_prefix)}-{self.run_id}-c{self._container_counter}"
+        self._remove_container_by_name(name)
         command = [
             "docker",
             "run",
@@ -154,6 +155,11 @@ class DockerRuntime:
             return
         self._run_command(["docker", "rm", "-f", self.current_container], timeout=60)
         self.current_container = None
+
+    def _remove_container_by_name(self, name: str) -> None:
+        inspect = run_command(["docker", "inspect", name], timeout=30)
+        if inspect.ok:
+            run_command(["docker", "rm", "-f", name], timeout=60)
 
     def cleanup(self) -> None:
         if not self.request.keep_container:

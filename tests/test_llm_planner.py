@@ -379,6 +379,9 @@ def test_openai_responses_planner_uses_safe_python_dependency_script() -> None:
         0
     ].script
     assert "install_requirements requirements.txt" in blocks[0].script
+    assert "pheragent-requirements-sanitized" in blocks[0].script
+    assert 'target_file="$sanitized_root/$req_file"' in blocks[0].script
+    assert 'cp -R requirements "$sanitized_root/requirements"' in blocks[0].script
     assert 'target.write_text("\\n".join(lines) + "\\n", encoding="utf-8")' in blocks[
         0
     ].script
@@ -521,6 +524,36 @@ def test_openai_responses_planner_uses_safe_go_dependency_script() -> None:
     assert "go list -mod=mod ./..." in blocks[0].validation_command
 
 
+def test_openai_responses_planner_treats_go_system_deps_as_safe_go_block() -> None:
+    planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
+
+    blocks = planner._parse_blocks(
+        json.dumps(
+            {
+                "blocks": [
+                    {
+                        "id": "01-system-deps",
+                        "order": 1,
+                        "title": "System Dependencies",
+                        "goal": "install go",
+                        "script": (
+                            "apt-get update && apt-get install -y golang-go git"
+                        ),
+                        "validation_command": (
+                            "go version >/dev/null 2>&1 && git --version >/dev/null 2>&1"
+                        ),
+                    }
+                ]
+            }
+        )
+    )
+
+    assert "go dependencies" in blocks[0].script
+    assert "install_go_release" in blocks[0].script
+    assert blocks[0].validation_command is not None
+    assert "go list -mod=mod ./..." in blocks[0].validation_command
+
+
 def test_openai_responses_planner_does_not_treat_django_as_go_block() -> None:
     planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
 
@@ -567,6 +600,66 @@ def test_openai_responses_planner_replaces_repo_code_modifying_build_test_script
     assert "build/test prep" in blocks[0].script
     assert "conftest.py" not in blocks[0].script
     assert "--collect-only" in (blocks[0].validation_command or "")
+
+
+def test_openai_responses_planner_replaces_task_validation_build_test_script() -> None:
+    planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
+
+    blocks = planner._parse_blocks(
+        json.dumps(
+            {
+                "blocks": [
+                    {
+                        "id": "03-build-test-prep",
+                        "order": 3,
+                        "title": "Build/Test Prep",
+                        "goal": "check dev server",
+                        "script": (
+                            "cd /workspace/repo\n"
+                            "pnpm run build\n"
+                            "pnpm run dev >/tmp/dev.log 2>&1 &\n"
+                            "sleep 90\n"
+                            "curl -fsS http://127.0.0.1:5173 >/dev/null"
+                        ),
+                        "validation_command": (
+                            "curl -fsS http://127.0.0.1:5173 >/dev/null"
+                        ),
+                    }
+                ]
+            }
+        )
+    )
+
+    assert "pnpm run dev" not in blocks[0].script
+    assert "node --version" in blocks[0].script
+    assert blocks[0].validation_command is not None
+    assert "localhost" not in blocks[0].validation_command
+
+
+def test_openai_responses_planner_sanitizes_wagtail_module_cli() -> None:
+    planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
+
+    blocks = planner._parse_blocks(
+        json.dumps(
+            {
+                "blocks": [
+                    {
+                        "id": "03-build-test-prep",
+                        "order": 3,
+                        "title": "Build/Test Prep",
+                        "goal": "check wagtail",
+                        "script": "python -m wagtail --help && python -m wagtail start mysite",
+                        "validation_command": "python -m wagtail --help",
+                    }
+                ]
+            }
+        )
+    )
+
+    assert "python -m wagtail" not in blocks[0].script
+    assert "wagtail start" not in blocks[0].script
+    assert blocks[0].validation_command is not None
+    assert "python -m wagtail" not in blocks[0].validation_command
 
 
 def test_openai_responses_planner_rejects_repo_code_modifying_setup_blocks() -> None:

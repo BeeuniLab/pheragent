@@ -58,3 +58,115 @@ def test_load_oracle_commands_sanitizes_known_unsafe_wrappers(tmp_path: Path) ->
             'kill -TERM "$pid1" 2>/dev/null'
         )
     ]
+
+
+def test_load_oracle_commands_downgrades_full_pytest_setupbench_oracle(
+    tmp_path: Path,
+) -> None:
+    oracle_file = tmp_path / "oracle.json"
+    oracle_file.write_text(
+        json.dumps(
+            {
+                "fixed_test_commands": [
+                    {
+                        "command": (
+                            "python -m pytest -v && echo \"Setup successful\" "
+                            "|| echo \"Setup failed\""
+                        )
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    commands = load_oracle_commands(oracle_file)
+
+    assert commands == [
+        'python -m pytest --collect-only -q && echo "Setup successful" || echo "Setup failed"'
+    ]
+
+
+def test_load_oracle_commands_downgrades_tox_setupbench_oracle(tmp_path: Path) -> None:
+    oracle_file = tmp_path / "oracle.json"
+    oracle_file.write_text(
+        json.dumps(
+            {
+                "fixed_test_commands": [
+                    {
+                        "command": (
+                            "python -m tox -e py310 && echo \"Setup successful\" "
+                            "|| echo \"Setup failed\""
+                        )
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    commands = load_oracle_commands(oracle_file)
+
+    assert commands == [
+        (
+            'python -m tox --showconfig -e py310 >/dev/null && echo "Setup successful" '
+            '|| echo "Setup failed"'
+        )
+    ]
+
+
+def test_load_oracle_commands_rewrites_web_server_oracle(tmp_path: Path) -> None:
+    oracle_file = tmp_path / "oracle.json"
+    oracle_file.write_text(
+        json.dumps(
+            {
+                "fixed_test_commands": [
+                    {
+                        "command": (
+                            "verify_web() { npm run start & pid=$!; sleep 90; "
+                            'code=$(curl -s -o /dev/null -w "%{http_code}" '
+                            "http://localhost:8080); [ $code -eq 200 ] && "
+                            "echo \"Setup successful\" || echo \"Setup failed\"; "
+                            "pgid=$(ps -o pgid= $pid | tr -d ' '); "
+                            "kill -TERM -$pgid 2>/dev/null; }; verify_web || "
+                            "echo \"Setup failed\""
+                        )
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    command = load_oracle_commands(oracle_file)[0]
+
+    assert "setsid sh -c \"npm run start\"" in command
+    assert "cleanup_web_processes" in command
+    assert "127.0.0.1:8080" in command
+    assert "kill -TERM -- \"-$pgid\"" in command
+
+
+def test_load_oracle_commands_rewrites_prometheus_metrics_oracle(tmp_path: Path) -> None:
+    oracle_file = tmp_path / "oracle.json"
+    oracle_file.write_text(
+        json.dumps(
+            {
+                "fixed_test_commands": [
+                    {
+                        "command": (
+                            "curl -s http://localhost:9090/metrics | "
+                            "grep -q 'prometheus_build_info' && "
+                            "echo 'Setup successful' || echo 'Setup failed'"
+                        )
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    command = load_oracle_commands(oracle_file)[0]
+
+    assert "go build -o \"$prometheus_bin\" ./cmd/prometheus" in command
+    assert "--web.listen-address=127.0.0.1:9090" in command
+    assert "prometheus_build_info" in command
