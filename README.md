@@ -71,6 +71,25 @@ uv run pheragent build \
   --stream-logs
 ```
 
+Run a progress-control ablation:
+
+```bash
+uv run pheragent build \
+  --repo /path/to/repo \
+  --base-dockerfile /path/to/Dockerfile \
+  --planner llm \
+  --ablation full \
+  --stream-logs
+```
+
+Available ablation modes are `full`, `single-command-forward`,
+`single-command-recovery`, `without-local-repair`,
+`whole-script-forward`, `whole-script-recovery`,
+`without-checkpoint-rollback`, and `without-final-clean-replay`. The default is
+`without-final-clean-replay`, which preserves the original pheragent behavior.
+Use `full` for the paper-style setting that replays the final block scripts from
+a clean workspace checkpoint before reporting success.
+
 Clone and build multiple projects from an `owner/repo commit` file:
 
 ```bash
@@ -88,6 +107,12 @@ uv run pheragent build-projects \
 
 Use `--limit N` for a small smoke run, and `--stop-on-failure` when you want the
 batch to stop at the first clone/build failure.
+
+When comparing ablation modes, use distinct `--run-id-prefix` values, such as
+`repo2run-full` and `repo2run-no-rollback`, so manifests, Docker images, and
+success-skip decisions do not mix across variants. `build-projects` records the
+ablation mode in `llm-usage-projects.jsonl` and will only skip an existing
+successful run when its manifest was produced by the same ablation mode.
 
 Use `--stream-logs` when you want live Docker, git, block, validation, repair,
 and oracle command output in the terminal while still keeping complete logs

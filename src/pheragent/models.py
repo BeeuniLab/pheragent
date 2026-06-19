@@ -7,6 +7,68 @@ from typing import Any, Literal
 BlockStatus = Literal["planned", "running", "succeeded", "failed", "repaired", "skipped"]
 PlannerMode = Literal["auto", "rules", "llm"]
 LLMApiMode = Literal["responses", "chat-completions"]
+AblationMode = Literal[
+    "full",
+    "without-local-repair",
+    "without-checkpoint-rollback",
+    "without-final-clean-replay",
+    "single-command-forward",
+    "single-command-recovery",
+    "whole-script-forward",
+    "whole-script-recovery",
+]
+DEFAULT_ABLATION_MODE: AblationMode = "without-final-clean-replay"
+
+
+@dataclass(frozen=True, slots=True)
+class ProgressControl:
+    forward_granularity: Literal["block", "command", "whole-script"] = "block"
+    recovery_granularity: Literal["block", "command", "whole-script", "none"] = "block"
+    local_repair: bool = True
+    patch_back: bool = True
+    checkpoint_rollback: bool = True
+    final_clean_replay: bool = False
+
+
+def progress_control_for_ablation(mode: AblationMode) -> ProgressControl:
+    if mode == "full":
+        return ProgressControl(final_clean_replay=True)
+    if mode == "without-local-repair":
+        return ProgressControl(
+            recovery_granularity="none",
+            local_repair=False,
+            patch_back=False,
+            final_clean_replay=True,
+        )
+    if mode == "without-checkpoint-rollback":
+        return ProgressControl(checkpoint_rollback=False, final_clean_replay=True)
+    if mode == "without-final-clean-replay":
+        return ProgressControl(final_clean_replay=False)
+    if mode == "single-command-forward":
+        return ProgressControl(forward_granularity="command", final_clean_replay=True)
+    if mode == "single-command-recovery":
+        return ProgressControl(
+            recovery_granularity="command",
+            patch_back=False,
+            checkpoint_rollback=False,
+            final_clean_replay=True,
+        )
+    if mode == "whole-script-forward":
+        return ProgressControl(
+            forward_granularity="whole-script",
+            recovery_granularity="whole-script",
+            local_repair=False,
+            patch_back=False,
+            checkpoint_rollback=False,
+            final_clean_replay=True,
+        )
+    if mode == "whole-script-recovery":
+        return ProgressControl(
+            recovery_granularity="whole-script",
+            patch_back=False,
+            final_clean_replay=True,
+        )
+    raise ValueError(f"unsupported ablation mode: {mode}")
 
 
 def _normalize_optional_text(value: str | None) -> str | None:
@@ -46,6 +108,7 @@ class BuildRequest:
     oracle_timeout: float | None = None
     resume_from: str | None = None
     start_at_block: str | None = None
+    ablation_mode: AblationMode = DEFAULT_ABLATION_MODE
 
     def normalized(self) -> BuildRequest:
         repo_path = self.repo_path.expanduser().resolve()
@@ -85,6 +148,7 @@ class BuildRequest:
             oracle_timeout=self.oracle_timeout,
             resume_from=self.resume_from,
             start_at_block=self.start_at_block,
+            ablation_mode=self.ablation_mode,
         )
 
 
@@ -180,6 +244,7 @@ class RepairContext:
     previous_blocks: list[CommandBlock] = field(default_factory=list)
     recent_executions: list[BlockExecution] = field(default_factory=list)
     probe_results: list[RepairProbeResult] = field(default_factory=list)
+    strategy_notes: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -196,6 +261,12 @@ class BuildResult:
     final_image: str | None = None
     error: str | None = None
     llm_usage: dict[str, dict[str, int]] = field(default_factory=dict)
+    ablation_mode: AblationMode = DEFAULT_ABLATION_MODE
+    progress_control: ProgressControl | None = None
+    final_clean_replay_enabled: bool = False
+    final_clean_replay_ok: bool | None = None
+    final_clean_replay_image: str | None = None
+    final_clean_replay_failure_stage: str | None = None
 
 
 def to_jsonable(value: Any) -> Any:

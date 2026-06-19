@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import shlex
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -18,10 +20,11 @@ from .models import (
     RepairContext,
     RepairProbeResult,
     RepoContext,
+    progress_control_for_ablation,
 )
 from .oracle import load_oracle_commands
 from .planner import BlockPlanner
-from .repair import RepairPlanner, RepairProbeCommand, make_repair_planner
+from .repair import RepairCommand, RepairPlanner, RepairProbeCommand, make_repair_planner
 from .utils import new_run_id, tail_text
 
 RuntimeFactory = Callable[[BuildRequest, str], DockerRuntime]
@@ -94,6 +97,9 @@ class EnvironmentBuilder:
             api_mode=self.request.llm_api,
         )
         self.runtime_factory = runtime_factory
+        self.progress_control = progress_control_for_ablation(self.request.ablation_mode)
+        self._whole_script_recovery_completed = False
+        self._final_replay_whole_script = False
 
     def plan_only(self) -> BuildResult:
         self._emit(f"run {self.run_id}: analyze repo {self.request.repo_path}")
@@ -116,11 +122,11 @@ class EnvironmentBuilder:
         self._emit(f"run {self.run_id}: analyze repo {self.request.repo_path}")
         context = self._analyze_repo_context()
         self.store.save_context(context)
-        runtime = self.runtime_factory(self.request, self.run_id)
         checkpoints: list[Checkpoint] = []
         executions: list[BlockExecution] = []
         blocks: list[CommandBlock] = []
         current_image: str | None = None
+        workspace_image: str | None = None
         result = BuildResult(
             ok=False,
             run_id=self.run_id,
@@ -130,7 +136,22 @@ class EnvironmentBuilder:
             blocks=blocks,
             checkpoints=checkpoints,
             executions=executions,
+            ablation_mode=self.request.ablation_mode,
+            progress_control=self.progress_control,
+            final_clean_replay_enabled=self.progress_control.final_clean_replay,
         )
+        if self.request.resume_from and self.progress_control.final_clean_replay:
+            result.error = (
+                "--resume-from cannot be used with an ablation mode that requires "
+                "final clean replay; rerun from the base Dockerfile or use "
+                "--ablation without-final-clean-replay"
+            )
+            result.final_clean_replay_ok = False
+            result.final_clean_replay_failure_stage = "resume-from"
+            self._save_manifest(result)
+            return result
+
+        runtime = self.runtime_factory(self.request, self.run_id)
 
         try:
             start_index = 0
@@ -193,26 +214,73 @@ class EnvironmentBuilder:
                 )
                 checkpoints.append(workspace_checkpoint)
                 current_image = workspace_checkpoint.image_ref
+                workspace_image = workspace_checkpoint.image_ref
 
-            for block_index, block in enumerate(blocks[start_index:], start=start_index):
-                self._emit(f"run {self.run_id}: block {block.id} start")
-                block.baseline_checkpoint = current_image
-                self.store.update_block(block)
-                block_ok, current_image = self._run_block_with_repair(
+            if self.progress_control.forward_granularity == "whole-script":
+                whole_ok, current_image = self._run_whole_script_forward(
                     runtime=runtime,
-                    block=block,
+                    blocks=blocks,
                     baseline_image=current_image,
-                    repo_context=context,
-                    completed_blocks=blocks[:block_index],
                     checkpoints=checkpoints,
                     executions=executions,
                 )
-                if not block_ok:
-                    self._emit(f"run {self.run_id}: block {block.id} failed")
-                    result.error = f"block failed: {block.id}"
+                if not whole_ok:
+                    self._emit(f"run {self.run_id}: whole-script forward failed")
+                    result.error = "whole-script forward failed"
                     result.final_image = current_image
                     self._save_manifest(result)
                     return result
+            else:
+                for block_index, block in enumerate(blocks[start_index:], start=start_index):
+                    self._emit(f"run {self.run_id}: block {block.id} start")
+                    block.baseline_checkpoint = current_image
+                    self.store.update_block(block)
+                    block_ok, current_image = self._run_block_with_repair(
+                        runtime=runtime,
+                        block=block,
+                        baseline_image=current_image,
+                        repo_context=context,
+                        completed_blocks=blocks[:block_index],
+                        all_blocks=blocks,
+                        workspace_image=workspace_image,
+                        checkpoints=checkpoints,
+                        executions=executions,
+                    )
+                    if not block_ok:
+                        self._emit(f"run {self.run_id}: block {block.id} failed")
+                        result.error = f"block failed: {block.id}"
+                        result.final_image = current_image
+                        self._save_manifest(result)
+                        return result
+                    if self._whole_script_recovery_completed:
+                        break
+
+            if self.progress_control.final_clean_replay:
+                if workspace_image is None:
+                    result.error = "final clean replay requires an initial workspace checkpoint"
+                    result.final_image = current_image
+                    result.final_clean_replay_ok = False
+                    result.final_clean_replay_failure_stage = "missing-workspace-checkpoint"
+                    self._save_manifest(result)
+                    return result
+                self._emit(f"run {self.run_id}: final clean replay")
+                replay_ok, replay_image, replay_failure_stage = self._run_final_clean_replay(
+                    runtime=runtime,
+                    blocks=blocks,
+                    workspace_image=workspace_image,
+                    checkpoints=checkpoints,
+                    executions=executions,
+                )
+                result.final_clean_replay_ok = replay_ok
+                result.final_clean_replay_image = replay_image
+                result.final_clean_replay_failure_stage = replay_failure_stage
+                if not replay_ok:
+                    self._emit(f"run {self.run_id}: final clean replay failed")
+                    result.error = "final clean replay failed"
+                    result.final_image = replay_image or current_image
+                    self._save_manifest(result)
+                    return result
+                current_image = replay_image or current_image
 
             if self.request.oracle_file is not None:
                 self._emit(f"run {self.run_id}: oracle validation")
@@ -243,6 +311,9 @@ class EnvironmentBuilder:
             runtime.cleanup()
 
     def _save_manifest(self, result: BuildResult) -> None:
+        result.ablation_mode = self.request.ablation_mode
+        result.progress_control = self.progress_control
+        result.final_clean_replay_enabled = self.progress_control.final_clean_replay
         result.llm_usage = self._llm_usage_summary()
         result.llm_usage_path = self.store.llm_usage_path
         self.store.save_llm_usage(result)
@@ -348,6 +419,8 @@ class EnvironmentBuilder:
         completed_blocks: list[CommandBlock],
         checkpoints: list[Checkpoint],
         executions: list[BlockExecution],
+        all_blocks: list[CommandBlock] | None = None,
+        workspace_image: str | None = None,
     ) -> tuple[bool, str]:
         attempt = 1
         last_result = self._execute_block(runtime, block, attempt, baseline_image, executions)
@@ -370,7 +443,7 @@ class EnvironmentBuilder:
                 block.status = "failed"
                 block.last_error = tail_text(finalize_result.combined_output, max_chars=4000)
                 self.store.update_block(block)
-                runtime.recreate_from(baseline_image)
+                self._recreate_from_checkpoint(runtime, baseline_image)
                 return False, baseline_image
             checkpoint = runtime.commit(
                 block_id=block.id,
@@ -387,6 +460,43 @@ class EnvironmentBuilder:
         if last_result.ok and validation_result is not None:
             last_result = validation_result
             last_failure_phase = "validation"
+
+        if not self.progress_control.local_repair:
+            block.status = "failed"
+            block.last_error = tail_text(last_result.combined_output, max_chars=4000)
+            self.store.update_block(block)
+            self._recreate_from_checkpoint(runtime, baseline_image)
+            return False, baseline_image
+
+        if self.progress_control.recovery_granularity == "command":
+            return self._run_block_command_recovery(
+                runtime=runtime,
+                block=block,
+                baseline_image=baseline_image,
+                repo_context=repo_context,
+                completed_blocks=completed_blocks,
+                executions=executions,
+                checkpoints=checkpoints,
+                last_result=last_result,
+            )
+
+        if self.progress_control.recovery_granularity == "whole-script":
+            if workspace_image is None or all_blocks is None:
+                block.status = "failed"
+                block.last_error = "whole-script recovery requires a workspace checkpoint"
+                self.store.update_block(block)
+                return False, baseline_image
+            return self._run_whole_script_recovery(
+                runtime=runtime,
+                failed_block=block,
+                all_blocks=all_blocks,
+                workspace_image=workspace_image,
+                repo_context=repo_context,
+                completed_blocks=completed_blocks,
+                checkpoints=checkpoints,
+                executions=executions,
+                last_result=last_result,
+            )
 
         probe_failures = 0
         max_probe_failures = max(0, self.request.max_probe_failures)
@@ -478,8 +588,12 @@ class EnvironmentBuilder:
                 break
             repair = suggestions[min(repair_attempt - 1, len(suggestions) - 1)]
             self._emit(f"run {self.run_id}: block {block.id} repair attempt {repair_attempt}")
-            runtime.recreate_from(baseline_image)
-            if last_failure_phase == "validation" and block.repair_attempts > 0:
+            self._recreate_from_checkpoint(runtime, baseline_image)
+            if (
+                self.progress_control.checkpoint_rollback
+                and last_failure_phase == "validation"
+                and block.repair_attempts > 0
+            ):
                 prep_result = runtime.execute_script(
                     self.store.script_path(block.id),
                     timeout=self.request.command_timeout,
@@ -516,9 +630,10 @@ class EnvironmentBuilder:
                 last_failure_phase = "repair"
                 continue
 
-            block = self.repair_planner.patch_block(block, repair)
-            self.store.update_block(block)
-            runtime.recreate_from(baseline_image)
+            if self.progress_control.patch_back:
+                block = self.repair_planner.patch_block(block, repair)
+                self.store.update_block(block)
+            self._recreate_from_checkpoint(runtime, baseline_image)
             attempt += 1
             last_result = self._execute_block(runtime, block, attempt, baseline_image, executions)
             last_failure_phase = "block"
@@ -537,7 +652,7 @@ class EnvironmentBuilder:
                     block.status = "failed"
                     block.last_error = tail_text(finalize_result.combined_output, max_chars=4000)
                     self.store.update_block(block)
-                    runtime.recreate_from(baseline_image)
+                    self._recreate_from_checkpoint(runtime, baseline_image)
                     return False, baseline_image
                 checkpoint = runtime.commit(
                     block_id=block.id,
@@ -560,8 +675,652 @@ class EnvironmentBuilder:
         block.status = "failed"
         block.last_error = tail_text(last_result.combined_output, max_chars=4000)
         self.store.update_block(block)
-        runtime.recreate_from(baseline_image)
+        self._recreate_from_checkpoint(runtime, baseline_image)
         return False, baseline_image
+
+    def _run_whole_script_forward(
+        self,
+        *,
+        runtime: DockerRuntime,
+        blocks: list[CommandBlock],
+        baseline_image: str,
+        checkpoints: list[Checkpoint],
+        executions: list[BlockExecution],
+    ) -> tuple[bool, str]:
+        whole_script_path = self._write_whole_script(blocks)
+        for block in blocks:
+            block.baseline_checkpoint = baseline_image
+            block.status = "running"
+            self.store.update_block(block)
+
+        self._emit(f"run {self.run_id}: whole-script forward")
+        result = runtime.execute_script(whole_script_path, timeout=self.request.command_timeout)
+        execution = self._execution_from_result(
+            block_id="whole-script",
+            phase="whole_script",
+            attempt=1,
+            command_result=result,
+            checkpoint_before=baseline_image,
+        )
+        executions.append(execution)
+        self.store.append_execution(execution)
+        if not result.ok:
+            self._mark_whole_script_blocks_failed(blocks, result)
+            return False, baseline_image
+
+        for index, block in enumerate(blocks, start=1):
+            validation_result = self._validate_block(
+                runtime,
+                block,
+                index,
+                baseline_image,
+                executions,
+            )
+            if validation_result is not None and not validation_result.ok:
+                block.status = "failed"
+                block.last_error = tail_text(validation_result.combined_output, max_chars=4000)
+                self.store.update_block(block)
+                return False, baseline_image
+
+        finalize_block = CommandBlock(
+            id="whole-script",
+            title="Whole Script",
+            goal="finalize whole-script artifact",
+            script=whole_script_path.read_text(encoding="utf-8"),
+        )
+        finalize_result = self._finalize_checkpoint_tools(
+            runtime=runtime,
+            block=finalize_block,
+            attempt=1,
+            baseline_image=baseline_image,
+            executions=executions,
+        )
+        if not finalize_result.ok:
+            self._mark_whole_script_blocks_failed(blocks, finalize_result)
+            return False, baseline_image
+
+        checkpoint = runtime.commit(
+            block_id="whole-script",
+            parent_image_ref=baseline_image,
+            kind="success",
+        )
+        checkpoints.append(checkpoint)
+        for block in blocks:
+            block.success_checkpoint = checkpoint.image_ref
+            block.status = "succeeded"
+            self.store.update_block(block)
+        self._emit(f"run {self.run_id}: whole-script checkpoint {checkpoint.image_ref}")
+        return True, checkpoint.image_ref
+
+    def _mark_whole_script_blocks_failed(
+        self,
+        blocks: list[CommandBlock],
+        result: CommandResult,
+    ) -> None:
+        error = tail_text(result.combined_output, max_chars=4000)
+        for block in blocks:
+            block.status = "failed"
+            block.last_error = error
+            self.store.update_block(block)
+
+    def _run_whole_script_recovery(
+        self,
+        *,
+        runtime: DockerRuntime,
+        failed_block: CommandBlock,
+        all_blocks: list[CommandBlock],
+        workspace_image: str,
+        repo_context: RepoContext,
+        completed_blocks: list[CommandBlock],
+        checkpoints: list[Checkpoint],
+        executions: list[BlockExecution],
+        last_result: CommandResult,
+    ) -> tuple[bool, str]:
+        probe_failures = 0
+        max_probe_failures = max(0, self.request.max_probe_failures)
+        probe_disabled = max_probe_failures == 0
+        strategy_notes = [
+            "whole-script-recovery mode: do not repair only the failed block.",
+            "Return a durable shell patch for a regenerated whole setup artifact. "
+            "The orchestrator will replay the whole artifact from the workspace "
+            "checkpoint, discarding already validated block progress.",
+        ]
+        for repair_attempt in range(1, self.request.max_repair_attempts + 1):
+            repair_context = self._repair_context(
+                repo_context=repo_context,
+                baseline_image=workspace_image,
+                completed_blocks=completed_blocks,
+                executions=executions,
+                strategy_notes=strategy_notes,
+            )
+            probes: list[RepairProbeCommand] = []
+            if not probe_disabled and probe_failures < max_probe_failures:
+                probes = self.repair_planner.propose_probes(
+                    failed_block,
+                    last_result,
+                    context=repair_context,
+                )
+                self._record_llm_probe_status(
+                    block=failed_block,
+                    attempt=repair_attempt,
+                    baseline_image=workspace_image,
+                    executions=executions,
+                )
+                probe_error = getattr(self.repair_planner, "last_probe_error", None)
+                if probe_error:
+                    probe_failures += 1
+                    self._emit(
+                        f"run {self.run_id}: block {failed_block.id} LLM probe attempt "
+                        f"{repair_attempt} failed ({probe_failures}/{max_probe_failures}): "
+                        f"{tail_text(probe_error, max_chars=500)}"
+                    )
+                    if (
+                        probe_failures < max_probe_failures
+                        and repair_attempt < self.request.max_repair_attempts
+                    ):
+                        continue
+                    self._emit(
+                        f"run {self.run_id}: block {failed_block.id} continue repair "
+                        "without probes"
+                    )
+                    probes = []
+                elif (
+                    not probes
+                    and getattr(self.repair_planner, "last_probe_raw_response", None)
+                    is not None
+                ):
+                    probe_disabled = True
+                    self._emit(
+                        f"run {self.run_id}: block {failed_block.id} LLM requested no "
+                        "probes; skip future probes"
+                    )
+            probe_results = self._run_repair_probes(
+                runtime=runtime,
+                block=failed_block,
+                baseline_image=workspace_image,
+                attempt=repair_attempt,
+                probes=probes,
+                executions=executions,
+            )
+            if probe_results:
+                repair_context = self._repair_context(
+                    repo_context=repo_context,
+                    baseline_image=workspace_image,
+                    completed_blocks=completed_blocks,
+                    executions=executions,
+                    probe_results=probe_results,
+                    strategy_notes=strategy_notes,
+                )
+            suggestions = self.repair_planner.suggest(
+                failed_block,
+                last_result,
+                context=repair_context,
+            )
+            self._record_llm_repair_status(
+                block=failed_block,
+                attempt=repair_attempt,
+                baseline_image=workspace_image,
+                executions=executions,
+                ok=bool(suggestions),
+            )
+            if not suggestions:
+                error = getattr(self.repair_planner, "last_llm_error", None)
+                if error:
+                    self._emit(
+                        f"run {self.run_id}: block {failed_block.id} LLM repair attempt "
+                        f"{repair_attempt} failed: {tail_text(error, max_chars=500)}"
+                    )
+                if _should_continue_llm_repair_failure(error):
+                    continue
+                break
+
+            repair = suggestions[min(repair_attempt - 1, len(suggestions) - 1)]
+            self._emit(
+                f"run {self.run_id}: block {failed_block.id} whole-script recovery "
+                f"attempt {repair_attempt}"
+            )
+            whole_script_path = self._write_whole_script(
+                all_blocks,
+                repair=repair,
+            )
+            runtime.recreate_from(workspace_image)
+            script_result = runtime.execute_script(
+                whole_script_path,
+                timeout=self.request.command_timeout,
+            )
+            execution = self._execution_from_result(
+                block_id="whole-script",
+                phase="whole_script_recovery",
+                attempt=repair_attempt,
+                command_result=script_result,
+                checkpoint_before=workspace_image,
+                repair_command=repair.patch_script,
+            )
+            executions.append(execution)
+            self.store.append_execution(execution)
+            if not script_result.ok:
+                last_result = script_result
+                continue
+
+            validation_ok = True
+            for index, block in enumerate(all_blocks, start=1):
+                validation_result = self._validate_block(
+                    runtime,
+                    block,
+                    index,
+                    workspace_image,
+                    executions,
+                )
+                if validation_result is not None and not validation_result.ok:
+                    last_result = validation_result
+                    validation_ok = False
+                    break
+            if not validation_ok:
+                continue
+
+            finalize_result = runtime.execute_command(
+                _CHECKPOINT_TOOL_EXPORT_COMMAND,
+                timeout=min(self.request.command_timeout, 120.0),
+            )
+            finalize_execution = self._execution_from_result(
+                block_id="whole-script",
+                phase="whole_script_recovery_finalize",
+                attempt=repair_attempt,
+                command_result=finalize_result,
+                checkpoint_before=workspace_image,
+            )
+            executions.append(finalize_execution)
+            self.store.append_execution(finalize_execution)
+            if not finalize_result.ok:
+                last_result = finalize_result
+                continue
+
+            checkpoint = runtime.commit(
+                block_id="whole-script",
+                parent_image_ref=workspace_image,
+                kind="repaired",
+            )
+            checkpoints.append(checkpoint)
+            for block in all_blocks:
+                block.success_checkpoint = checkpoint.image_ref
+                block.status = "succeeded"
+                self.store.update_block(block)
+            self._whole_script_recovery_completed = True
+            self._final_replay_whole_script = True
+            self._emit(
+                f"run {self.run_id}: whole-script recovery checkpoint "
+                f"{checkpoint.image_ref}"
+            )
+            return True, checkpoint.image_ref
+
+        self._mark_whole_script_blocks_failed(all_blocks, last_result)
+        return False, workspace_image
+
+    def _run_block_command_recovery(
+        self,
+        *,
+        runtime: DockerRuntime,
+        block: CommandBlock,
+        baseline_image: str,
+        repo_context: RepoContext,
+        completed_blocks: list[CommandBlock],
+        checkpoints: list[Checkpoint],
+        executions: list[BlockExecution],
+        last_result: CommandResult,
+    ) -> tuple[bool, str]:
+        probe_failures = 0
+        max_probe_failures = max(0, self.request.max_probe_failures)
+        probe_disabled = max_probe_failures == 0
+        strategy_notes = [
+            "single-command-recovery mode: the failed block already ran in the "
+            "current live container.",
+            "Return a local recovery command for this live container state. "
+            "The orchestrator will not roll back to the block checkpoint, will "
+            "not patch the block script, and will not replay the block before "
+            "validation.",
+        ]
+        for repair_attempt in range(1, self.request.max_repair_attempts + 1):
+            repair_context = self._repair_context(
+                repo_context=repo_context,
+                baseline_image=baseline_image,
+                completed_blocks=completed_blocks,
+                executions=executions,
+                strategy_notes=strategy_notes,
+            )
+            probes: list[RepairProbeCommand] = []
+            if not probe_disabled and probe_failures < max_probe_failures:
+                probes = self.repair_planner.propose_probes(
+                    block,
+                    last_result,
+                    context=repair_context,
+                )
+                self._record_llm_probe_status(
+                    block=block,
+                    attempt=repair_attempt,
+                    baseline_image=baseline_image,
+                    executions=executions,
+                )
+                probe_error = getattr(self.repair_planner, "last_probe_error", None)
+                if probe_error:
+                    probe_failures += 1
+                    self._emit(
+                        f"run {self.run_id}: block {block.id} LLM probe attempt "
+                        f"{repair_attempt} failed ({probe_failures}/{max_probe_failures}): "
+                        f"{tail_text(probe_error, max_chars=500)}"
+                    )
+                    if (
+                        probe_failures < max_probe_failures
+                        and repair_attempt < self.request.max_repair_attempts
+                    ):
+                        continue
+                    self._emit(
+                        f"run {self.run_id}: block {block.id} continue repair without probes"
+                    )
+                    probes = []
+                elif (
+                    not probes
+                    and getattr(self.repair_planner, "last_probe_raw_response", None)
+                    is not None
+                ):
+                    probe_disabled = True
+                    self._emit(
+                        f"run {self.run_id}: block {block.id} LLM requested no probes; "
+                        "skip future probes"
+                    )
+            probe_results = self._run_repair_probes(
+                runtime=runtime,
+                block=block,
+                baseline_image=baseline_image,
+                attempt=repair_attempt,
+                probes=probes,
+                executions=executions,
+            )
+            if probe_results:
+                repair_context = self._repair_context(
+                    repo_context=repo_context,
+                    baseline_image=baseline_image,
+                    completed_blocks=completed_blocks,
+                    executions=executions,
+                    probe_results=probe_results,
+                    strategy_notes=strategy_notes,
+                )
+            suggestions = self.repair_planner.suggest(
+                block,
+                last_result,
+                context=repair_context,
+            )
+            self._record_llm_repair_status(
+                block=block,
+                attempt=repair_attempt,
+                baseline_image=baseline_image,
+                executions=executions,
+                ok=bool(suggestions),
+            )
+            if not suggestions:
+                error = getattr(self.repair_planner, "last_llm_error", None)
+                if error:
+                    self._emit(
+                        f"run {self.run_id}: block {block.id} LLM repair attempt "
+                        f"{repair_attempt} failed: {tail_text(error, max_chars=500)}"
+                    )
+                if _should_continue_llm_repair_failure(error):
+                    continue
+                break
+
+            repair = suggestions[min(repair_attempt - 1, len(suggestions) - 1)]
+            self._emit(
+                f"run {self.run_id}: block {block.id} command recovery attempt "
+                f"{repair_attempt}"
+            )
+            repair_result = runtime.execute_command(
+                repair.command,
+                timeout=self.request.command_timeout,
+            )
+            execution = self._execution_from_result(
+                block_id=block.id,
+                phase="command_recovery",
+                attempt=repair_attempt,
+                command_result=repair_result,
+                checkpoint_before=baseline_image,
+                repair_command=repair.command,
+            )
+            executions.append(execution)
+            self.store.append_execution(execution)
+            if not repair_result.ok:
+                last_result = repair_result
+                continue
+
+            block.repair_attempts += 1
+            block.status = "repaired"
+            self.store.update_block(block)
+            validation_result = self._validate_block(
+                runtime,
+                block,
+                repair_attempt,
+                baseline_image,
+                executions,
+            )
+            if validation_result is not None and not validation_result.ok:
+                last_result = validation_result
+                continue
+
+            finalize_result = self._finalize_checkpoint_tools(
+                runtime=runtime,
+                block=block,
+                attempt=repair_attempt,
+                baseline_image=baseline_image,
+                executions=executions,
+            )
+            if not finalize_result.ok:
+                block.status = "failed"
+                block.last_error = tail_text(finalize_result.combined_output, max_chars=4000)
+                self.store.update_block(block)
+                return False, baseline_image
+
+            checkpoint = runtime.commit(
+                block_id=block.id,
+                parent_image_ref=baseline_image,
+                kind="repaired",
+            )
+            checkpoints.append(checkpoint)
+            block.success_checkpoint = checkpoint.image_ref
+            block.status = "succeeded"
+            self.store.update_block(block)
+            self._emit(
+                f"run {self.run_id}: block {block.id} command-recovered checkpoint "
+                f"{checkpoint.image_ref}"
+            )
+            return True, checkpoint.image_ref
+
+        block.status = "failed"
+        block.last_error = tail_text(last_result.combined_output, max_chars=4000)
+        self.store.update_block(block)
+        return False, baseline_image
+
+    def _recreate_from_checkpoint(self, runtime: DockerRuntime, image_ref: str) -> None:
+        if self.progress_control.checkpoint_rollback:
+            runtime.recreate_from(image_ref)
+
+    def _run_final_clean_replay(
+        self,
+        *,
+        runtime: DockerRuntime,
+        blocks: list[CommandBlock],
+        workspace_image: str,
+        checkpoints: list[Checkpoint],
+        executions: list[BlockExecution],
+    ) -> tuple[bool, str | None, str | None]:
+        runtime.recreate_from(workspace_image)
+        if (
+            self.progress_control.forward_granularity == "whole-script"
+            or self._final_replay_whole_script
+        ):
+            return self._run_whole_script_clean_replay(
+                runtime=runtime,
+                blocks=blocks,
+                workspace_image=workspace_image,
+                checkpoints=checkpoints,
+                executions=executions,
+            )
+        for index, block in enumerate(blocks, start=1):
+            self._emit(f"run {self.run_id}: clean replay block {block.id}")
+            script_result = runtime.execute_script(
+                self.store.script_path(block.id),
+                timeout=self.request.command_timeout,
+            )
+            execution = self._execution_from_result(
+                block_id=block.id,
+                phase="clean_replay",
+                attempt=index,
+                command_result=script_result,
+                checkpoint_before=workspace_image,
+            )
+            executions.append(execution)
+            self.store.append_execution(execution)
+            if not script_result.ok:
+                return False, workspace_image, "clean_replay"
+
+            if block.validation_command:
+                validation_result = runtime.execute_command(
+                    block.validation_command,
+                    timeout=self.request.command_timeout,
+                )
+                validation_execution = self._execution_from_result(
+                    block_id=block.id,
+                    phase="clean_replay_validation",
+                    attempt=index,
+                    command_result=validation_result,
+                    checkpoint_before=workspace_image,
+                )
+                executions.append(validation_execution)
+                self.store.append_execution(validation_execution)
+                if not validation_result.ok:
+                    return False, workspace_image, "clean_replay_validation"
+
+            finalize_result = runtime.execute_command(
+                _CHECKPOINT_TOOL_EXPORT_COMMAND,
+                timeout=min(self.request.command_timeout, 120.0),
+            )
+            finalize_execution = self._execution_from_result(
+                block_id=block.id,
+                phase="clean_replay_finalize",
+                attempt=index,
+                command_result=finalize_result,
+                checkpoint_before=workspace_image,
+            )
+            executions.append(finalize_execution)
+            self.store.append_execution(finalize_execution)
+            if not finalize_result.ok:
+                return False, workspace_image, "clean_replay_finalize"
+
+        try:
+            checkpoint = runtime.commit(
+                block_id="final-clean-replay",
+                parent_image_ref=workspace_image,
+                kind="clean-replay",
+            )
+        except Exception:
+            return False, workspace_image, "clean_replay_commit"
+        checkpoints.append(checkpoint)
+        return True, checkpoint.image_ref, None
+
+    def _run_whole_script_clean_replay(
+        self,
+        *,
+        runtime: DockerRuntime,
+        blocks: list[CommandBlock],
+        workspace_image: str,
+        checkpoints: list[Checkpoint],
+        executions: list[BlockExecution],
+    ) -> tuple[bool, str | None, str | None]:
+        whole_script_path = self.store.scripts_dir / "whole-setup.sh"
+        if not whole_script_path.is_file() or not self._final_replay_whole_script:
+            whole_script_path = self._write_whole_script(blocks)
+        self._emit(f"run {self.run_id}: clean replay whole-script")
+        script_result = runtime.execute_script(
+            whole_script_path,
+            timeout=self.request.command_timeout,
+        )
+        execution = self._execution_from_result(
+            block_id="whole-script",
+            phase="clean_replay",
+            attempt=1,
+            command_result=script_result,
+            checkpoint_before=workspace_image,
+        )
+        executions.append(execution)
+        self.store.append_execution(execution)
+        if not script_result.ok:
+            return False, workspace_image, "clean_replay"
+
+        for index, block in enumerate(blocks, start=1):
+            if not block.validation_command:
+                continue
+            validation_result = runtime.execute_command(
+                block.validation_command,
+                timeout=self.request.command_timeout,
+            )
+            validation_execution = self._execution_from_result(
+                block_id=block.id,
+                phase="clean_replay_validation",
+                attempt=index,
+                command_result=validation_result,
+                checkpoint_before=workspace_image,
+            )
+            executions.append(validation_execution)
+            self.store.append_execution(validation_execution)
+            if not validation_result.ok:
+                return False, workspace_image, "clean_replay_validation"
+
+        finalize_result = runtime.execute_command(
+            _CHECKPOINT_TOOL_EXPORT_COMMAND,
+            timeout=min(self.request.command_timeout, 120.0),
+        )
+        finalize_execution = self._execution_from_result(
+            block_id="whole-script",
+            phase="clean_replay_finalize",
+            attempt=1,
+            command_result=finalize_result,
+            checkpoint_before=workspace_image,
+        )
+        executions.append(finalize_execution)
+        self.store.append_execution(finalize_execution)
+        if not finalize_result.ok:
+            return False, workspace_image, "clean_replay_finalize"
+
+        try:
+            checkpoint = runtime.commit(
+                block_id="final-clean-replay",
+                parent_image_ref=workspace_image,
+                kind="clean-replay",
+            )
+        except Exception:
+            return False, workspace_image, "clean_replay_commit"
+        checkpoints.append(checkpoint)
+        return True, checkpoint.image_ref, None
+
+    def _write_whole_script(
+        self,
+        blocks: list[CommandBlock],
+        *,
+        repair: RepairCommand | None = None,
+    ) -> Path:
+        script_path = self.store.scripts_dir / "whole-setup.sh"
+        lines = ["#!/bin/sh", "set -eu"]
+        if repair is not None and repair.patch_script:
+            lines.append("")
+            lines.append("echo " + shlex.quote(f"[pheragent] repair: {repair.title}"))
+            lines.extend(repair.patch_script.splitlines())
+        for block in blocks:
+            lines.append("")
+            lines.append(
+                "echo "
+                + shlex.quote(f"[pheragent] whole-script block {block.id}: {block.title}")
+            )
+            lines.extend(_shell_script_body_lines(block.script))
+        script_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        script_path.chmod(0o755)
+        return script_path
 
     def _repair_context(
         self,
@@ -571,6 +1330,7 @@ class EnvironmentBuilder:
         completed_blocks: list[CommandBlock],
         executions: list[BlockExecution],
         probe_results: list[RepairProbeResult] | None = None,
+        strategy_notes: list[str] | None = None,
     ) -> RepairContext:
         return RepairContext(
             repo_context=repo_context,
@@ -582,6 +1342,7 @@ class EnvironmentBuilder:
             ],
             recent_executions=executions[-8:],
             probe_results=probe_results or [],
+            strategy_notes=strategy_notes or [],
         )
 
     def _run_repair_probes(
@@ -600,7 +1361,7 @@ class EnvironmentBuilder:
             f"run {self.run_id}: block {block.id} probe attempt {attempt} "
             f"({len(probes)} commands)"
         )
-        runtime.recreate_from(baseline_image)
+        self._recreate_from_checkpoint(runtime, baseline_image)
         probe_results: list[RepairProbeResult] = []
         timeout = min(self.request.command_timeout, 60.0)
         for index, probe in enumerate(probes, start=1):
@@ -627,7 +1388,7 @@ class EnvironmentBuilder:
                     duration_s=command_result.duration_s,
                 )
             )
-        runtime.recreate_from(baseline_image)
+        self._recreate_from_checkpoint(runtime, baseline_image)
         return probe_results
 
     def _execute_block(
@@ -641,6 +1402,14 @@ class EnvironmentBuilder:
         block.status = "running"
         self.store.update_block(block)
         self._emit(f"run {self.run_id}: block {block.id} execute attempt {attempt}")
+        if self.progress_control.forward_granularity == "command":
+            return self._execute_block_commands(
+                runtime=runtime,
+                block=block,
+                attempt=attempt,
+                baseline_image=baseline_image,
+                executions=executions,
+            )
         result = runtime.execute_script(
             self.store.script_path(block.id),
             timeout=self.request.command_timeout,
@@ -655,6 +1424,53 @@ class EnvironmentBuilder:
         executions.append(execution)
         self.store.append_execution(execution)
         return result
+
+    def _execute_block_commands(
+        self,
+        *,
+        runtime: DockerRuntime,
+        block: CommandBlock,
+        attempt: int,
+        baseline_image: str,
+        executions: list[BlockExecution],
+    ) -> CommandResult:
+        script_path = self.store.script_path(block.id)
+        commands = _split_shell_script_commands(script_path.read_text(encoding="utf-8"))
+        if not commands:
+            return CommandResult(
+                exit_code=0,
+                stdout="[pheragent] command forward: no commands\n",
+                command=["pheragent-command-forward", block.id],
+            )
+        stdout_parts: list[str] = []
+        context_commands: list[str] = []
+        for index, command in enumerate(commands, start=1):
+            self._emit(
+                f"run {self.run_id}: block {block.id} command {index}/{len(commands)}"
+            )
+            command_to_run = "\n".join(["set -eu", *context_commands, command])
+            result = runtime.execute_command(command_to_run, timeout=self.request.command_timeout)
+            if not result.command:
+                result.command = ["sh", "-lc", command_to_run]
+            execution = self._execution_from_result(
+                block_id=block.id,
+                phase="command_forward",
+                attempt=(attempt * 1000) + index,
+                command_result=result,
+                checkpoint_before=baseline_image,
+            )
+            executions.append(execution)
+            self.store.append_execution(execution)
+            stdout_parts.append(f"[{index}/{len(commands)}] {command_to_run}\n{result.stdout}")
+            if not result.ok:
+                return result
+            if _is_shell_context_command(command):
+                context_commands.append(command)
+        return CommandResult(
+            exit_code=0,
+            stdout="\n".join(stdout_parts),
+            command=["pheragent-command-forward", block.id],
+        )
 
     def _finalize_checkpoint_tools(
         self,
@@ -838,6 +1654,139 @@ class EnvironmentBuilder:
     def _emit(self, message: str) -> None:
         if self.request.stream_logs:
             print(f"[pheragent] {message}", file=sys.stderr, flush=True)
+
+
+def _split_shell_script_commands(script: str) -> list[str]:
+    lines = _shell_script_body_lines(script)
+    commands: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            index += 1
+            continue
+
+        chunk, index = _take_shell_command_chunk(lines, index)
+        command = "\n".join(chunk).strip()
+        if command:
+            commands.append(command)
+
+    return commands
+
+
+def _shell_script_body_lines(script: str) -> list[str]:
+    body: list[str] = []
+    for raw_line in script.splitlines():
+        stripped = raw_line.strip()
+        if stripped.startswith("#!"):
+            continue
+        if stripped in {"set -e", "set -eu", "set -eux", "set -ex"}:
+            continue
+        if stripped == "set -o pipefail":
+            continue
+        body.append(raw_line)
+    return body
+
+
+def _take_shell_command_chunk(lines: list[str], start_index: int) -> tuple[list[str], int]:
+    chunk: list[str] = []
+    depth = 0
+    index = start_index
+    while index < len(lines):
+        line = lines[index]
+        chunk.append(line)
+        depth += _shell_compound_depth_delta(line)
+        delimiter = _heredoc_delimiter(line)
+        if delimiter is not None:
+            index += 1
+            while index < len(lines):
+                heredoc_line = lines[index]
+                chunk.append(heredoc_line)
+                index += 1
+                if heredoc_line.strip() == delimiter:
+                    break
+            if depth <= 0 and not _shell_line_continues(line):
+                break
+            continue
+
+        index += 1
+        if depth <= 0 and not _shell_line_continues(line):
+            break
+    return chunk, index
+
+
+def _heredoc_delimiter(line: str) -> str | None:
+    match = re.search(r"<<-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?", line)
+    if not match:
+        return None
+    return match.group(1)
+
+
+def _shell_line_continues(line: str) -> bool:
+    stripped = line.rstrip()
+    return stripped.endswith(("\\", "&&", "||", "|"))
+
+
+def _shell_compound_depth_delta(line: str) -> int:
+    clean = line.strip()
+    if not clean or clean.startswith("#"):
+        return 0
+    delta = 0
+    for match in re.finditer(r"\b(if|for|while|until|case|fi|done|esac)\b|[{}]", clean):
+        word = match.group(1) or match.group(0)
+        if word in {"if", "for", "while", "until", "case", "{"}:
+            delta += 1
+        elif word in {"fi", "done", "esac", "}"}:
+            delta -= 1
+    return delta
+
+
+def _is_shell_context_command(command: str) -> bool:
+    stripped = command.strip()
+    if "\n" in stripped:
+        return False
+    return (
+        _is_shell_assignment(stripped)
+        or _is_shell_cd(stripped)
+        or _is_shell_source(stripped)
+    )
+
+
+def _is_shell_assignment(command: str) -> bool:
+    try:
+        tokens = shlex.split(command, comments=False, posix=True)
+    except ValueError:
+        return False
+    if not tokens:
+        return False
+    if tokens[0] == "export":
+        return len(tokens) > 1 and all(_is_assignment_token(token) for token in tokens[1:])
+    return all(_is_assignment_token(token) for token in tokens)
+
+
+def _is_assignment_token(token: str) -> bool:
+    return re.match(r"^[A-Za-z_][A-Za-z0-9_]*=.*$", token) is not None
+
+
+def _is_shell_cd(command: str) -> bool:
+    try:
+        tokens = shlex.split(command, comments=False, posix=True)
+    except ValueError:
+        return False
+    return bool(tokens) and tokens[0] == "cd" and all(
+        operator not in command for operator in ("&&", "||", "|", ";")
+    )
+
+
+def _is_shell_source(command: str) -> bool:
+    try:
+        tokens = shlex.split(command, comments=False, posix=True)
+    except ValueError:
+        return False
+    return bool(tokens) and tokens[0] in {".", "source"} and all(
+        operator not in command for operator in ("&&", "||", "|", ";")
+    )
 
 
 def _llm_repair_debug_output(raw_response: object, diagnostics: object) -> str:

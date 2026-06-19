@@ -12,7 +12,7 @@ from pheragent.models import (
     RepairContext,
     RepoContext,
 )
-from pheragent.orchestrator import EnvironmentBuilder
+from pheragent.orchestrator import EnvironmentBuilder, _split_shell_script_commands
 from pheragent.repair import RepairCommand, RepairPlanner, RepairProbeCommand
 
 
@@ -134,6 +134,544 @@ def test_environment_builder_repairs_failed_block_and_persists_patch(tmp_path: P
     assert first_log.is_file()
     assert '"phase": "docker_build"' in first_log.read_text(encoding="utf-8")
     assert '"log_path"' in (result.state_dir / "executions.jsonl").read_text(encoding="utf-8")
+
+
+def test_environment_builder_full_ablation_runs_final_clean_replay(tmp_path: Path) -> None:
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="full-ablation",
+        ablation_mode="full",
+    )
+    planner = StaticPlanner(
+        [
+            CommandBlock(
+                id="00-preflight",
+                title="Preflight",
+                goal="inspect",
+                script="#!/bin/sh\necho preflight\n",
+                order=0,
+            ),
+            CommandBlock(
+                id="01-tooling",
+                title="Tooling",
+                goal="install",
+                script="#!/bin/sh\necho tooling\n",
+                order=1,
+            ),
+        ]
+    )
+
+    result = EnvironmentBuilder(
+        request,
+        planner=planner,
+        repair_planner=RepairPlanner(),
+        runtime_factory=FakeRuntime,
+    ).build()
+
+    runtime = FakeRuntime.instances[-1]
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+
+    assert result.ok
+    assert result.ablation_mode == "full"
+    assert manifest["ablation_mode"] == "full"
+    assert manifest["progress_control"]["final_clean_replay"] is True
+    assert manifest["final_clean_replay_enabled"] is True
+    assert manifest["final_clean_replay_ok"] is True
+    assert manifest["final_clean_replay_image"] == "fake:final-clean-replay-clean-replay"
+    assert manifest["final_clean_replay_failure_stage"] is None
+    assert "fake:final-clean-replay-clean-replay" in runtime.commits
+    assert result.final_image == "fake:final-clean-replay-clean-replay"
+    assert result.final_clean_replay_ok is True
+    assert result.final_clean_replay_image == "fake:final-clean-replay-clean-replay"
+    assert any(execution.phase == "clean_replay" for execution in result.executions)
+    assert runtime.recreated[-1] == "fake:None-workspace"
+
+
+def test_split_shell_script_commands_preserves_structured_chunks() -> None:
+    script = """#!/bin/sh
+set -eu
+export PATH="/opt/bin:$PATH"
+cd src
+if [ -f requirements.txt ]; then
+  python -m pip install -r requirements.txt
+fi
+cat > /tmp/demo.txt <<'EOF'
+hello
+EOF
+build_docs() {
+  echo docs
+}
+build_docs
+"""
+
+    commands = _split_shell_script_commands(script)
+
+    assert commands[0] == 'export PATH="/opt/bin:$PATH"'
+    assert commands[1] == "cd src"
+    assert commands[2].startswith("if [ -f requirements.txt ]; then")
+    assert commands[2].endswith("fi")
+    assert "python -m pip install -r requirements.txt" in commands[2]
+    assert commands[3] == "cat > /tmp/demo.txt <<'EOF'\nhello\nEOF"
+    assert commands[4] == "build_docs() {\n  echo docs\n}"
+    assert commands[5] == "build_docs"
+
+
+def test_environment_builder_single_command_forward_executes_commands(
+    tmp_path: Path,
+) -> None:
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="single-command-forward",
+        ablation_mode="single-command-forward",
+    )
+    planner = StaticPlanner(
+        [
+            CommandBlock(
+                id="01-tooling",
+                title="Tooling",
+                goal="install",
+                script=(
+                    "#!/bin/sh\n"
+                    "set -eu\n"
+                    "export DEMO_FLAG=1\n"
+                    "cd src\n"
+                    "echo one\n"
+                    "echo two\n"
+                ),
+                order=1,
+            ),
+        ]
+    )
+
+    result = EnvironmentBuilder(
+        request,
+        planner=planner,
+        repair_planner=RepairPlanner(),
+        runtime_factory=FakeRuntime,
+    ).build()
+
+    command_forward = [
+        execution for execution in result.executions if execution.phase == "command_forward"
+    ]
+    command_texts = [execution.command[-1] for execution in command_forward if execution.command]
+
+    assert result.ok
+    assert result.progress_control is not None
+    assert result.progress_control.forward_granularity == "command"
+    assert result.final_clean_replay_ok is True
+    assert len(command_forward) == 4
+    assert command_texts[0] == "set -eu\nexport DEMO_FLAG=1"
+    assert command_texts[1] == "set -eu\nexport DEMO_FLAG=1\ncd src"
+    assert command_texts[2] == "set -eu\nexport DEMO_FLAG=1\ncd src\necho one"
+    assert command_texts[3] == "set -eu\nexport DEMO_FLAG=1\ncd src\necho two"
+    assert not any(execution.phase == "block" for execution in result.executions)
+    assert any(execution.phase == "clean_replay" for execution in result.executions)
+
+
+def test_environment_builder_single_command_recovery_repairs_live_container(
+    tmp_path: Path,
+) -> None:
+    class CommandRecoveryRuntime(FakeRuntime):
+        def __init__(self, request: BuildRequest, run_id: str):
+            super().__init__(request, run_id)
+            self.block_script_runs = 0
+            self.repaired = False
+
+        def recreate_from(self, image_ref: str) -> str:
+            self.repaired = False
+            return super().recreate_from(image_ref)
+
+        def execute_script(self, script_path: Path, *, timeout: float) -> CommandResult:
+            del timeout
+            self.block_runs += 1
+            if script_path.name == "01-tooling.sh":
+                self.block_script_runs += 1
+                if self.block_script_runs == 1:
+                    return CommandResult(exit_code=1, stderr="missing cli")
+                self.repaired = True
+            return CommandResult(exit_code=0, stdout="block ok")
+
+        def execute_command(self, command: str, *, timeout: float) -> CommandResult:
+            del timeout
+            if "container preflight" in command:
+                return CommandResult(exit_code=0, stdout="tool:python3=/usr/bin/python3\n")
+            if command == "install-missing-cli":
+                self.repaired = True
+                return CommandResult(exit_code=0, stdout="installed")
+            if command == "validate-live":
+                if self.repaired:
+                    return CommandResult(exit_code=0, stdout="validation ok")
+                return CommandResult(exit_code=1, stderr="still missing")
+            return CommandResult(exit_code=0, stdout="ok")
+
+    class CommandRecoveryPlanner:
+        def __init__(self) -> None:
+            self.contexts: list[RepairContext | None] = []
+
+        def suggest(self, block, result, *, context=None, heuristic_hints=None):
+            del block, result, heuristic_hints
+            self.contexts.append(context)
+            return [
+                RepairCommand(
+                    title="Install missing CLI",
+                    command="install-missing-cli",
+                    patch_script="echo should-not-be-patched",
+                )
+            ]
+
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="single-command-recovery",
+        ablation_mode="single-command-recovery",
+        max_repair_attempts=1,
+    )
+    planner = StaticPlanner(
+        [
+            CommandBlock(
+                id="01-tooling",
+                title="Tooling",
+                goal="install",
+                script="#!/bin/sh\necho install\n",
+                validation_command="validate-live",
+                order=1,
+            ),
+        ]
+    )
+    repair_llm = CommandRecoveryPlanner()
+
+    result = EnvironmentBuilder(
+        request,
+        planner=planner,
+        repair_planner=RepairPlanner(llm_planner=repair_llm),
+        runtime_factory=CommandRecoveryRuntime,
+    ).build()
+
+    runtime = FakeRuntime.instances[-1]
+    script = (result.scripts_dir / "01-tooling.sh").read_text(encoding="utf-8")
+    phases = [execution.phase for execution in result.executions]
+
+    assert result.ok
+    assert result.progress_control is not None
+    assert result.progress_control.recovery_granularity == "command"
+    assert result.progress_control.patch_back is False
+    assert result.progress_control.checkpoint_rollback is False
+    assert "should-not-be-patched" not in script
+    assert phases.count("block") == 1
+    assert "command_recovery" in phases
+    assert "repair" not in phases
+    assert "repair_prep" not in phases
+    assert runtime.recreated == ["fake:None-workspace"]
+    assert repair_llm.contexts
+    assert repair_llm.contexts[0] is not None
+    assert repair_llm.contexts[0].strategy_notes
+    assert result.final_clean_replay_ok is True
+
+
+def test_environment_builder_whole_script_forward_executes_one_artifact(
+    tmp_path: Path,
+) -> None:
+    class WholeScriptRuntime(FakeRuntime):
+        def __init__(self, request: BuildRequest, run_id: str):
+            super().__init__(request, run_id)
+            self.script_names: list[str] = []
+
+        def execute_script(self, script_path: Path, *, timeout: float) -> CommandResult:
+            self.script_names.append(script_path.name)
+            return super().execute_script(script_path, timeout=timeout)
+
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="whole-script-forward",
+        ablation_mode="whole-script-forward",
+    )
+    planner = StaticPlanner(
+        [
+            CommandBlock(
+                id="01-system",
+                title="System",
+                goal="install system deps",
+                script="#!/bin/sh\necho system\n",
+                order=1,
+            ),
+            CommandBlock(
+                id="02-python",
+                title="Python",
+                goal="install python deps",
+                script="#!/bin/sh\nset -eu\necho python\n",
+                validation_command="python -m pytest --collect-only",
+                order=2,
+            ),
+        ]
+    )
+
+    result = EnvironmentBuilder(
+        request,
+        planner=planner,
+        repair_planner=RepairPlanner(),
+        runtime_factory=WholeScriptRuntime,
+    ).build()
+
+    runtime = FakeRuntime.instances[-1]
+    whole_script = (result.scripts_dir / "whole-setup.sh").read_text(encoding="utf-8")
+    phases = [execution.phase for execution in result.executions]
+
+    assert result.ok
+    assert result.progress_control is not None
+    assert result.progress_control.forward_granularity == "whole-script"
+    assert result.progress_control.local_repair is False
+    assert result.progress_control.checkpoint_rollback is False
+    assert runtime.script_names == ["whole-setup.sh", "whole-setup.sh"]
+    assert "echo system" in whole_script
+    assert "echo python" in whole_script
+    assert "whole_script" in phases
+    assert "block" not in phases
+    assert "fake:whole-script-success" in runtime.commits
+    assert "fake:01-system-success" not in runtime.commits
+    assert "fake:02-python-success" not in runtime.commits
+    assert {block.success_checkpoint for block in result.blocks} == {
+        "fake:whole-script-success"
+    }
+    assert result.final_clean_replay_ok is True
+    assert result.final_image == "fake:final-clean-replay-clean-replay"
+
+
+def test_environment_builder_whole_script_recovery_replays_from_workspace(
+    tmp_path: Path,
+) -> None:
+    class WholeScriptRecoveryRuntime(FakeRuntime):
+        def __init__(self, request: BuildRequest, run_id: str):
+            super().__init__(request, run_id)
+            self.script_names: list[str] = []
+
+        def execute_script(self, script_path: Path, *, timeout: float) -> CommandResult:
+            self.script_names.append(script_path.name)
+            self.block_runs += 1
+            if script_path.name == "02-python.sh":
+                return CommandResult(exit_code=1, stderr="missing package")
+            return CommandResult(exit_code=0, stdout="script ok")
+
+        def execute_command(self, command: str, *, timeout: float) -> CommandResult:
+            del timeout
+            if "container preflight" in command:
+                return CommandResult(exit_code=0, stdout="tool:python3=/usr/bin/python3\n")
+            return CommandResult(exit_code=0, stdout="ok")
+
+    class WholeScriptRecoveryPlanner:
+        def __init__(self) -> None:
+            self.contexts: list[RepairContext | None] = []
+
+        def suggest(self, block, result, *, context=None, heuristic_hints=None):
+            del block, result, heuristic_hints
+            self.contexts.append(context)
+            return [
+                RepairCommand(
+                    title="Install missing package",
+                    command="install-package",
+                    patch_script="echo install-package",
+                )
+            ]
+
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="whole-script-recovery",
+        ablation_mode="whole-script-recovery",
+        max_repair_attempts=1,
+    )
+    planner = StaticPlanner(
+        [
+            CommandBlock(
+                id="01-system",
+                title="System",
+                goal="install system deps",
+                script="#!/bin/sh\necho system\n",
+                order=1,
+            ),
+            CommandBlock(
+                id="02-python",
+                title="Python",
+                goal="install python deps",
+                script="#!/bin/sh\necho python\n",
+                order=2,
+            ),
+            CommandBlock(
+                id="03-final",
+                title="Final",
+                goal="finish setup",
+                script="#!/bin/sh\necho final\n",
+                order=3,
+            ),
+        ]
+    )
+    repair_llm = WholeScriptRecoveryPlanner()
+
+    result = EnvironmentBuilder(
+        request,
+        planner=planner,
+        repair_planner=RepairPlanner(llm_planner=repair_llm),
+        runtime_factory=WholeScriptRecoveryRuntime,
+    ).build()
+
+    runtime = FakeRuntime.instances[-1]
+    whole_script = (result.scripts_dir / "whole-setup.sh").read_text(encoding="utf-8")
+    phases = [execution.phase for execution in result.executions]
+
+    assert result.ok
+    assert result.progress_control is not None
+    assert result.progress_control.recovery_granularity == "whole-script"
+    assert result.progress_control.patch_back is False
+    assert runtime.script_names == [
+        "01-system.sh",
+        "02-python.sh",
+        "whole-setup.sh",
+        "whole-setup.sh",
+    ]
+    assert "03-final.sh" not in runtime.script_names
+    assert "echo install-package" in whole_script
+    assert "whole_script_recovery" in phases
+    assert "repair" not in phases
+    assert "fake:01-system-success" in runtime.commits
+    assert "fake:whole-script-repaired" in runtime.commits
+    assert "fake:03-final-success" not in runtime.commits
+    assert {block.success_checkpoint for block in result.blocks} == {
+        "fake:whole-script-repaired"
+    }
+    assert repair_llm.contexts
+    assert repair_llm.contexts[0] is not None
+    assert repair_llm.contexts[0].strategy_notes
+    assert result.final_clean_replay_ok is True
+
+
+def test_environment_builder_rejects_final_clean_replay_resume(
+    tmp_path: Path,
+) -> None:
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=None,
+        state_dir=tmp_path / ".pheragent",
+        run_id="resume-full",
+        resume_from="pheragent:previous",
+        ablation_mode="full",
+    )
+
+    result = EnvironmentBuilder(
+        request,
+        planner=StaticPlanner([]),
+        repair_planner=RepairPlanner(),
+        runtime_factory=FakeRuntime,
+    ).build()
+
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+
+    assert not result.ok
+    assert "resume-from" in (result.error or "")
+    assert result.final_clean_replay_enabled is True
+    assert result.final_clean_replay_ok is False
+    assert result.final_clean_replay_failure_stage == "resume-from"
+    assert manifest["final_clean_replay_failure_stage"] == "resume-from"
+    assert FakeRuntime.instances == []
+
+
+def test_environment_builder_without_local_repair_does_not_call_repair(
+    tmp_path: Path,
+) -> None:
+    class FailingRuntime(FakeRuntime):
+        def execute_script(self, script_path: Path, *, timeout: float) -> CommandResult:
+            del script_path, timeout
+            return CommandResult(exit_code=1, stderr="missing dependency")
+
+    class UnexpectedRepairPlanner:
+        def suggest(self, block, result, *, context=None, heuristic_hints=None):
+            del block, result, context, heuristic_hints
+            raise AssertionError("local repair should be disabled")
+
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="no-local-repair",
+        ablation_mode="without-local-repair",
+        max_repair_attempts=3,
+    )
+    planner = StaticPlanner(
+        [
+            CommandBlock(
+                id="01-custom",
+                title="Custom",
+                goal="install",
+                script="#!/bin/sh\necho custom\n",
+                order=1,
+            )
+        ]
+    )
+
+    result = EnvironmentBuilder(
+        request,
+        planner=planner,
+        repair_planner=RepairPlanner(llm_planner=UnexpectedRepairPlanner()),
+        runtime_factory=FailingRuntime,
+    ).build()
+
+    assert not result.ok
+    assert result.error == "block failed: 01-custom"
+    assert not any(execution.phase == "repair" for execution in result.executions)
+    assert not any(execution.phase == "llm_repair" for execution in result.executions)
+    assert result.progress_control is not None
+    assert result.progress_control.local_repair is False
+
+
+def test_environment_builder_without_checkpoint_rollback_repairs_in_live_container(
+    tmp_path: Path,
+) -> None:
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="no-rollback",
+        ablation_mode="without-checkpoint-rollback",
+        max_repair_attempts=1,
+    )
+
+    result = EnvironmentBuilder(
+        request,
+        repair_planner=RepairPlanner(llm_planner=BuildEssentialLLMRepairPlanner()),
+        runtime_factory=FakeRuntime,
+    ).build()
+
+    runtime = FakeRuntime.instances[-1]
+
+    assert result.ok
+    assert "fake:00-preflight-success" not in runtime.recreated
+    assert runtime.recreated == ["fake:None-workspace"]
+    assert any(execution.phase == "repair" for execution in result.executions)
+    assert any(execution.phase == "clean_replay" for execution in result.executions)
+    assert result.progress_control is not None
+    assert result.progress_control.checkpoint_rollback is False
 
 
 def test_environment_builder_records_llm_usage_in_manifest(tmp_path: Path) -> None:

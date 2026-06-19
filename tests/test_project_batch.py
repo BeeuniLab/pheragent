@@ -697,6 +697,71 @@ def test_project_batch_builder_skips_existing_successful_project(tmp_path: Path)
     assert not (repo_path / ".github").exists()
 
 
+def test_project_batch_builder_reruns_existing_success_with_different_ablation(
+    tmp_path: Path,
+) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text("pallets/flask 2579ce9\n", encoding="utf-8")
+    repo_path = tmp_path / "projects" / "flask"
+    repo_path.mkdir(parents=True)
+    run_dir = repo_path / ".pheragent" / "runs" / "batch-flask"
+    run_dir.mkdir(parents=True)
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "run_id": "batch-flask",
+                "final_image": "pheragent:batch-flask-full",
+                "ablation_mode": "full",
+            }
+        ),
+        encoding="utf-8",
+    )
+    clone_calls = 0
+
+    def fake_runner(command: list[str], cwd: Path | None) -> CommandResult:
+        nonlocal clone_calls
+        del cwd
+        if command[:2] == ["git", "clone"]:
+            clone_calls += 1
+            cloned_repo_path = Path(command[-1])
+            assert not cloned_repo_path.exists()
+            (cloned_repo_path / ".git").mkdir(parents=True)
+        return CommandResult(exit_code=0, stdout="ok")
+
+    class FakeBuilder:
+        def __init__(self, request: BuildRequest):
+            self.request = request
+
+        def build(self) -> BuildResult:
+            state_dir = self.request.repo_path / ".pheragent" / "runs" / "batch-flask"
+            return BuildResult(
+                ok=True,
+                run_id=self.request.run_id or "batch-flask",
+                state_dir=state_dir,
+                scripts_dir=state_dir / "scripts",
+                manifest_path=state_dir / "manifest.json",
+                final_image="pheragent:batch-flask-current",
+            )
+
+    result = ProjectBatchBuilder(
+        projects_file=projects_file,
+        projects_dir=tmp_path / "projects",
+        base_request=BuildRequest(
+            repo_path=tmp_path,
+            base_dockerfile=tmp_path / "Dockerfile",
+            run_id=None,
+        ),
+        run_id_prefix="batch",
+        command_runner=fake_runner,
+        builder_factory=FakeBuilder,
+    ).build_all()
+
+    assert result.ok
+    assert clone_calls == 1
+    assert result.results[0].final_image == "pheragent:batch-flask-current"
+
+
 def test_project_batch_builder_keeps_github_for_existing_success_without_oracles_dir(
     tmp_path: Path,
 ) -> None:
@@ -1292,6 +1357,15 @@ def test_project_batch_builder_writes_llm_usage_jsonl(tmp_path: Path) -> None:
     ).build_all()
 
     assert result.ok
+    assert result.ablation_mode == "without-final-clean-replay"
+    assert result.progress_control == {
+        "forward_granularity": "block",
+        "recovery_granularity": "block",
+        "local_repair": True,
+        "patch_back": True,
+        "checkpoint_rollback": True,
+        "final_clean_replay": False,
+    }
     assert result.llm_usage_log_path == tmp_path / "projects" / "llm-usage-projects.jsonl"
     expected_manifest_path = (
         tmp_path / "projects" / "flask" / ".pheragent" / "runs" / "batch-flask" / "manifest.json"
@@ -1316,6 +1390,19 @@ def test_project_batch_builder_writes_llm_usage_jsonl(tmp_path: Path) -> None:
             "oracle_path": None,
             "failure_stage": None,
             "error": None,
+            "ablation_mode": "without-final-clean-replay",
+            "progress_control": {
+                "forward_granularity": "block",
+                "recovery_granularity": "block",
+                "local_repair": True,
+                "patch_back": True,
+                "checkpoint_rollback": True,
+                "final_clean_replay": False,
+            },
+            "final_clean_replay_enabled": False,
+            "final_clean_replay_ok": None,
+            "final_clean_replay_image": None,
+            "final_clean_replay_failure_stage": None,
             "requests": 1,
             "input_tokens": 10,
             "output_tokens": 5,

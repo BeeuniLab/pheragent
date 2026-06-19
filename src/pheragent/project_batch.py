@@ -9,7 +9,13 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .models import BuildRequest, CommandResult
+from .models import (
+    DEFAULT_ABLATION_MODE,
+    BuildRequest,
+    CommandResult,
+    progress_control_for_ablation,
+    to_jsonable,
+)
 from .orchestrator import EnvironmentBuilder
 from .process import run_command
 from .utils import slugify
@@ -50,6 +56,12 @@ class ProjectRunResult:
     failure_stage: str | None = None
     error: str | None = None
     llm_usage: dict[str, dict[str, int]] = field(default_factory=dict)
+    ablation_mode: str = DEFAULT_ABLATION_MODE
+    progress_control: dict[str, object] | None = None
+    final_clean_replay_enabled: bool = False
+    final_clean_replay_ok: bool | None = None
+    final_clean_replay_image: str | None = None
+    final_clean_replay_failure_stage: str | None = None
 
 
 @dataclass(slots=True)
@@ -62,6 +74,8 @@ class BatchBuildResult:
     no_repo_log_path: Path | None = None
     version_mismatch_log_path: Path | None = None
     llm_usage_log_path: Path | None = None
+    ablation_mode: str = DEFAULT_ABLATION_MODE
+    progress_control: dict[str, object] | None = None
 
 
 @dataclass(slots=True)
@@ -365,6 +379,8 @@ class ProjectBatchBuilder:
                 version_mismatch_log_path if version_mismatch_log_path.exists() else None
             ),
             llm_usage_log_path=llm_usage_log_path if llm_usage_log_path.exists() else None,
+            ablation_mode=self.base_request.ablation_mode,
+            progress_control=_progress_control_json(self.base_request.ablation_mode),
         )
 
     def _build_specs(
@@ -531,6 +547,12 @@ class ProjectBatchBuilder:
                 failure_stage=None if build_result.ok else failure_stage,
                 error=build_result.error,
                 llm_usage=build_result.llm_usage,
+                ablation_mode=build_result.ablation_mode,
+                progress_control=to_jsonable(build_result.progress_control),
+                final_clean_replay_enabled=build_result.final_clean_replay_enabled,
+                final_clean_replay_ok=build_result.final_clean_replay_ok,
+                final_clean_replay_image=build_result.final_clean_replay_image,
+                final_clean_replay_failure_stage=build_result.final_clean_replay_failure_stage,
             )
         except Exception as exc:
             error = str(exc)
@@ -567,6 +589,14 @@ class ProjectBatchBuilder:
         version_mismatch_log_path: Path,
         llm_usage_log_path: Path,
     ) -> None:
+        if result.progress_control is None:
+            result.ablation_mode = self.base_request.ablation_mode
+            result.progress_control = _progress_control_json(result.ablation_mode)
+        if (
+            result.progress_control.get("final_clean_replay") is True
+            and not result.final_clean_replay_enabled
+        ):
+            result.final_clean_replay_enabled = True
         if result.version_mismatch:
             self._upsert_version_mismatch_log(result, version_mismatch_log_path)
         if result.skipped:
@@ -613,6 +643,7 @@ class ProjectBatchBuilder:
             oracle_timeout=self.base_request.oracle_timeout,
             resume_from=self.base_request.resume_from,
             start_at_block=self.base_request.start_at_block,
+            ablation_mode=self.base_request.ablation_mode,
         )
 
     def _emit(self, message: str) -> None:
@@ -636,6 +667,8 @@ class ProjectBatchBuilder:
         final_image = manifest.get("final_image")
         if manifest.get("ok") is not True or not isinstance(final_image, str) or not final_image:
             return None
+        if _manifest_ablation_mode(manifest) != self.base_request.ablation_mode:
+            return None
         oracle_path = None
         if self.oracles_dir is not None:
             oracle_path = isolate_project_oracles(
@@ -652,6 +685,22 @@ class ProjectBatchBuilder:
             manifest_path=manifest_path,
             oracle_path=oracle_path,
             llm_usage=_manifest_llm_usage(manifest),
+            ablation_mode=_manifest_ablation_mode(manifest),
+            progress_control=_manifest_progress_control(manifest),
+            final_clean_replay_enabled=_manifest_bool(
+                manifest,
+                "final_clean_replay_enabled",
+                default=False,
+            ),
+            final_clean_replay_ok=_manifest_optional_bool(manifest, "final_clean_replay_ok"),
+            final_clean_replay_image=_manifest_optional_str(
+                manifest,
+                "final_clean_replay_image",
+            ),
+            final_clean_replay_failure_stage=_manifest_optional_str(
+                manifest,
+                "final_clean_replay_failure_stage",
+            ),
         )
 
     def _expected_manifest_path(self, spec: ProjectSpec, repo_path: Path) -> Path | None:
@@ -733,6 +782,12 @@ class ProjectBatchBuilder:
             "oracle_path": str(result.oracle_path) if result.oracle_path else None,
             "failure_stage": result.failure_stage,
             "error": result.error,
+            "ablation_mode": result.ablation_mode,
+            "progress_control": result.progress_control,
+            "final_clean_replay_enabled": result.final_clean_replay_enabled,
+            "final_clean_replay_ok": result.final_clean_replay_ok,
+            "final_clean_replay_image": result.final_clean_replay_image,
+            "final_clean_replay_failure_stage": result.final_clean_replay_failure_stage,
             "requests": int(usage_total.get("requests", 0)),
             "input_tokens": int(usage_total.get("input_tokens", 0)),
             "output_tokens": int(usage_total.get("output_tokens", 0)),
@@ -822,6 +877,61 @@ def _manifest_llm_usage(manifest: object) -> dict[str, dict[str, int]]:
                 phase_usage[key] = 0
         usage[str(phase)] = phase_usage
     return usage
+
+
+def _manifest_ablation_mode(manifest: object) -> str:
+    if not isinstance(manifest, dict):
+        return DEFAULT_ABLATION_MODE
+    value = manifest.get("ablation_mode")
+    if isinstance(value, str) and value:
+        return value
+    return DEFAULT_ABLATION_MODE
+
+
+def _progress_control_json(ablation_mode: str) -> dict[str, object]:
+    try:
+        progress_control = progress_control_for_ablation(ablation_mode)
+    except ValueError:
+        progress_control = progress_control_for_ablation(DEFAULT_ABLATION_MODE)
+    value = to_jsonable(progress_control)
+    if isinstance(value, dict):
+        return {str(key): item for key, item in value.items()}
+    return {}
+
+
+def _manifest_progress_control(manifest: object) -> dict[str, object]:
+    if isinstance(manifest, dict):
+        value = manifest.get("progress_control")
+        if isinstance(value, dict):
+            return {str(key): item for key, item in value.items()}
+    return _progress_control_json(_manifest_ablation_mode(manifest))
+
+
+def _manifest_bool(manifest: object, key: str, *, default: bool) -> bool:
+    if not isinstance(manifest, dict):
+        return default
+    value = manifest.get(key)
+    if isinstance(value, bool):
+        return value
+    return default
+
+
+def _manifest_optional_bool(manifest: object, key: str) -> bool | None:
+    if not isinstance(manifest, dict):
+        return None
+    value = manifest.get(key)
+    if isinstance(value, bool):
+        return value
+    return None
+
+
+def _manifest_optional_str(manifest: object, key: str) -> str | None:
+    if not isinstance(manifest, dict):
+        return None
+    value = manifest.get(key)
+    if isinstance(value, str) and value:
+        return value
+    return None
 
 
 def _is_unavailable_project_error(error: str) -> bool:

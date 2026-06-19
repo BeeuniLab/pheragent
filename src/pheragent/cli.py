@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from .env import load_dotenv
-from .models import BuildRequest, to_jsonable
+from .models import DEFAULT_ABLATION_MODE, BuildRequest, to_jsonable
 from .orchestrator import EnvironmentBuilder
 from .project_batch import ProjectBatchBuilder
 
@@ -141,6 +141,24 @@ def _add_common_args(parser: argparse.ArgumentParser, *, include_dockerfile: boo
     parser.add_argument("--llm-retry-delay", type=float, default=1.0)
     parser.add_argument("--oracle-file", type=Path, default=None)
     parser.add_argument("--oracle-timeout", type=float, default=None)
+    parser.add_argument(
+        "--ablation",
+        choices=(
+            "full",
+            "without-local-repair",
+            "without-checkpoint-rollback",
+            "without-final-clean-replay",
+            "single-command-forward",
+            "single-command-recovery",
+            "whole-script-forward",
+            "whole-script-recovery",
+        ),
+        default=DEFAULT_ABLATION_MODE,
+        help=(
+            "Progress-control ablation mode. Default keeps current behavior "
+            "without final clean replay."
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
 
 
@@ -227,6 +245,24 @@ def _add_batch_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--llm-retry-delay", type=float, default=1.0)
     parser.add_argument("--oracle-file", type=Path, default=None)
     parser.add_argument("--oracle-timeout", type=float, default=None)
+    parser.add_argument(
+        "--ablation",
+        choices=(
+            "full",
+            "without-local-repair",
+            "without-checkpoint-rollback",
+            "without-final-clean-replay",
+            "single-command-forward",
+            "single-command-recovery",
+            "whole-script-forward",
+            "whole-script-recovery",
+        ),
+        default=DEFAULT_ABLATION_MODE,
+        help=(
+            "Progress-control ablation mode. Default keeps current behavior "
+            "without final clean replay."
+        ),
+    )
     parser.add_argument("--keep-container", action="store_true")
     parser.add_argument("--cleanup-images", action="store_true")
     parser.add_argument(
@@ -271,6 +307,7 @@ def _request_from_args(args: argparse.Namespace, *, require_dockerfile: bool) ->
         oracle_timeout=args.oracle_timeout,
         resume_from=resume_from,
         start_at_block=getattr(args, "start_at_block", None),
+        ablation_mode=args.ablation,
     )
 
 
@@ -302,6 +339,7 @@ def _batch_base_request_from_args(args: argparse.Namespace) -> BuildRequest:
         llm_retry_delay=args.llm_retry_delay,
         oracle_file=args.oracle_file,
         oracle_timeout=args.oracle_timeout,
+        ablation_mode=args.ablation,
     )
 
 
@@ -339,6 +377,7 @@ def _print_result(result, *, as_json: bool) -> None:
     print(f"manifest: {result.manifest_path}")
     if result.llm_usage_path:
         print(f"llm usage: {result.llm_usage_path}")
+    print(f"ablation: {result.ablation_mode}")
     if result.final_image:
         print(f"final image: {result.final_image}")
     if result.error:
@@ -352,6 +391,7 @@ def _print_batch_result(result, *, as_json: bool) -> None:
     status = "ok" if result.ok else "failed"
     print(f"pheragent project batch: {status}")
     print(f"projects: {result.projects_dir}")
+    print(f"ablation: {result.ablation_mode}")
     if result.oracles_dir:
         print(f"oracles: {result.oracles_dir}")
     if result.failures_log_path:
@@ -389,6 +429,16 @@ def _print_batch_result(result, *, as_json: bool) -> None:
             print(f"  run: {project_result.run_id}")
         if project_result.final_image:
             print(f"  final image: {project_result.final_image}")
+        if project_result.final_clean_replay_enabled:
+            replay_status = "ok" if project_result.final_clean_replay_ok else "failed"
+            print(f"  final clean replay: {replay_status}")
+            if project_result.final_clean_replay_image:
+                print(f"  final clean replay image: {project_result.final_clean_replay_image}")
+            if project_result.final_clean_replay_failure_stage:
+                print(
+                    "  final clean replay failure stage: "
+                    f"{project_result.final_clean_replay_failure_stage}"
+                )
         if project_result.manifest_path:
             print(f"  manifest: {project_result.manifest_path}")
         if project_result.oracle_path:

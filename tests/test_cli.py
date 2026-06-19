@@ -47,6 +47,101 @@ def test_build_accepts_chat_completions_llm_api(tmp_path: Path) -> None:
     assert request.llm_api == "chat-completions"
 
 
+def test_build_accepts_ablation_mode(tmp_path: Path) -> None:
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "build",
+            "--repo",
+            str(tmp_path),
+            "--base-dockerfile",
+            str(tmp_path / "Dockerfile"),
+            "--ablation",
+            "full",
+        ]
+    )
+
+    request = _request_from_args(args, require_dockerfile=True)
+
+    assert request.ablation_mode == "full"
+
+
+def test_build_accepts_single_command_forward_ablation(tmp_path: Path) -> None:
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "build",
+            "--repo",
+            str(tmp_path),
+            "--base-dockerfile",
+            str(tmp_path / "Dockerfile"),
+            "--ablation",
+            "single-command-forward",
+        ]
+    )
+
+    request = _request_from_args(args, require_dockerfile=True)
+
+    assert request.ablation_mode == "single-command-forward"
+
+
+def test_build_accepts_single_command_recovery_ablation(tmp_path: Path) -> None:
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "build",
+            "--repo",
+            str(tmp_path),
+            "--base-dockerfile",
+            str(tmp_path / "Dockerfile"),
+            "--ablation",
+            "single-command-recovery",
+        ]
+    )
+
+    request = _request_from_args(args, require_dockerfile=True)
+
+    assert request.ablation_mode == "single-command-recovery"
+
+
+def test_build_accepts_whole_script_forward_ablation(tmp_path: Path) -> None:
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "build",
+            "--repo",
+            str(tmp_path),
+            "--base-dockerfile",
+            str(tmp_path / "Dockerfile"),
+            "--ablation",
+            "whole-script-forward",
+        ]
+    )
+
+    request = _request_from_args(args, require_dockerfile=True)
+
+    assert request.ablation_mode == "whole-script-forward"
+
+
+def test_build_accepts_whole_script_recovery_ablation(tmp_path: Path) -> None:
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "build",
+            "--repo",
+            str(tmp_path),
+            "--base-dockerfile",
+            str(tmp_path / "Dockerfile"),
+            "--ablation",
+            "whole-script-recovery",
+        ]
+    )
+
+    request = _request_from_args(args, require_dockerfile=True)
+
+    assert request.ablation_mode == "whole-script-recovery"
+
+
 def test_build_accepts_task_description_and_task_file(tmp_path: Path) -> None:
     task_file = tmp_path / "task.txt"
     task_file.write_text("Install speech CLI support\n", encoding="utf-8")
@@ -110,6 +205,27 @@ def test_build_projects_accepts_jobs(tmp_path: Path) -> None:
     )
 
     assert args.jobs == 3
+
+
+def test_build_projects_accepts_ablation_mode(tmp_path: Path) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text("owner/repo abc123\n", encoding="utf-8")
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "build-projects",
+            "--projects-file",
+            str(projects_file),
+            "--base-dockerfile",
+            str(tmp_path / "Dockerfile"),
+            "--ablation",
+            "without-checkpoint-rollback",
+        ]
+    )
+
+    request = _batch_base_request_from_args(args)
+
+    assert request.ablation_mode == "without-checkpoint-rollback"
 
 
 def test_build_projects_rejects_zero_jobs(tmp_path: Path) -> None:
