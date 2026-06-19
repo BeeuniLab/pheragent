@@ -245,6 +245,10 @@ def test_environment_builder_single_command_forward_executes_commands(
                     "cd src\n"
                     "echo one\n"
                     "echo two\n"
+                    "build_docs() {\n"
+                    "  echo docs\n"
+                    "}\n"
+                    "build_docs\n"
                 ),
                 order=1,
             ),
@@ -267,11 +271,23 @@ def test_environment_builder_single_command_forward_executes_commands(
     assert result.progress_control is not None
     assert result.progress_control.forward_granularity == "command"
     assert result.final_clean_replay_ok is True
-    assert len(command_forward) == 4
+    assert len(command_forward) == 6
     assert command_texts[0] == "set -eu\nexport DEMO_FLAG=1"
     assert command_texts[1] == "set -eu\nexport DEMO_FLAG=1\ncd src"
     assert command_texts[2] == "set -eu\nexport DEMO_FLAG=1\ncd src\necho one"
     assert command_texts[3] == "set -eu\nexport DEMO_FLAG=1\ncd src\necho two"
+    assert command_texts[4] == (
+        "set -eu\nexport DEMO_FLAG=1\ncd src\nbuild_docs() {\n  echo docs\n}"
+    )
+    assert command_texts[5] == (
+        "set -eu\n"
+        "export DEMO_FLAG=1\n"
+        "cd src\n"
+        "build_docs() {\n"
+        "  echo docs\n"
+        "}\n"
+        "build_docs"
+    )
     assert not any(execution.phase == "block" for execution in result.executions)
     assert any(execution.phase == "clean_replay" for execution in result.executions)
 
@@ -406,7 +422,7 @@ def test_environment_builder_whole_script_forward_executes_one_artifact(
                 id="01-system",
                 title="System",
                 goal="install system deps",
-                script="#!/bin/sh\necho system\n",
+                script="#!/bin/sh\ncd subdir\necho system\n",
                 order=1,
             ),
             CommandBlock(
@@ -437,6 +453,13 @@ def test_environment_builder_whole_script_forward_executes_one_artifact(
     assert result.progress_control.local_repair is False
     assert result.progress_control.checkpoint_rollback is False
     assert runtime.script_names == ["whole-setup.sh", "whole-setup.sh"]
+    assert whole_script.count("cd /workspace/repo") == 3
+    assert (
+        "cd subdir\n"
+        "echo system\n\n"
+        "cd /workspace/repo\n"
+        "echo '[pheragent] whole-script block 02-python: Python'"
+    ) in whole_script
     assert "echo system" in whole_script
     assert "echo python" in whole_script
     assert "whole_script" in phases

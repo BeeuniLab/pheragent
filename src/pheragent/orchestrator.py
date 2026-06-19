@@ -1306,13 +1306,15 @@ class EnvironmentBuilder:
         repair: RepairCommand | None = None,
     ) -> Path:
         script_path = self.store.scripts_dir / "whole-setup.sh"
-        lines = ["#!/bin/sh", "set -eu"]
+        workdir = shlex.quote(self.request.container_workdir)
+        lines = ["#!/bin/sh", "set -eu", f"cd {workdir}"]
         if repair is not None and repair.patch_script:
             lines.append("")
             lines.append("echo " + shlex.quote(f"[pheragent] repair: {repair.title}"))
             lines.extend(repair.patch_script.splitlines())
         for block in blocks:
             lines.append("")
+            lines.append(f"cd {workdir}")
             lines.append(
                 "echo "
                 + shlex.quote(f"[pheragent] whole-script block {block.id}: {block.title}")
@@ -1744,6 +1746,8 @@ def _shell_compound_depth_delta(line: str) -> int:
 
 def _is_shell_context_command(command: str) -> bool:
     stripped = command.strip()
+    if _is_shell_function_definition(stripped):
+        return True
     if "\n" in stripped:
         return False
     return (
@@ -1751,6 +1755,21 @@ def _is_shell_context_command(command: str) -> bool:
         or _is_shell_cd(stripped)
         or _is_shell_source(stripped)
     )
+
+
+def _is_shell_function_definition(command: str) -> bool:
+    lines = [
+        line.strip()
+        for line in command.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    if not lines:
+        return False
+    function_start = re.match(
+        r"^(?:function\s+)?[A-Za-z_][A-Za-z0-9_]*(?:\s*\(\))?\s*\{",
+        lines[0],
+    )
+    return bool(function_start) and command.rstrip().endswith("}")
 
 
 def _is_shell_assignment(command: str) -> bool:

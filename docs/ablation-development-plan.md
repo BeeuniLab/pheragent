@@ -184,6 +184,8 @@ Main implementation tasks:
    validations and commits a single `whole-script` checkpoint.
 4. Done locally: logs distinguish `whole_script` execution from normal block
    execution, and final clean replay replays the whole artifact.
+5. Done locally: the generated whole artifact resets to the container workdir
+   before each original block to avoid leaking `cd` state between blocks.
 
 ### `whole-script-recovery`
 
