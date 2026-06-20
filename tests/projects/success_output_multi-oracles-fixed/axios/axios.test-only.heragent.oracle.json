@@ -1,0 +1,102 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/axios/axios.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values.",
+  "repository_metadata": {
+    "repository": "axios/axios",
+    "repository_url": "https://github.com/axios/axios",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:05.348318+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/axios/axios.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/axios",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/axios/axios__axios",
+    "source_files": [
+      "axios__axios/AI_Moderator__250232265/moderator.yml",
+      "axios__axios/Bundle_Size__278336092/bundle-size.yml",
+      "axios__axios/Continuous_integration__226646854/run-ci.yml",
+      "axios__axios/Create_release_branch__226839243/release-branch.yml",
+      "axios__axios/GitHub_Actions_Security_Analysis_with_zizmor__254566230/zizmor.yml",
+      "axios__axios/Lockfile_lint__263659890/lockfile-lint.yml",
+      "axios__axios/Verify_build_reproducibility__263659892/verify-build-reproducibility.yml",
+      "axios__axios/AI_Moderator__250232265/run_26286231460.log",
+      "axios__axios/Bundle_Size__278336092/run_26242115868.log",
+      "axios__axios/Continuous_integration__226646854/run_26242115792.log",
+      "axios__axios/Create_release_branch__226839243/run_25653391910.log",
+      "axios__axios/GitHub_Actions_Security_Analysis_with_zizmor__254566230/run_26242385302.log",
+      "axios__axios/Lockfile_lint__263659890/run_26242115874.log",
+      "axios__axios/Verify_build_reproducibility__263659892/run_26242385301.log"
+    ],
+    "raw_workflow_file_count": 7,
+    "raw_log_file_count": 7,
+    "raw_workflow_command_count": 62,
+    "raw_log_run_group_count": 253,
+    "selected_test_oracle_count": 8,
+    "manual_fallback_used": false
+  },
+  "fixed_test_commands": [
+    {
+      "command": "npm run test:vitest:unit",
+      "oracle_id": "axios-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "Continuous integration",
+      "step": "Run unit tests",
+      "oracle_priority": 1
+    },
+    {
+      "command": "npm run test:vitest:browser:headless",
+      "oracle_id": "axios-ci-test-02",
+      "source": "ci_workflow_log",
+      "workflow": "Continuous integration",
+      "step": "Run browser tests",
+      "oracle_priority": 2
+    },
+    {
+      "command": "npm run test:smoke:cjs:mocha",
+      "oracle_id": "axios-ci-test-03",
+      "source": "ci_workflow_log",
+      "workflow": "Continuous integration",
+      "step": "Run CJS smoke tests",
+      "oracle_priority": 3
+    },
+    {
+      "command": "npm run test:smoke:esm:vitest",
+      "oracle_id": "axios-ci-test-04",
+      "source": "ci_workflow_log",
+      "workflow": "Continuous integration",
+      "step": "Run ESM smoke tests",
+      "oracle_priority": 4
+    },
+    {
+      "command": "npm run test:module:cjs",
+      "oracle_id": "axios-ci-test-05",
+      "source": "ci_workflow_log",
+      "workflow": "Continuous integration",
+      "step": "Run CJS module tests",
+      "oracle_priority": 5
+    },
+    {
+      "command": "npm run test:module:esm",
+      "oracle_id": "axios-ci-test-06",
+      "source": "ci_workflow_log",
+      "workflow": "Continuous integration",
+      "step": "Run ESM module tests",
+      "oracle_priority": 6
+    },
+    {
+      "command": "bun test",
+      "oracle_id": "axios-ci-test-07",
+      "source": "ci_workflow_log",
+      "workflow": "Continuous integration",
+      "step": "Run Bun smoke tests",
+      "oracle_priority": 7
+    },
+    {
+      "command": "deno task test",
+      "oracle_id": "axios-ci-test-08",
+      "source": "ci_workflow_log",
+      "workflow": "Continuous integration",
+      "step": "Run Deno smoke tests",
+      "oracle_priority": 8
+    }
+  ]
+}

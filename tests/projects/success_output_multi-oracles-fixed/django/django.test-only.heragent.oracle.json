@@ -1,0 +1,92 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/django/django.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values.",
+  "repository_metadata": {
+    "repository": "django/django",
+    "repository_url": "https://github.com/django/django",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:10.612999+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/django/django.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/django",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/django/django__django",
+    "source_files": [
+      "django__django/Check_commit_prefix__175101661/check_commit_messages.yml",
+      "django__django/Check_migrations__218720371/check-migrations.yml",
+      "django__django/Docs__6146682/docs.yml",
+      "django__django/Labels__136213667/labels.yml",
+      "django__django/Linters__5147559/linters.yml",
+      "django__django/New_contributor_message__6637294/new_contributor_pr.yml",
+      "django__django/PR_Quality_Checks__261897819/check_pr_quality.yml",
+      "django__django/Schedule__21767460/schedules.yml",
+      "django__django/Schedule_tests__21767459/schedule_tests.yml",
+      "django__django/Tests__4693886/tests.yml",
+      "django__django/Check_commit_prefix__175101661/run_26298922583.log",
+      "django__django/Check_migrations__218720371/run_26295164779.log",
+      "django__django/Docs__6146682/run_26298922672.log",
+      "django__django/Labels__136213667/run_26296968730.log",
+      "django__django/Linters__5147559/run_26298922532.log",
+      "django__django/New_contributor_message__6637294/run_26292953464.log",
+      "django__django/PR_Quality_Checks__261897819/run_26298921336.log",
+      "django__django/Schedule__21767460/run_26267723128.log",
+      "django__django/Schedule_tests__21767459/run_26267726013.log",
+      "django__django/Tests__4693886/run_26298922528.log"
+    ],
+    "raw_workflow_file_count": 10,
+    "raw_log_file_count": 10,
+    "raw_workflow_command_count": 50,
+    "raw_log_run_group_count": 138,
+    "selected_test_oracle_count": 6,
+    "manual_fallback_used": false
+  },
+  "fixed_test_commands": [
+    {
+      "command": "python -Wall tests/runtests.py -v2",
+      "oracle_id": "django-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "Schedule tests",
+      "step": "Run tests",
+      "oracle_priority": 1
+    },
+    {
+      "command": "npm test",
+      "oracle_id": "django-ci-test-02",
+      "source": "ci_workflow_log",
+      "workflow": "Tests",
+      "step": "run step 4",
+      "oracle_priority": 2
+    },
+    {
+      "command": "python -Wall tests/runtests.py --verbosity=2",
+      "oracle_id": "django-ci-test-03",
+      "source": "ci_workflow_log",
+      "workflow": "Schedule tests",
+      "step": "Run tests",
+      "oracle_priority": 3
+    },
+    {
+      "command": "python -Wall runtests.py --verbosity 2 --noinput --selenium=chrome --headless --settings=test_sqlite --parallel 1",
+      "oracle_id": "django-ci-test-04",
+      "source": "ci_workflow_log",
+      "workflow": "Schedule tests",
+      "step": "Run Selenium tests",
+      "oracle_priority": 4
+    },
+    {
+      "command": "python -Wall runtests.py --verbosity 2 --noinput --selenium=chrome --headless --settings=test_postgres --parallel 1",
+      "oracle_id": "django-ci-test-05",
+      "source": "ci_workflow_log",
+      "workflow": "Schedule tests",
+      "step": "Run Selenium tests",
+      "oracle_priority": 5
+    },
+    {
+      "command": "python -Wall runtests.py --settings=test_postgres --verbosity=2",
+      "oracle_id": "django-ci-test-06",
+      "source": "ci_workflow_log",
+      "workflow": "Schedule tests",
+      "step": "Run tests",
+      "oracle_priority": 6
+    }
+  ]
+}

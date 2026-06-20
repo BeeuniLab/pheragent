@@ -1,0 +1,66 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/rocketmq/rocketmq.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values.",
+  "repository_metadata": {
+    "repository": "apache/rocketmq",
+    "repository_url": "https://github.com/apache/rocketmq",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:33.287457+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/rocketmq/rocketmq.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/rocketmq",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/rocketmq/apache__rocketmq",
+    "source_files": [
+      "apache__rocketmq/Build_and_Run_Tests_by_Bazel__33026548/bazel.yml",
+      "apache__rocketmq/Build_and_Run_Tests_by_Maven__33018588/maven.yaml",
+      "apache__rocketmq/Close_Stale_Issues_PRs__34216553/stale.yml",
+      "apache__rocketmq/CodeQL_Analysis__34158306/codeql_analysis.yml",
+      "apache__rocketmq/Coverage__31666892/coverage.yml",
+      "apache__rocketmq/License_checker__25946856/license-checker.yaml",
+      "apache__rocketmq/Misspell_Check__31677816/misspell_check.yml",
+      "apache__rocketmq/Rerun_workflow__112640971/rerun-workflow.yml",
+      "apache__rocketmq/Run_Integration_Tests__115797954/integration-test.yml",
+      "apache__rocketmq/Build_and_Run_Tests_by_Bazel__33026548/run_26294407743.log",
+      "apache__rocketmq/Build_and_Run_Tests_by_Maven__33018588/run_26294408741.log",
+      "apache__rocketmq/Close_Stale_Issues_PRs__34216553/run_26261394247.log",
+      "apache__rocketmq/CodeQL_Analysis__34158306/run_26141147539.log",
+      "apache__rocketmq/Coverage__31666892/run_26294408034.log",
+      "apache__rocketmq/License_checker__25946856/run_26141147610.log",
+      "apache__rocketmq/Misspell_Check__31677816/run_26294408081.log",
+      "apache__rocketmq/Rerun_workflow__112640971/run_26297291713.log",
+      "apache__rocketmq/Run_Integration_Tests__115797954/run_26294408464.log"
+    ],
+    "raw_workflow_file_count": 9,
+    "raw_log_file_count": 9,
+    "raw_workflow_command_count": 8,
+    "raw_log_run_group_count": 34,
+    "selected_test_oracle_count": 3,
+    "manual_fallback_used": false
+  },
+  "fixed_test_commands": [
+    {
+      "command": "mvn -B test -T 2C --file pom.xml",
+      "oracle_id": "rocketmq-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "Coverage",
+      "step": "Generate coverage report",
+      "oracle_priority": 1
+    },
+    {
+      "command": "mvn clean verify -Pit-test -Pskip-unit-tests",
+      "oracle_id": "rocketmq-ci-test-02",
+      "source": "ci_workflow_log",
+      "workflow": "Run Integration Tests",
+      "step": "Run integration tests with Maven",
+      "oracle_priority": 2
+    },
+    {
+      "command": "bazel test --config=remote //...",
+      "oracle_id": "rocketmq-ci-test-03",
+      "source": "ci_workflow_log",
+      "workflow": "Build and Run Tests by Bazel",
+      "step": "Run Tests",
+      "oracle_priority": 3
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/RxJava/RxJava.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values.",
+  "repository_metadata": {
+    "repository": "ReactiveX/RxJava",
+    "repository_url": "https://github.com/ReactiveX/RxJava",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:33.513171+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/RxJava/RxJava.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/RxJava",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/RxJava/ReactiveX__RxJava",
+    "source_files": [
+      "ReactiveX__RxJava/Announce_Release_to_Discord__248043642/discord-release-announce.yml",
+      "ReactiveX__RxJava/Announce_RxJava_Release_on_RxJava__248642083/release-notify-x.yml",
+      "ReactiveX__RxJava/Entropy_Beauty_TruffleHog_Scan__244529196/entropy-beauty-scan.yml",
+      "ReactiveX__RxJava/Entropy_Secret_Scan__244503386/entropy-scan.yml",
+      "ReactiveX__RxJava/Preview-JDKs__251470392/gradle_preview_jdks.yml",
+      "ReactiveX__RxJava/Pull_Request__3742203/gradle_pr.yml",
+      "ReactiveX__RxJava/Release__3742591/gradle_release.yml",
+      "ReactiveX__RxJava/Scorecard_supply-chain_security__80143117/scorecard.yml",
+      "ReactiveX__RxJava/Snapshot__3742592/gradle_snapshot.yml",
+      "ReactiveX__RxJava/Validate_Gradle_Wrapper__395010/gradle-wrapper-validation.yml",
+      "ReactiveX__RxJava/Announce_Release_to_Discord__248043642/run_23950766151.log",
+      "ReactiveX__RxJava/Announce_RxJava_Release_on_RxJava__248642083/run_23950766150.log",
+      "ReactiveX__RxJava/Entropy_Beauty_TruffleHog_Scan__244529196/run_26153836037.log",
+      "ReactiveX__RxJava/Entropy_Secret_Scan__244503386/run_22943908306.log",
+      "ReactiveX__RxJava/Preview-JDKs__251470392/run_26153837412.log",
+      "ReactiveX__RxJava/Pull_Request__3742203/run_26153837332.log",
+      "ReactiveX__RxJava/Release__3742591/run_23950766196.log",
+      "ReactiveX__RxJava/Scorecard_supply-chain_security__80143117/run_26229938466.log",
+      "ReactiveX__RxJava/Snapshot__3742592/run_26148470350.log",
+      "ReactiveX__RxJava/Validate_Gradle_Wrapper__395010/run_26153837339.log"
+    ],
+    "raw_workflow_file_count": 10,
+    "raw_log_file_count": 10,
+    "raw_workflow_command_count": 26,
+    "raw_log_run_group_count": 94,
+    "selected_test_oracle_count": 1,
+    "manual_fallback_used": false
+  },
+  "fixed_test_commands": [
+    {
+      "command": "./gradlew test --tests \"io.reactivex.rxjava4.validators.*\" --stacktrace --no-daemon",
+      "oracle_id": "rxjava-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "Preview-JDKs",
+      "step": "Run Validity Tests Upfront",
+      "oracle_priority": 1
+    }
+  ]
+}

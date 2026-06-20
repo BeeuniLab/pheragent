@@ -1,0 +1,64 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/dubbo/dubbo.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values.",
+  "repository_metadata": {
+    "repository": "apache/dubbo",
+    "repository_url": "https://github.com/apache/dubbo",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:12.744715+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/dubbo/dubbo.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/dubbo",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/dubbo/apache__dubbo",
+    "source_files": [
+      "apache__dubbo/Build_and_Test_For_PR__38056936/build-and-test-pr.yml",
+      "apache__dubbo/Build_and_Test_For_PR__38056936/run_26179184590.log"
+    ],
+    "raw_workflow_file_count": 1,
+    "raw_log_file_count": 1,
+    "raw_workflow_command_count": 39,
+    "raw_log_run_group_count": 332,
+    "selected_test_oracle_count": 3,
+    "manual_fallback_used": false
+  },
+  "fixed_test_commands": [
+    {
+      "command": "set -o pipefail",
+      "oracle_id": "dubbo-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "Build and Test For PR",
+      "step": "Test with maven on Java: 8",
+      "oracle_priority": 1
+    },
+    {
+      "command": "./mvnw -e --batch-mode --no-snapshot-updates --no-transfer-progress --fail-fast clean test verify -Pjacoco,jdk15ge-simple,'!jdk15ge-add-open',skip-spotless -DtrimStackTrace=false -Dmaven.test.skip=false -Dcheckstyle.skip=false -Dcheckstyle_unix.skip=false -Drat.skip=false -DembeddedZookeeperPath=/home/runner/work/dubbo/dubbo/.tmp/zookeeper 2>&1 | tee >(grep -n -B 1 -A 200 \"FAILURE! -- in\" > test_errors.log)",
+      "oracle_id": "dubbo-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "Build and Test For PR",
+      "step": "Test with maven on Java: 8",
+      "oracle_priority": 2
+    },
+    {
+      "command": "cd test && bash ./run-tests.sh",
+      "oracle_id": "dubbo-ci-test-02",
+      "source": "ci_workflow_log",
+      "workflow": "Build and Test For PR",
+      "step": "Run tests",
+      "oracle_priority": 3
+    },
+    {
+      "command": "set -o pipefail",
+      "oracle_id": "dubbo-ci-test-03",
+      "source": "ci_log_run_group",
+      "workflow": "Build_and_Test_For_PR__38056936",
+      "oracle_priority": 4
+    },
+    {
+      "command": "./mvnw -e --batch-mode --no-snapshot-updates --no-transfer-progress --fail-fast clean test verify -Pjacoco,'!jdk15ge-add-open',skip-spotless -DtrimStackTrace=false -Dmaven.test.skip=false -Dcheckstyle.skip=false -Dcheckstyle_unix.skip=false -Drat.skip=false -DembeddedZookeeperPath=/home/runner/work/dubbo/dubbo/.tmp/zookeeper 2>&1 | tee >(grep -n -B 1 -A 200 \"FAILURE! -- in\" > test_errors.log)",
+      "oracle_id": "dubbo-ci-test-03",
+      "source": "ci_log_run_group",
+      "workflow": "Build_and_Test_For_PR__38056936",
+      "oracle_priority": 5
+    }
+  ]
+}

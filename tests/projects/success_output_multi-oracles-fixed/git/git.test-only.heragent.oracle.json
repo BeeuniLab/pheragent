@@ -1,0 +1,27 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/git/git.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values.",
+  "repository_metadata": {
+    "repository": "git/git",
+    "repository_url": "https://github.com/git/git",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:13.180806+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/git/git.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/git",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/git/git__git",
+    "source_files": [
+      "git__git/check-style__107061882/check-style.yml",
+      "git__git/check-whitespace__3232643/check-whitespace.yml",
+      "git__git/check-style__107061882/run_26284143456.log",
+      "git__git/check-whitespace__3232643/run_26284143461.log"
+    ],
+    "raw_workflow_file_count": 2,
+    "raw_log_file_count": 2,
+    "raw_workflow_command_count": 3,
+    "raw_log_run_group_count": 5,
+    "selected_test_oracle_count": 0,
+    "manual_fallback_used": true
+  },
+  "fixed_test_commands": []
+}

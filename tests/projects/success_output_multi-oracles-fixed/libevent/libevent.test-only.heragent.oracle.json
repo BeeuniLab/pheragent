@@ -1,0 +1,1148 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/libevent/libevent.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values.",
+  "repository_metadata": {
+    "repository": "libevent/libevent",
+    "repository_url": "https://github.com/libevent/libevent",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:16.886385+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/libevent/libevent.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/libevent",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/libevent/libevent__libevent",
+    "source_files": [
+      "libevent__libevent/build__29961661/build.yml",
+      "libevent__libevent/CIFuzz__41302341/cifuzz.yml",
+      "libevent__libevent/Scorecard_supply-chain_security__63304268/scorecard.yml",
+      "libevent__libevent/upstream__29961660/master.yml",
+      "libevent__libevent/build__29961661/run_23713522108.log",
+      "libevent__libevent/CIFuzz__41302341/run_25718960742.log",
+      "libevent__libevent/Scorecard_supply-chain_security__63304268/run_26269313073.log",
+      "libevent__libevent/upstream__29961660/run_25718927791.log"
+    ],
+    "raw_workflow_file_count": 4,
+    "raw_log_file_count": 4,
+    "raw_workflow_command_count": 45,
+    "raw_log_run_group_count": 471,
+    "selected_test_oracle_count": 12,
+    "manual_fallback_used": false
+  },
+  "fixed_test_commands": [
+    {
+      "command": "$EVENT_TESTS_PARALLEL=1",
+      "oracle_id": "libevent-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "build",
+      "step": "Test",
+      "oracle_priority": 1
+    },
+    {
+      "command": "cd build",
+      "oracle_id": "libevent-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "build",
+      "step": "Test",
+      "oracle_priority": 2
+    },
+    {
+      "command": "try {",
+      "oracle_id": "libevent-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "build",
+      "step": "Test",
+      "oracle_priority": 3
+    },
+    {
+      "command": "if (\"NONE\" -eq \"TEST_EXPORT_STATIC\") {",
+      "oracle_id": "libevent-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "build",
+      "step": "Test",
+      "oracle_priority": 4
+    },
+    {
+      "command": "python ../test-export/test-export.py static",
+      "oracle_id": "libevent-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "build",
+      "step": "Test",
+      "oracle_priority": 5
+    },
+    {
+      "command": "} elseif (\"NONE\" -eq \"TEST_EXPORT_SHARED\") {",
+      "oracle_id": "libevent-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "build",
+      "step": "Test",
+      "oracle_priority": 6
+    },
+    {
+      "command": "python ../test-export/test-export.py shared",
+      "oracle_id": "libevent-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "build",
+      "step": "Test",
+      "oracle_priority": 7
+    },
+    {
+      "command": "} else {",
+      "oracle_id": "libevent-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "build",
+      "step": "Test",
+      "oracle_priority": 8
+    },
+    {
+      "command": "ctest --output-on-failure -j $EVENT_TESTS_PARALLEL",
+      "oracle_id": "libevent-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "build",
+      "step": "Test",
+      "oracle_priority": 9
+    },
+    {
+      "command": "if ($LastExitCode -ne 0) { $host.SetShouldExit($LastExitCode) }",
+      "oracle_id": "libevent-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "build",
+      "step": "Test",
+      "oracle_priority": 10
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "build",
+      "step": "Test",
+      "oracle_priority": 11
+    },
+    {
+      "command": "} catch {",
+      "oracle_id": "libevent-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "build",
+      "step": "Test",
+      "oracle_priority": 12
+    },
+    {
+      "command": "$host.SetShouldExit($LastExitCode)",
+      "oracle_id": "libevent-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "build",
+      "step": "Test",
+      "oracle_priority": 13
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "build",
+      "step": "Test",
+      "oracle_priority": 14
+    },
+    {
+      "command": "$env:PATH=\"D:\\a\\_temp\\msys64\\mingw64\\bin;D:\\a\\_temp\\msys64\\usr\\bin;$env:PATH\"",
+      "oracle_id": "libevent-ci-test-02",
+      "source": "ci_workflow_log",
+      "workflow": "build",
+      "step": "Test",
+      "oracle_priority": 15
+    },
+    {
+      "command": "cd build",
+      "oracle_id": "libevent-ci-test-02",
+      "source": "ci_workflow_log",
+      "workflow": "build",
+      "step": "Test",
+      "oracle_priority": 16
+    },
+    {
+      "command": "ctest --output-on-failure",
+      "oracle_id": "libevent-ci-test-02",
+      "source": "ci_workflow_log",
+      "workflow": "build",
+      "step": "Test",
+      "oracle_priority": 17
+    },
+    {
+      "command": "$EVENT_TESTS_PARALLEL=1",
+      "oracle_id": "libevent-ci-test-03",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 18
+    },
+    {
+      "command": "cd build",
+      "oracle_id": "libevent-ci-test-03",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 19
+    },
+    {
+      "command": "try {",
+      "oracle_id": "libevent-ci-test-03",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 20
+    },
+    {
+      "command": "if (\"DISABLE_THREAD_SUPPORT\" -eq \"TEST_EXPORT_STATIC\") {",
+      "oracle_id": "libevent-ci-test-03",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 21
+    },
+    {
+      "command": "python ../test-export/test-export.py static",
+      "oracle_id": "libevent-ci-test-03",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 22
+    },
+    {
+      "command": "} elseif (\"DISABLE_THREAD_SUPPORT\" -eq \"TEST_EXPORT_SHARED\") {",
+      "oracle_id": "libevent-ci-test-03",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 23
+    },
+    {
+      "command": "python ../test-export/test-export.py shared",
+      "oracle_id": "libevent-ci-test-03",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 24
+    },
+    {
+      "command": "} else {",
+      "oracle_id": "libevent-ci-test-03",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 25
+    },
+    {
+      "command": "ctest --output-on-failure -j $EVENT_TESTS_PARALLEL",
+      "oracle_id": "libevent-ci-test-03",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 26
+    },
+    {
+      "command": "if ($LastExitCode -ne 0) { $host.SetShouldExit($LastExitCode) }",
+      "oracle_id": "libevent-ci-test-03",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 27
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-03",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 28
+    },
+    {
+      "command": "} catch {",
+      "oracle_id": "libevent-ci-test-03",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 29
+    },
+    {
+      "command": "$host.SetShouldExit($LastExitCode)",
+      "oracle_id": "libevent-ci-test-03",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 30
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-03",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 31
+    },
+    {
+      "command": "$EVENT_TESTS_PARALLEL=1",
+      "oracle_id": "libevent-ci-test-04",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 32
+    },
+    {
+      "command": "cd build",
+      "oracle_id": "libevent-ci-test-04",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 33
+    },
+    {
+      "command": "try {",
+      "oracle_id": "libevent-ci-test-04",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 34
+    },
+    {
+      "command": "if (\"DISABLE_DEBUG_MODE\" -eq \"TEST_EXPORT_STATIC\") {",
+      "oracle_id": "libevent-ci-test-04",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 35
+    },
+    {
+      "command": "python ../test-export/test-export.py static",
+      "oracle_id": "libevent-ci-test-04",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 36
+    },
+    {
+      "command": "} elseif (\"DISABLE_DEBUG_MODE\" -eq \"TEST_EXPORT_SHARED\") {",
+      "oracle_id": "libevent-ci-test-04",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 37
+    },
+    {
+      "command": "python ../test-export/test-export.py shared",
+      "oracle_id": "libevent-ci-test-04",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 38
+    },
+    {
+      "command": "} else {",
+      "oracle_id": "libevent-ci-test-04",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 39
+    },
+    {
+      "command": "ctest --output-on-failure -j $EVENT_TESTS_PARALLEL",
+      "oracle_id": "libevent-ci-test-04",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 40
+    },
+    {
+      "command": "if ($LastExitCode -ne 0) { $host.SetShouldExit($LastExitCode) }",
+      "oracle_id": "libevent-ci-test-04",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 41
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-04",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 42
+    },
+    {
+      "command": "} catch {",
+      "oracle_id": "libevent-ci-test-04",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 43
+    },
+    {
+      "command": "$host.SetShouldExit($LastExitCode)",
+      "oracle_id": "libevent-ci-test-04",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 44
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-04",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 45
+    },
+    {
+      "command": "$EVENT_TESTS_PARALLEL=1",
+      "oracle_id": "libevent-ci-test-05",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 46
+    },
+    {
+      "command": "cd build",
+      "oracle_id": "libevent-ci-test-05",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 47
+    },
+    {
+      "command": "try {",
+      "oracle_id": "libevent-ci-test-05",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 48
+    },
+    {
+      "command": "if (\"DISABLE_OPENSSL\" -eq \"TEST_EXPORT_STATIC\") {",
+      "oracle_id": "libevent-ci-test-05",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 49
+    },
+    {
+      "command": "python ../test-export/test-export.py static",
+      "oracle_id": "libevent-ci-test-05",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 50
+    },
+    {
+      "command": "} elseif (\"DISABLE_OPENSSL\" -eq \"TEST_EXPORT_SHARED\") {",
+      "oracle_id": "libevent-ci-test-05",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 51
+    },
+    {
+      "command": "python ../test-export/test-export.py shared",
+      "oracle_id": "libevent-ci-test-05",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 52
+    },
+    {
+      "command": "} else {",
+      "oracle_id": "libevent-ci-test-05",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 53
+    },
+    {
+      "command": "ctest --output-on-failure -j $EVENT_TESTS_PARALLEL",
+      "oracle_id": "libevent-ci-test-05",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 54
+    },
+    {
+      "command": "if ($LastExitCode -ne 0) { $host.SetShouldExit($LastExitCode) }",
+      "oracle_id": "libevent-ci-test-05",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 55
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-05",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 56
+    },
+    {
+      "command": "} catch {",
+      "oracle_id": "libevent-ci-test-05",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 57
+    },
+    {
+      "command": "$host.SetShouldExit($LastExitCode)",
+      "oracle_id": "libevent-ci-test-05",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 58
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-05",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 59
+    },
+    {
+      "command": "$EVENT_TESTS_PARALLEL=1",
+      "oracle_id": "libevent-ci-test-06",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 60
+    },
+    {
+      "command": "cd build",
+      "oracle_id": "libevent-ci-test-06",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 61
+    },
+    {
+      "command": "try {",
+      "oracle_id": "libevent-ci-test-06",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 62
+    },
+    {
+      "command": "if (\"LIBRARY_TYPE_STATIC\" -eq \"TEST_EXPORT_STATIC\") {",
+      "oracle_id": "libevent-ci-test-06",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 63
+    },
+    {
+      "command": "python ../test-export/test-export.py static",
+      "oracle_id": "libevent-ci-test-06",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 64
+    },
+    {
+      "command": "} elseif (\"LIBRARY_TYPE_STATIC\" -eq \"TEST_EXPORT_SHARED\") {",
+      "oracle_id": "libevent-ci-test-06",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 65
+    },
+    {
+      "command": "python ../test-export/test-export.py shared",
+      "oracle_id": "libevent-ci-test-06",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 66
+    },
+    {
+      "command": "} else {",
+      "oracle_id": "libevent-ci-test-06",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 67
+    },
+    {
+      "command": "ctest --output-on-failure -j $EVENT_TESTS_PARALLEL",
+      "oracle_id": "libevent-ci-test-06",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 68
+    },
+    {
+      "command": "if ($LastExitCode -ne 0) { $host.SetShouldExit($LastExitCode) }",
+      "oracle_id": "libevent-ci-test-06",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 69
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-06",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 70
+    },
+    {
+      "command": "} catch {",
+      "oracle_id": "libevent-ci-test-06",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 71
+    },
+    {
+      "command": "$host.SetShouldExit($LastExitCode)",
+      "oracle_id": "libevent-ci-test-06",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 72
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-06",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 73
+    },
+    {
+      "command": "$EVENT_TESTS_PARALLEL=1",
+      "oracle_id": "libevent-ci-test-07",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 74
+    },
+    {
+      "command": "cd build",
+      "oracle_id": "libevent-ci-test-07",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 75
+    },
+    {
+      "command": "try {",
+      "oracle_id": "libevent-ci-test-07",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 76
+    },
+    {
+      "command": "if (\"TEST_EXPORT_SHARED\" -eq \"TEST_EXPORT_STATIC\") {",
+      "oracle_id": "libevent-ci-test-07",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 77
+    },
+    {
+      "command": "python ../test-export/test-export.py static",
+      "oracle_id": "libevent-ci-test-07",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 78
+    },
+    {
+      "command": "} elseif (\"TEST_EXPORT_SHARED\" -eq \"TEST_EXPORT_SHARED\") {",
+      "oracle_id": "libevent-ci-test-07",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 79
+    },
+    {
+      "command": "python ../test-export/test-export.py shared",
+      "oracle_id": "libevent-ci-test-07",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 80
+    },
+    {
+      "command": "} else {",
+      "oracle_id": "libevent-ci-test-07",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 81
+    },
+    {
+      "command": "ctest --output-on-failure -j $EVENT_TESTS_PARALLEL",
+      "oracle_id": "libevent-ci-test-07",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 82
+    },
+    {
+      "command": "if ($LastExitCode -ne 0) { $host.SetShouldExit($LastExitCode) }",
+      "oracle_id": "libevent-ci-test-07",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 83
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-07",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 84
+    },
+    {
+      "command": "} catch {",
+      "oracle_id": "libevent-ci-test-07",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 85
+    },
+    {
+      "command": "$host.SetShouldExit($LastExitCode)",
+      "oracle_id": "libevent-ci-test-07",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 86
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-07",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 87
+    },
+    {
+      "command": "$EVENT_TESTS_PARALLEL=1",
+      "oracle_id": "libevent-ci-test-08",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 88
+    },
+    {
+      "command": "cd build",
+      "oracle_id": "libevent-ci-test-08",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 89
+    },
+    {
+      "command": "try {",
+      "oracle_id": "libevent-ci-test-08",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 90
+    },
+    {
+      "command": "if (\"TEST_EXPORT_STATIC\" -eq \"TEST_EXPORT_STATIC\") {",
+      "oracle_id": "libevent-ci-test-08",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 91
+    },
+    {
+      "command": "python ../test-export/test-export.py static",
+      "oracle_id": "libevent-ci-test-08",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 92
+    },
+    {
+      "command": "} elseif (\"TEST_EXPORT_STATIC\" -eq \"TEST_EXPORT_SHARED\") {",
+      "oracle_id": "libevent-ci-test-08",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 93
+    },
+    {
+      "command": "python ../test-export/test-export.py shared",
+      "oracle_id": "libevent-ci-test-08",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 94
+    },
+    {
+      "command": "} else {",
+      "oracle_id": "libevent-ci-test-08",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 95
+    },
+    {
+      "command": "ctest --output-on-failure -j $EVENT_TESTS_PARALLEL",
+      "oracle_id": "libevent-ci-test-08",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 96
+    },
+    {
+      "command": "if ($LastExitCode -ne 0) { $host.SetShouldExit($LastExitCode) }",
+      "oracle_id": "libevent-ci-test-08",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 97
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-08",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 98
+    },
+    {
+      "command": "} catch {",
+      "oracle_id": "libevent-ci-test-08",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 99
+    },
+    {
+      "command": "$host.SetShouldExit($LastExitCode)",
+      "oracle_id": "libevent-ci-test-08",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 100
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-08",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 101
+    },
+    {
+      "command": "$EVENT_TESTS_PARALLEL=1",
+      "oracle_id": "libevent-ci-test-09",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 102
+    },
+    {
+      "command": "cd build",
+      "oracle_id": "libevent-ci-test-09",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 103
+    },
+    {
+      "command": "try {",
+      "oracle_id": "libevent-ci-test-09",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 104
+    },
+    {
+      "command": "if (\"UNICODE_TEMPORARY_DIRECTORY\" -eq \"TEST_EXPORT_STATIC\") {",
+      "oracle_id": "libevent-ci-test-09",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 105
+    },
+    {
+      "command": "python ../test-export/test-export.py static",
+      "oracle_id": "libevent-ci-test-09",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 106
+    },
+    {
+      "command": "} elseif (\"UNICODE_TEMPORARY_DIRECTORY\" -eq \"TEST_EXPORT_SHARED\") {",
+      "oracle_id": "libevent-ci-test-09",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 107
+    },
+    {
+      "command": "python ../test-export/test-export.py shared",
+      "oracle_id": "libevent-ci-test-09",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 108
+    },
+    {
+      "command": "} else {",
+      "oracle_id": "libevent-ci-test-09",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 109
+    },
+    {
+      "command": "ctest --output-on-failure -j $EVENT_TESTS_PARALLEL",
+      "oracle_id": "libevent-ci-test-09",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 110
+    },
+    {
+      "command": "if ($LastExitCode -ne 0) { $host.SetShouldExit($LastExitCode) }",
+      "oracle_id": "libevent-ci-test-09",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 111
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-09",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 112
+    },
+    {
+      "command": "} catch {",
+      "oracle_id": "libevent-ci-test-09",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 113
+    },
+    {
+      "command": "$host.SetShouldExit($LastExitCode)",
+      "oracle_id": "libevent-ci-test-09",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 114
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-09",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 115
+    },
+    {
+      "command": "$EVENT_TESTS_PARALLEL=1",
+      "oracle_id": "libevent-ci-test-10",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 116
+    },
+    {
+      "command": "cd build",
+      "oracle_id": "libevent-ci-test-10",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 117
+    },
+    {
+      "command": "try {",
+      "oracle_id": "libevent-ci-test-10",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 118
+    },
+    {
+      "command": "if (\"DISABLE_MM_REPLACEMENT\" -eq \"TEST_EXPORT_STATIC\") {",
+      "oracle_id": "libevent-ci-test-10",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 119
+    },
+    {
+      "command": "python ../test-export/test-export.py static",
+      "oracle_id": "libevent-ci-test-10",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 120
+    },
+    {
+      "command": "} elseif (\"DISABLE_MM_REPLACEMENT\" -eq \"TEST_EXPORT_SHARED\") {",
+      "oracle_id": "libevent-ci-test-10",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 121
+    },
+    {
+      "command": "python ../test-export/test-export.py shared",
+      "oracle_id": "libevent-ci-test-10",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 122
+    },
+    {
+      "command": "} else {",
+      "oracle_id": "libevent-ci-test-10",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 123
+    },
+    {
+      "command": "ctest --output-on-failure -j $EVENT_TESTS_PARALLEL",
+      "oracle_id": "libevent-ci-test-10",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 124
+    },
+    {
+      "command": "if ($LastExitCode -ne 0) { $host.SetShouldExit($LastExitCode) }",
+      "oracle_id": "libevent-ci-test-10",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 125
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-10",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 126
+    },
+    {
+      "command": "} catch {",
+      "oracle_id": "libevent-ci-test-10",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 127
+    },
+    {
+      "command": "$host.SetShouldExit($LastExitCode)",
+      "oracle_id": "libevent-ci-test-10",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 128
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-10",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 129
+    },
+    {
+      "command": "$EVENT_TESTS_PARALLEL=1",
+      "oracle_id": "libevent-ci-test-11",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 130
+    },
+    {
+      "command": "cd build",
+      "oracle_id": "libevent-ci-test-11",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 131
+    },
+    {
+      "command": "try {",
+      "oracle_id": "libevent-ci-test-11",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 132
+    },
+    {
+      "command": "if (\"NO_SSL\" -eq \"TEST_EXPORT_STATIC\") {",
+      "oracle_id": "libevent-ci-test-11",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 133
+    },
+    {
+      "command": "python ../test-export/test-export.py static",
+      "oracle_id": "libevent-ci-test-11",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 134
+    },
+    {
+      "command": "} elseif (\"NO_SSL\" -eq \"TEST_EXPORT_SHARED\") {",
+      "oracle_id": "libevent-ci-test-11",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 135
+    },
+    {
+      "command": "python ../test-export/test-export.py shared",
+      "oracle_id": "libevent-ci-test-11",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 136
+    },
+    {
+      "command": "} else {",
+      "oracle_id": "libevent-ci-test-11",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 137
+    },
+    {
+      "command": "ctest --output-on-failure -j $EVENT_TESTS_PARALLEL",
+      "oracle_id": "libevent-ci-test-11",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 138
+    },
+    {
+      "command": "if ($LastExitCode -ne 0) { $host.SetShouldExit($LastExitCode) }",
+      "oracle_id": "libevent-ci-test-11",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 139
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-11",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 140
+    },
+    {
+      "command": "} catch {",
+      "oracle_id": "libevent-ci-test-11",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 141
+    },
+    {
+      "command": "$host.SetShouldExit($LastExitCode)",
+      "oracle_id": "libevent-ci-test-11",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 142
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-11",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 143
+    },
+    {
+      "command": "$EVENT_TESTS_PARALLEL=1",
+      "oracle_id": "libevent-ci-test-12",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 144
+    },
+    {
+      "command": "cd build",
+      "oracle_id": "libevent-ci-test-12",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 145
+    },
+    {
+      "command": "try {",
+      "oracle_id": "libevent-ci-test-12",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 146
+    },
+    {
+      "command": "if (\"DUNICODE\" -eq \"TEST_EXPORT_STATIC\") {",
+      "oracle_id": "libevent-ci-test-12",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 147
+    },
+    {
+      "command": "python ../test-export/test-export.py static",
+      "oracle_id": "libevent-ci-test-12",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 148
+    },
+    {
+      "command": "} elseif (\"DUNICODE\" -eq \"TEST_EXPORT_SHARED\") {",
+      "oracle_id": "libevent-ci-test-12",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 149
+    },
+    {
+      "command": "python ../test-export/test-export.py shared",
+      "oracle_id": "libevent-ci-test-12",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 150
+    },
+    {
+      "command": "} else {",
+      "oracle_id": "libevent-ci-test-12",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 151
+    },
+    {
+      "command": "ctest --output-on-failure -j $EVENT_TESTS_PARALLEL",
+      "oracle_id": "libevent-ci-test-12",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 152
+    },
+    {
+      "command": "if ($LastExitCode -ne 0) { $host.SetShouldExit($LastExitCode) }",
+      "oracle_id": "libevent-ci-test-12",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 153
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-12",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 154
+    },
+    {
+      "command": "} catch {",
+      "oracle_id": "libevent-ci-test-12",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 155
+    },
+    {
+      "command": "$host.SetShouldExit($LastExitCode)",
+      "oracle_id": "libevent-ci-test-12",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 156
+    },
+    {
+      "command": "}",
+      "oracle_id": "libevent-ci-test-12",
+      "source": "ci_log_run_group",
+      "workflow": "build__29961661",
+      "oracle_priority": 157
+    }
+  ]
+}

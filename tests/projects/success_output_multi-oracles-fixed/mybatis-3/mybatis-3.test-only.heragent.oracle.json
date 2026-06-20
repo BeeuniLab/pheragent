@@ -1,0 +1,52 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/mybatis-3/mybatis-3.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values.",
+  "repository_metadata": {
+    "repository": "mybatis/mybatis-3",
+    "repository_url": "https://github.com/mybatis/mybatis-3",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:18.262638+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/mybatis-3/mybatis-3.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/mybatis-3",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/mybatis-3/mybatis__mybatis-3",
+    "source_files": [
+      "mybatis__mybatis-3/Cleanup_Old_Workflow_Runs__220128919/cleanup.yaml",
+      "mybatis__mybatis-3/CodeQL__220128671/codeql.yaml",
+      "mybatis__mybatis-3/Coveralls__4046282/coveralls.yaml",
+      "mybatis__mybatis-3/Java_CI__2998617/ci.yaml",
+      "mybatis__mybatis-3/SonarCloud__3884177/sonar.yaml",
+      "mybatis__mybatis-3/Sonatype__3884178/sonatype.yaml",
+      "mybatis__mybatis-3/Cleanup_Old_Workflow_Runs__220128919/run_26261645651.log",
+      "mybatis__mybatis-3/CodeQL__220128671/run_26288498215.log",
+      "mybatis__mybatis-3/Coveralls__4046282/run_26288498205.log",
+      "mybatis__mybatis-3/Java_CI__2998617/run_26288498216.log",
+      "mybatis__mybatis-3/SonarCloud__3884177/run_26009129275.log",
+      "mybatis__mybatis-3/Sonatype__3884178/run_26009129273.log"
+    ],
+    "raw_workflow_file_count": 6,
+    "raw_log_file_count": 6,
+    "raw_workflow_command_count": 8,
+    "raw_log_run_group_count": 47,
+    "selected_test_oracle_count": 2,
+    "manual_fallback_used": false
+  },
+  "fixed_test_commands": [
+    {
+      "command": "./mvnw test --batch-mode --no-transfer-progress --quiet --show-version -Dlicense.skip=true",
+      "oracle_id": "mybatis-3-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "Coveralls",
+      "step": "Run the build",
+      "oracle_priority": 1
+    },
+    {
+      "command": "./mvnw test --batch-mode --no-transfer-progress --show-version -D\"license.skip=true\" ${TEST_CONTAINERS_PROFILE}",
+      "oracle_id": "mybatis-3-ci-test-02",
+      "source": "ci_workflow_log",
+      "workflow": "Java CI",
+      "step": "Test with Maven",
+      "oracle_priority": 2
+    }
+  ]
+}

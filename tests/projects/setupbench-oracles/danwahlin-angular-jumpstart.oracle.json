@@ -1,0 +1,12 @@
+{
+  "repo_url": "https://github.com/DanWahlin/Angular-JumpStart",
+  "owner_repo": "DanWahlin/Angular-JumpStart",
+  "commit_version": "12fa4e4cc118990a0a045a8a2130c23e2350977c",
+  "fixed_test_commands": [
+    {
+      "name": "setupbench validation",
+      "command": "_pheragent_setupbench_log=\"$(mktemp /tmp/pheragent-setupbench.XXXXXX)\"\n(\nverify_web() { npm start & pid=$!; sleep 90; code=$(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8080); [ $code -eq 200 ] && echo \"Setup successful\" || echo \"Setup failed\"; pgid=$(ps -o pgid= $pid | tr -d ' '); kill -TERM -$pgid 2>/dev/null; }; verify_web || echo \"Setup failed\"\n) >\"$_pheragent_setupbench_log\" 2>&1\n_pheragent_setupbench_status=$?\ncat \"$_pheragent_setupbench_log\"\nif grep -q \"Setup successful\" \"$_pheragent_setupbench_log\" && ! grep -q \"Setup failed\" \"$_pheragent_setupbench_log\"; then\n  rm -f \"$_pheragent_setupbench_log\"\n  exit 0\nfi\nrm -f \"$_pheragent_setupbench_log\"\nif [ \"$_pheragent_setupbench_status\" -eq 0 ]; then\n  exit 1\nfi\nexit \"$_pheragent_setupbench_status\"",
+      "original_command": "verify_web() { npm start & pid=$!; sleep 90; code=$(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8080); [ $code -eq 200 ] && echo \"Setup successful\" || echo \"Setup failed\"; pgid=$(ps -o pgid= $pid | tr -d ' '); kill -TERM -$pgid 2>/dev/null; }; verify_web || echo \"Setup failed\""
+    }
+  ]
+}

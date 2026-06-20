@@ -1,0 +1,74 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/json/json.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values.",
+  "repository_metadata": {
+    "repository": "nlohmann/json",
+    "repository_url": "https://github.com/nlohmann/json",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:14.677762+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/json/json.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/json",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/json/nlohmann__json",
+    "source_files": [
+      "nlohmann__json/Check_amalgamation__32025853/check_amalgamation.yml",
+      "nlohmann__json/CIFuzz__41285333/cifuzz.yml",
+      "nlohmann__json/Code_scanning_-_action__1820989/codeql-analysis.yml",
+      "nlohmann__json/Comment_and_close_stale_issues_and_PR__138609138/stale.yml",
+      "nlohmann__json/Dependency_Review__133406002/dependency-review.yml",
+      "nlohmann__json/flawfinder__202727701/flawfinder.yml",
+      "nlohmann__json/macOS__1266003/macos.yml",
+      "nlohmann__json/Publish_documentation__31578408/publish_documentation.yml",
+      "nlohmann__json/Pull_Request_Labeler__31679349/labeler.yml",
+      "nlohmann__json/Scorecard_supply-chain_security__133411176/scorecards.yml",
+      "nlohmann__json/Semgrep__202731295/semgrep.yml",
+      "nlohmann__json/Ubuntu__1266004/ubuntu.yml",
+      "nlohmann__json/Windows__1266005/windows.yml",
+      "nlohmann__json/Check_amalgamation__32025853/run_26297471069.log",
+      "nlohmann__json/CIFuzz__41285333/run_26297471173.log",
+      "nlohmann__json/Code_scanning_-_action__1820989/run_26297471178.log",
+      "nlohmann__json/Comment_and_close_stale_issues_and_PR__138609138/run_26261448421.log",
+      "nlohmann__json/Dependency_Review__133406002/run_26297471235.log",
+      "nlohmann__json/flawfinder__202727701/run_26297471092.log",
+      "nlohmann__json/macOS__1266003/run_26297471237.log",
+      "nlohmann__json/Publish_documentation__31578408/run_26250827058.log",
+      "nlohmann__json/Pull_Request_Labeler__31679349/run_26297469647.log",
+      "nlohmann__json/Scorecard_supply-chain_security__133411176/run_26287132468.log",
+      "nlohmann__json/Semgrep__202731295/run_26297471096.log",
+      "nlohmann__json/Ubuntu__1266004/run_26297471292.log",
+      "nlohmann__json/Windows__1266005/run_26297471095.log"
+    ],
+    "raw_workflow_file_count": 13,
+    "raw_log_file_count": 13,
+    "raw_workflow_command_count": 70,
+    "raw_log_run_group_count": 664,
+    "selected_test_oracle_count": 3,
+    "manual_fallback_used": false
+  },
+  "fixed_test_commands": [
+    {
+      "command": "cd build ; ctest -j 10 --output-on-failure",
+      "oracle_id": "json-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "macOS",
+      "step": "Test",
+      "oracle_priority": 1
+    },
+    {
+      "command": "cd build ; ctest -j 10 -C Debug --output-on-failure",
+      "oracle_id": "json-ci-test-02",
+      "source": "ci_workflow_log",
+      "workflow": "Windows",
+      "step": "Test",
+      "oracle_priority": 2
+    },
+    {
+      "command": "cd build ; ctest -j 10 -C Debug --exclude-regex \"test-unicode\" --output-on-failure",
+      "oracle_id": "json-ci-test-03",
+      "source": "ci_workflow_log",
+      "workflow": "Windows",
+      "step": "Test",
+      "oracle_priority": 3
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/Activiti/Activiti.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values.",
+  "repository_metadata": {
+    "repository": "Activiti/Activiti",
+    "repository_url": "https://github.com/Activiti/Activiti",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:05.118655+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/Activiti/Activiti.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/Activiti",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/Activiti/Activiti__Activiti",
+    "source_files": [
+      "Activiti__Activiti/CI__6108115/main.yml",
+      "Activiti__Activiti/CodeQL__66621974/codeql.yml",
+      "Activiti__Activiti/Create_Pre-release__37466238/create-github-prerelease.yaml",
+      "Activiti__Activiti/Dependency_Graph_Submission_of_Transitive_Dependencies__81357138/dependency-graph-submission.yml",
+      "Activiti__Activiti/PR_-_Validate_and_Build__82163476/main_pull.yml",
+      "Activiti__Activiti/PR_Review_check__170267060/pr-review-check.yml",
+      "Activiti__Activiti/Push_-_Validate_Build_and_Release__82407170/main_push.yml",
+      "Activiti__Activiti/CI__6108115/run_26151036383.log",
+      "Activiti__Activiti/CodeQL__66621974/run_26290948022.log",
+      "Activiti__Activiti/Create_Pre-release__37466238/run_26226071863.log",
+      "Activiti__Activiti/Dependency_Graph_Submission_of_Transitive_Dependencies__81357138/run_26225271201.log",
+      "Activiti__Activiti/PR_-_Validate_and_Build__82163476/run_26290948103.log",
+      "Activiti__Activiti/PR_Review_check__170267060/run_26294007949.log",
+      "Activiti__Activiti/Push_-_Validate_Build_and_Release__82407170/run_26225271207.log"
+    ],
+    "raw_workflow_file_count": 7,
+    "raw_log_file_count": 7,
+    "raw_workflow_command_count": 30,
+    "raw_log_run_group_count": 114,
+    "selected_test_oracle_count": 1,
+    "manual_fallback_used": false
+  },
+  "fixed_test_commands": [
+    {
+      "command": "mvn install --show-version --no-transfer-progress --settings settings.xml",
+      "oracle_id": "activiti-ci-test-01",
+      "source": "ci_log_run_group",
+      "workflow": "PR_-_Validate_and_Build__82163476",
+      "oracle_priority": 1
+    }
+  ]
+}

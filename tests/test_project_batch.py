@@ -657,6 +657,7 @@ def test_project_batch_builder_skips_existing_successful_project(tmp_path: Path)
                 "ok": True,
                 "run_id": "batch-flask",
                 "final_image": "pheragent:batch-flask-final",
+                "ablation_mode": "full",
             }
         ),
         encoding="utf-8",
@@ -711,8 +712,8 @@ def test_project_batch_builder_reruns_existing_success_with_different_ablation(
             {
                 "ok": True,
                 "run_id": "batch-flask",
-                "final_image": "pheragent:batch-flask-full",
-                "ablation_mode": "full",
+                "final_image": "pheragent:batch-flask-without-final-clean-replay",
+                "ablation_mode": "without-final-clean-replay",
             }
         ),
         encoding="utf-8",
@@ -780,6 +781,7 @@ def test_project_batch_builder_keeps_github_for_existing_success_without_oracles
                 "ok": True,
                 "run_id": "batch-flask",
                 "final_image": "pheragent:batch-flask-final",
+                "ablation_mode": "full",
             }
         ),
         encoding="utf-8",
@@ -1357,14 +1359,14 @@ def test_project_batch_builder_writes_llm_usage_jsonl(tmp_path: Path) -> None:
     ).build_all()
 
     assert result.ok
-    assert result.ablation_mode == "without-final-clean-replay"
+    assert result.ablation_mode == "full"
     assert result.progress_control == {
         "forward_granularity": "block",
         "recovery_granularity": "block",
         "local_repair": True,
         "patch_back": True,
         "checkpoint_rollback": True,
-        "final_clean_replay": False,
+        "final_clean_replay": True,
     }
     assert result.llm_usage_log_path == tmp_path / "projects" / "llm-usage-projects.jsonl"
     expected_manifest_path = (
@@ -1390,16 +1392,16 @@ def test_project_batch_builder_writes_llm_usage_jsonl(tmp_path: Path) -> None:
             "oracle_path": None,
             "failure_stage": None,
             "error": None,
-            "ablation_mode": "without-final-clean-replay",
+            "ablation_mode": "full",
             "progress_control": {
                 "forward_granularity": "block",
                 "recovery_granularity": "block",
                 "local_repair": True,
                 "patch_back": True,
                 "checkpoint_rollback": True,
-                "final_clean_replay": False,
+                "final_clean_replay": True,
             },
-            "final_clean_replay_enabled": False,
+            "final_clean_replay_enabled": True,
             "final_clean_replay_ok": None,
             "final_clean_replay_image": None,
             "final_clean_replay_failure_stage": None,

@@ -1,0 +1,12 @@
+{
+  "repo_url": "https://github.com/lhartikk/naivechain",
+  "owner_repo": "lhartikk/naivechain",
+  "commit_version": "dfd2481e7158f72e54fba4ce0bd2f48d0a44945e",
+  "fixed_test_commands": [
+    {
+      "name": "setupbench validation",
+      "command": "_pheragent_setupbench_log=\"$(mktemp /tmp/pheragent-setupbench.XXXXXX)\"\n(\nverify_multi_worker() { HTTP_PORT=3001 P2P_PORT=6001 npm start & pid1=$!; sleep 45; HTTP_PORT=3002 P2P_PORT=6002 PEERS=ws://localhost:6001 npm start & pid2=$!; sleep 45; code=$(curl -s -H \"Content-type:application/json\" --data '{\"data\" : \"Some data to the first block\"}' -o /dev/null -w \"%{http_code}\" http://localhost:3001/mineBlock); [ $code -eq 200 ] && echo \"Setup successful\" || echo \"Setup failed\"; pgid1=$(ps -o pgid= $pid1 | tr -d ' '); pgid2=$(ps -o pgid= $pid2 | tr -d ' '); kill -TERM -$pgid1 2>/dev/null; kill -TERM -$pgid2 2>/dev/null; }; verify_multi_worker || echo \"Setup failed\"\n) >\"$_pheragent_setupbench_log\" 2>&1\n_pheragent_setupbench_status=$?\ncat \"$_pheragent_setupbench_log\"\nif grep -q \"Setup successful\" \"$_pheragent_setupbench_log\" && ! grep -q \"Setup failed\" \"$_pheragent_setupbench_log\"; then\n  rm -f \"$_pheragent_setupbench_log\"\n  exit 0\nfi\nrm -f \"$_pheragent_setupbench_log\"\nif [ \"$_pheragent_setupbench_status\" -eq 0 ]; then\n  exit 1\nfi\nexit \"$_pheragent_setupbench_status\"",
+      "original_command": "verify_multi_worker() { HTTP_PORT=3001 P2P_PORT=6001 npm start & pid1=$!; sleep 45; HTTP_PORT=3002 P2P_PORT=6002 PEERS=ws://localhost:6001 npm start & pid2=$!; sleep 45; code=$(curl -s -H \"Content-type:application/json\" --data '{\"data\" : \"Some data to the first block\"}' -o /dev/null -w \"%{http_code}\" http://localhost:3001/mineBlock); [ $code -eq 200 ] && echo \"Setup successful\" || echo \"Setup failed\"; pgid1=$(ps -o pgid= $pid1 | tr -d ' '); pgid2=$(ps -o pgid= $pid2 | tr -d ' '); kill -TERM -$pgid1 2>/dev/null; kill -TERM -$pgid2 2>/dev/null; }; verify_multi_worker || echo \"Setup failed\""
+    }
+  ]
+}

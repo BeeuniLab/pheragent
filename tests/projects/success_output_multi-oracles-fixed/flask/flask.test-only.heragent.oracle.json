@@ -1,0 +1,29 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/flask/flask.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values.",
+  "repository_metadata": {
+    "repository": "pallets/flask",
+    "repository_url": "https://github.com/pallets/flask",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:13.149361+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/flask/flask.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/flask",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/flask/pallets__flask",
+    "source_files": [
+      "pallets__flask/GitHub_Actions_security_analysis_with_zizmor__243361684/zizmor.yaml",
+      "pallets__flask/Lock_inactive_closed_issues__3605901/lock.yaml",
+      "pallets__flask/pre-commit__115253103/pre-commit.yaml",
+      "pallets__flask/GitHub_Actions_security_analysis_with_zizmor__243361684/run_26066723721.log",
+      "pallets__flask/Lock_inactive_closed_issues__3605901/run_26261260987.log",
+      "pallets__flask/pre-commit__115253103/run_26241663207.log"
+    ],
+    "raw_workflow_file_count": 3,
+    "raw_log_file_count": 3,
+    "raw_workflow_command_count": 1,
+    "raw_log_run_group_count": 9,
+    "selected_test_oracle_count": 0,
+    "manual_fallback_used": true
+  },
+  "fixed_test_commands": []
+}

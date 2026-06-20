@@ -1,0 +1,12 @@
+{
+  "repo_url": "https://github.com/dishait/tov-template",
+  "owner_repo": "dishait/tov-template",
+  "commit_version": "39c0898b29f4bf51da8321f765fabd197bd2d592",
+  "fixed_test_commands": [
+    {
+      "name": "setupbench validation",
+      "command": "_pheragent_setupbench_log=\"$(mktemp /tmp/pheragent-setupbench.XXXXXX)\"\n(\nverify_web() { pnpm dev & pid=$!; sleep 90; code=$(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5173); [ $code -eq 200 ] && echo \"Setup successful\" || echo \"Setup failed\"; pgid=$(ps -o pgid= $pid | tr -d ' '); kill -TERM -$pgid 2>/dev/null; }; verify_web || echo \"Setup failed\"\n) >\"$_pheragent_setupbench_log\" 2>&1\n_pheragent_setupbench_status=$?\ncat \"$_pheragent_setupbench_log\"\nif grep -q \"Setup successful\" \"$_pheragent_setupbench_log\" && ! grep -q \"Setup failed\" \"$_pheragent_setupbench_log\"; then\n  rm -f \"$_pheragent_setupbench_log\"\n  exit 0\nfi\nrm -f \"$_pheragent_setupbench_log\"\nif [ \"$_pheragent_setupbench_status\" -eq 0 ]; then\n  exit 1\nfi\nexit \"$_pheragent_setupbench_status\"",
+      "original_command": "verify_web() { pnpm dev & pid=$!; sleep 90; code=$(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5173); [ $code -eq 200 ] && echo \"Setup successful\" || echo \"Setup failed\"; pgid=$(ps -o pgid= $pid | tr -d ' '); kill -TERM -$pgid 2>/dev/null; }; verify_web || echo \"Setup failed\""
+    }
+  ]
+}

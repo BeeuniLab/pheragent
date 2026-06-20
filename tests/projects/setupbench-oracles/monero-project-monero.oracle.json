@@ -1,0 +1,12 @@
+{
+  "repo_url": "https://github.com/monero-project/monero",
+  "owner_repo": "monero-project/monero",
+  "commit_version": "84685492e63867b72fc6412093273ecd625190d1",
+  "fixed_test_commands": [
+    {
+      "name": "setupbench validation",
+      "command": "_pheragent_setupbench_log=\"$(mktemp /tmp/pheragent-setupbench.XXXXXX)\"\n(\nmonerod --version | grep -q 'Monero ' && echo \"Setup successful\" || echo \"Setup failed\"\n) >\"$_pheragent_setupbench_log\" 2>&1\n_pheragent_setupbench_status=$?\ncat \"$_pheragent_setupbench_log\"\nif grep -q \"Setup successful\" \"$_pheragent_setupbench_log\" && ! grep -q \"Setup failed\" \"$_pheragent_setupbench_log\"; then\n  rm -f \"$_pheragent_setupbench_log\"\n  exit 0\nfi\nrm -f \"$_pheragent_setupbench_log\"\nif [ \"$_pheragent_setupbench_status\" -eq 0 ]; then\n  exit 1\nfi\nexit \"$_pheragent_setupbench_status\"",
+      "original_command": "monerod --version | grep -q 'Monero ' && echo \"Setup successful\" || echo \"Setup failed\""
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/deno/deno.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values. Source test-only oracle had no commands; commands were filled from same-project regular *.heragent.oracle.json oracle_groups fallback.",
+  "repository_metadata": {
+    "repository": "denoland/deno",
+    "repository_url": "https://github.com/denoland/deno",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:09.940598+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/deno/deno.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/deno",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/deno/denoland__deno",
+    "source_files": [
+      "denoland__deno/cargo_publish__254705885/cargo_publish.generated.yml",
+      "denoland__deno/ecosystem_compat_test__254705891/ecosystem_compat_test.generated.yml",
+      "denoland__deno/node_compat_test__254705893/node_compat_test.generated.yml",
+      "denoland__deno/npm_publish__254705896/npm_publish.generated.yml",
+      "denoland__deno/post_publish__254705900/post_publish.generated.yml",
+      "denoland__deno/pr__254705903/pr.generated.yml",
+      "denoland__deno/start_release__254705908/start_release.generated.yml",
+      "denoland__deno/version_bump__254705910/version_bump.generated.yml",
+      "denoland__deno/cargo_publish__254705885/run_26276175673.log",
+      "denoland__deno/ecosystem_compat_test__254705891/run_26283788235.log",
+      "denoland__deno/node_compat_test__254705893/run_26284027345.log",
+      "denoland__deno/npm_publish__254705896/run_25066054668.log",
+      "denoland__deno/post_publish__254705900/run_26283531340.log",
+      "denoland__deno/pr__254705903/run_26299711153.log",
+      "denoland__deno/start_release__254705908/run_26273425517.log",
+      "denoland__deno/version_bump__254705910/run_26273464003.log"
+    ],
+    "raw_workflow_file_count": 8,
+    "raw_log_file_count": 8,
+    "raw_workflow_command_count": 46,
+    "raw_log_run_group_count": 288,
+    "selected_test_oracle_count": 0,
+    "manual_fallback_used": true
+  },
+  "fixed_test_commands": [
+    {
+      "command": "export DENO_INSTALL=/tmp/deno-install; export PATH=\"$DENO_INSTALL/bin:$PATH\"; curl -fsSL https://deno.land/install.sh | sh && deno --version",
+      "oracle_priority": 1,
+      "fallback_source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/deno/deno.heragent.oracle.json",
+      "fallback_source_format": "regular heragent oracle",
+      "oracle_id": "deno-runtime-install-and-version",
+      "category": "env_ready",
+      "source": "manual_validation"
+    },
+    {
+      "command": "export DENO_INSTALL=/tmp/deno-install; export PATH=\"$DENO_INSTALL/bin:$PATH\"; curl -fsSL https://deno.land/install.sh | sh && cat > /tmp/server.ts <<'TS'\nDeno.serve((_req: Request) => {\n  return new Response(\"Hello, world!\");\n});\nTS\ncd /tmp && deno run --allow-net server.ts > /tmp/deno-server.log 2>&1 & pid=$!; trap 'kill $pid 2>/dev/null || true' EXIT; sleep 2; curl -fsS http://127.0.0.1:8000/; kill $pid; wait $pid 2>/dev/null || true",
+      "oracle_priority": 2,
+      "fallback_source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/deno/deno.heragent.oracle.json",
+      "fallback_source_format": "regular heragent oracle",
+      "oracle_id": "deno-runtime-install-and-hello-world-server",
+      "category": "env_ready",
+      "source": "manual_validation"
+    },
+    {
+      "command": "node node_modules/deno/bin.cjs eval \"console.log('npm package works')\"",
+      "oracle_priority": 3,
+      "fallback_source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/deno/deno.heragent.oracle.json",
+      "fallback_source_format": "regular heragent oracle",
+      "oracle_id": "deno-ci-npm-package-bin-cjs-smoke",
+      "category": "runtime_smoke",
+      "source": "ci_workflow",
+      "workflow": "npm_publish.generated.yml",
+      "step": "Test deno via bin.cjs fallback"
+    },
+    {
+      "command": "deno task --cwd tests/node_compat/runner test --report",
+      "oracle_priority": 4,
+      "fallback_source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/deno/deno.heragent.oracle.json",
+      "fallback_source_format": "regular heragent oracle",
+      "oracle_id": "deno-ci-node-compat-runner",
+      "category": "ci_strict",
+      "source": "ci_workflow",
+      "workflow": "node_compat_test.generated.yml",
+      "step": "Run tests"
+    }
+  ],
+  "fallback_source_files": [
+    "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/deno/deno.heragent.oracle.json"
+  ]
+}

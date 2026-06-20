@@ -1,0 +1,12 @@
+{
+  "repo_url": "https://github.com/apache/cassandra",
+  "owner_repo": "apache/cassandra",
+  "commit_version": "73cd2c56ca07fc4bd1c77a7a45e1d6e27941fefa",
+  "fixed_test_commands": [
+    {
+      "name": "setupbench validation",
+      "command": "_pheragent_setupbench_log=\"$(mktemp /tmp/pheragent-setupbench.XXXXXX)\"\n(\nbin/cassandra -R && sleep 80 && bin/nodetool status | grep -q 'UN\\s\\+127.0.0.1' && echo \"Setup successful\" || echo \"Setup failed\"\n) >\"$_pheragent_setupbench_log\" 2>&1\n_pheragent_setupbench_status=$?\ncat \"$_pheragent_setupbench_log\"\nif grep -q \"Setup successful\" \"$_pheragent_setupbench_log\" && ! grep -q \"Setup failed\" \"$_pheragent_setupbench_log\"; then\n  rm -f \"$_pheragent_setupbench_log\"\n  exit 0\nfi\nrm -f \"$_pheragent_setupbench_log\"\nif [ \"$_pheragent_setupbench_status\" -eq 0 ]; then\n  exit 1\nfi\nexit \"$_pheragent_setupbench_status\"",
+      "original_command": "bin/cassandra -R && sleep 80 && bin/nodetool status | grep -q 'UN\\s\\+127.0.0.1' && echo \"Setup successful\" || echo \"Setup failed\""
+    }
+  ]
+}

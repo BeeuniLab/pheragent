@@ -1,0 +1,55 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/spring/spring.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values.",
+  "repository_metadata": {
+    "repository": "spring-projects/spring-security",
+    "repository_url": "https://github.com/spring-projects/spring-security",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:34.639018+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/spring/spring.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/spring",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/spring/spring-projects__spring-security",
+    "source_files": [
+      "spring-projects__spring-security/Check_Milestone__10671640/milestone-spring-releasetrain.yml",
+      "spring-projects__spring-security/CI__1583135/continuous-integration-workflow.yml",
+      "spring-projects__spring-security/CI__175543157/check-snapshots.yml",
+      "spring-projects__spring-security/Clean_build_artifacts__2271820/clean_build_artifacts.yml",
+      "spring-projects__spring-security/CodeQL_Advanced__157867437/codeql.yml",
+      "spring-projects__spring-security/Defer_Issues__246978244/defer-issues.yml",
+      "spring-projects__spring-security/Deploy_Docs__34472478/deploy-docs.yml",
+      "spring-projects__spring-security/Merge_Dependabot_PR__232647712/auto-merge-dependabot.yml",
+      "spring-projects__spring-security/PR_Build__1582604/pr-build-workflow.yml",
+      "spring-projects__spring-security/Release_Scheduler__27446044/release-scheduler.yml",
+      "spring-projects__spring-security/Update_Antora_UI_Spring__96608458/update-antora-ui-spring.yml",
+      "spring-projects__spring-security/Update_Scheduled_Release_Version__27446045/update-scheduled-release-version.yml",
+      "spring-projects__spring-security/Check_Milestone__10671640/run_24688403179.log",
+      "spring-projects__spring-security/CI__1583135/run_26284107024.log",
+      "spring-projects__spring-security/CI__175543157/run_26283769476.log",
+      "spring-projects__spring-security/Clean_build_artifacts__2271820/run_26283996542.log",
+      "spring-projects__spring-security/CodeQL_Advanced__157867437/run_26271931684.log",
+      "spring-projects__spring-security/Defer_Issues__246978244/run_23155487659.log",
+      "spring-projects__spring-security/Deploy_Docs__34472478/run_26248323584.log",
+      "spring-projects__spring-security/Merge_Dependabot_PR__232647712/run_26247385266.log",
+      "spring-projects__spring-security/PR_Build__1582604/run_26247384958.log",
+      "spring-projects__spring-security/Release_Scheduler__27446044/run_26046048134.log",
+      "spring-projects__spring-security/Update_Antora_UI_Spring__96608458/run_26284248922.log",
+      "spring-projects__spring-security/Update_Scheduled_Release_Version__27446045/run_26046058597.log"
+    ],
+    "raw_workflow_file_count": 12,
+    "raw_log_file_count": 12,
+    "raw_workflow_command_count": 10,
+    "raw_log_run_group_count": 148,
+    "selected_test_oracle_count": 1,
+    "manual_fallback_used": false
+  },
+  "fixed_test_commands": [
+    {
+      "command": "./gradlew test $TEST_ARGS",
+      "oracle_id": "spring-ci-test-01",
+      "source": "ci_log_run_group",
+      "workflow": "CI__175543157",
+      "oracle_priority": 1
+    }
+  ]
+}

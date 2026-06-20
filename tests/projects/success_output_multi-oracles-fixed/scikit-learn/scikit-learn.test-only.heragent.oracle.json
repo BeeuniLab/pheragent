@@ -1,0 +1,108 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/scikit-learn/scikit-learn.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values.",
+  "repository_metadata": {
+    "repository": "scikit-learn/scikit-learn",
+    "repository_url": "https://github.com/scikit-learn/scikit-learn",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:34.455959+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/scikit-learn/scikit-learn.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/scikit-learn",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/scikit-learn/scikit-learn__scikit-learn",
+    "source_files": [
+      "scikit-learn__scikit-learn/Add_or_remove_not-ready-for-PR_warning__260171213/not-ready-for-pr-warning.yml",
+      "scikit-learn__scikit-learn/autoclose_schedule__208434128/autoclose-schedule.yml",
+      "scikit-learn__scikit-learn/Bot_linter_comment__178310385/bot-lint-comment.yml",
+      "scikit-learn__scikit-learn/Check_Changelog__5007091/check-changelog.yml",
+      "scikit-learn__scikit-learn/Check_sdist__93006949/check-sdist.yml",
+      "scikit-learn__scikit-learn/CircleCI_artifacts_redirector__23067391/artifact-redirector.yml",
+      "scikit-learn__scikit-learn/CodeQL__84241614/codeql.yml",
+      "scikit-learn__scikit-learn/Codespell__13198580/codespell.yml",
+      "scikit-learn__scikit-learn/Labels_Blank_issues__16381740/label-blank-issue.yml",
+      "scikit-learn__scikit-learn/Linter__60364066/lint.yml",
+      "scikit-learn__scikit-learn/Publish_to_Pypi__3969801/publish_pypi.yml",
+      "scikit-learn__scikit-learn/Pull_Request_Labeler__2233277/labeler-module.yml",
+      "scikit-learn__scikit-learn/Pull_Request_Regex_Title_Labeler__2233278/labeler-title-regex.yml",
+      "scikit-learn__scikit-learn/Test_Emscripten_Pyodide_build__116048067/emscripten.yml",
+      "scikit-learn__scikit-learn/Typos__270968899/typos.yml",
+      "scikit-learn__scikit-learn/Unit_tests__176496170/unit-tests.yml",
+      "scikit-learn__scikit-learn/Update_lock_files__74093920/update-lock-files.yml",
+      "scikit-learn__scikit-learn/Wheel_builder__1878380/wheels.yml",
+      "scikit-learn__scikit-learn/Add_or_remove_not-ready-for-PR_warning__260171213/run_26283603785.log",
+      "scikit-learn__scikit-learn/autoclose_schedule__208434128/run_26266419395.log",
+      "scikit-learn__scikit-learn/Bot_linter_comment__178310385/run_26298862131.log",
+      "scikit-learn__scikit-learn/Check_Changelog__5007091/run_26297948950.log",
+      "scikit-learn__scikit-learn/Check_sdist__93006949/run_26262281652.log",
+      "scikit-learn__scikit-learn/CircleCI_artifacts_redirector__23067391/run_26299481028.log",
+      "scikit-learn__scikit-learn/CodeQL__84241614/run_26298829395.log",
+      "scikit-learn__scikit-learn/Codespell__13198580/run_26298829392.log",
+      "scikit-learn__scikit-learn/Labels_Blank_issues__16381740/run_26283603396.log",
+      "scikit-learn__scikit-learn/Linter__60364066/run_26298829389.log",
+      "scikit-learn__scikit-learn/Publish_to_Pypi__3969801/run_26152382219.log",
+      "scikit-learn__scikit-learn/Pull_Request_Labeler__2233277/run_26295667925.log",
+      "scikit-learn__scikit-learn/Pull_Request_Regex_Title_Labeler__2233278/run_26298008714.log",
+      "scikit-learn__scikit-learn/Test_Emscripten_Pyodide_build__116048067/run_26298829468.log",
+      "scikit-learn__scikit-learn/Typos__270968899/run_25341080179.log",
+      "scikit-learn__scikit-learn/Unit_tests__176496170/run_26298829390.log",
+      "scikit-learn__scikit-learn/Update_lock_files__74093920/run_25653588198.log",
+      "scikit-learn__scikit-learn/Wheel_builder__1878380/run_26298829402.log"
+    ],
+    "raw_workflow_file_count": 18,
+    "raw_log_file_count": 18,
+    "raw_workflow_command_count": 72,
+    "raw_log_run_group_count": 245,
+    "selected_test_oracle_count": 6,
+    "manual_fallback_used": false
+  },
+  "fixed_test_commands": [
+    {
+      "command": "bash build_tools/github/test_source.sh",
+      "oracle_id": "scikit-learn-ci-test-01",
+      "source": "ci_workflow",
+      "workflow": "Wheel builder",
+      "step": "Test source distribution",
+      "oracle_priority": 1
+    },
+    {
+      "command": "bash -l build_tools/github/test_script.sh",
+      "oracle_id": "scikit-learn-ci-test-02",
+      "source": "ci_workflow_log",
+      "workflow": "Unit tests",
+      "step": "Run tests",
+      "oracle_priority": 2
+    },
+    {
+      "command": "bash -l build_tools/github/test_docs.sh",
+      "oracle_id": "scikit-learn-ci-test-03",
+      "source": "ci_workflow_log",
+      "workflow": "Unit tests",
+      "step": "Run doctests in .py and .rst files",
+      "oracle_priority": 3
+    },
+    {
+      "command": "bash -l build_tools/github/test_pytest_soft_dependency.sh",
+      "oracle_id": "scikit-learn-ci-test-04",
+      "source": "ci_workflow_log",
+      "workflow": "Unit tests",
+      "step": "Run pytest soft dependency test",
+      "oracle_priority": 4
+    },
+    {
+      "command": "docker exec skcontainer bash -l build_tools/github/test_script.sh",
+      "oracle_id": "scikit-learn-ci-test-05",
+      "source": "ci_workflow_log",
+      "workflow": "Unit tests",
+      "step": "Run tests",
+      "oracle_priority": 5
+    },
+    {
+      "command": "docker exec skcontainer bash -l build_tools/github/test_docs.sh",
+      "oracle_id": "scikit-learn-ci-test-06",
+      "source": "ci_workflow_log",
+      "workflow": "Unit tests",
+      "step": "Run doctests in .py and .rst files",
+      "oracle_priority": 6
+    }
+  ]
+}

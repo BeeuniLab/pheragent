@@ -1,0 +1,90 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/keras/keras.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values.",
+  "repository_metadata": {
+    "repository": "keras-team/keras",
+    "repository_url": "https://github.com/keras-team/keras",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:15.566445+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/keras/keras.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/keras",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/keras/keras-team__keras",
+    "source_files": [
+      "keras-team__keras/auto-assignment__74529479/auto-assignment.yaml",
+      "keras-team__keras/Close_inactive_issues__71020014/stale-issue-pr.yaml",
+      "keras-team__keras/Keras_GPU_Tests__218926914/gpu_tests.yml",
+      "keras-team__keras/Keras_TPU_Tests__206171576/tpu_tests.yml",
+      "keras-team__keras/Labeler__88619964/labeler.yaml",
+      "keras-team__keras/Nightly__72715281/nightly.yml",
+      "keras-team__keras/PR_Contributor_Agreement__255969699/pr-contributor-terms.yml",
+      "keras-team__keras/Scorecard_supply-chain_security__78703693/scorecard.yml",
+      "keras-team__keras/Tests__70313035/actions.yml",
+      "keras-team__keras/auto-assignment__74529479/run_26295033403.log",
+      "keras-team__keras/Close_inactive_issues__71020014/run_26264748526.log",
+      "keras-team__keras/Keras_GPU_Tests__218926914/run_26138618798.log",
+      "keras-team__keras/Keras_TPU_Tests__206171576/run_26255886951.log",
+      "keras-team__keras/Labeler__88619964/run_26299116686.log",
+      "keras-team__keras/Nightly__72715281/run_26268509734.log",
+      "keras-team__keras/PR_Contributor_Agreement__255969699/run_26299393342.log",
+      "keras-team__keras/Scorecard_supply-chain_security__78703693/run_26176470657.log",
+      "keras-team__keras/Tests__70313035/run_26299393305.log"
+    ],
+    "raw_workflow_file_count": 9,
+    "raw_log_file_count": 9,
+    "raw_workflow_command_count": 40,
+    "raw_log_run_group_count": 433,
+    "selected_test_oracle_count": 5,
+    "manual_fallback_used": false
+  },
+  "fixed_test_commands": [
+    {
+      "command": "pytest integration_tests/torch_workflow_test.py",
+      "oracle_id": "keras-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "Tests",
+      "step": "Run Tests for applications",
+      "oracle_priority": 1
+    },
+    {
+      "command": "python integration_tests/torch_custom_fit_test.py",
+      "oracle_id": "keras-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "Tests",
+      "step": "Run Tests for applications",
+      "oracle_priority": 2
+    },
+    {
+      "command": "pytest keras --ignore keras/src/applications --cov=keras --cov-config=pyproject.toml",
+      "oracle_id": "keras-ci-test-02",
+      "source": "ci_workflow_log",
+      "workflow": "Keras TPU Tests",
+      "step": "Run Tests",
+      "oracle_priority": 3
+    },
+    {
+      "command": "pytest keras -m multi_device --cov=keras --cov-config=pyproject.toml --cov-append",
+      "oracle_id": "keras-ci-test-03",
+      "source": "ci_workflow_log",
+      "workflow": "Keras TPU Tests",
+      "step": "Run Multi-device Tests",
+      "oracle_priority": 4
+    },
+    {
+      "command": "pytest keras -n auto --dist loadfile --ignore keras/src/applications --ignore keras/src/wrappers --cov=keras --cov-config=pyproject.toml",
+      "oracle_id": "keras-ci-test-04",
+      "source": "ci_workflow_log",
+      "workflow": "Tests",
+      "step": "Run Tests",
+      "oracle_priority": 5
+    },
+    {
+      "command": "JAX_NUM_CPU_DEVICES=4 pytest keras -m multi_device --cov=keras --cov-config=pyproject.toml --cov-append",
+      "oracle_id": "keras-ci-test-05",
+      "source": "ci_workflow_log",
+      "workflow": "Tests",
+      "step": "Run Multi-Device Tests",
+      "oracle_priority": 6
+    }
+  ]
+}

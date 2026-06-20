@@ -1,0 +1,12 @@
+{
+  "repo_url": "https://github.com/openai/openai-node",
+  "owner_repo": "openai/openai-node",
+  "commit_version": "8958d9711b66e0cbacf816b7b4538217016beb0b",
+  "fixed_test_commands": [
+    {
+      "name": "setupbench validation",
+      "command": "_pheragent_setupbench_log=\"$(mktemp /tmp/pheragent-setupbench.XXXXXX)\"\n(\ntimeout 300s ./scripts/test && echo \"Setup successful\" || echo \"Setup failed\"\n) >\"$_pheragent_setupbench_log\" 2>&1\n_pheragent_setupbench_status=$?\ncat \"$_pheragent_setupbench_log\"\nif grep -q \"Setup successful\" \"$_pheragent_setupbench_log\" && ! grep -q \"Setup failed\" \"$_pheragent_setupbench_log\"; then\n  rm -f \"$_pheragent_setupbench_log\"\n  exit 0\nfi\nrm -f \"$_pheragent_setupbench_log\"\nif [ \"$_pheragent_setupbench_status\" -eq 0 ]; then\n  exit 1\nfi\nexit \"$_pheragent_setupbench_status\"",
+      "original_command": "timeout 300s ./scripts/test && echo \"Setup successful\" || echo \"Setup failed\""
+    }
+  ]
+}

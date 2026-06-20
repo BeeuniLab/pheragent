@@ -1,0 +1,66 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/commonscsv/commonscsv.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values. Source test-only oracle had no commands; commands were filled from same-project regular *.heragent.oracle.json oracle_groups fallback.",
+  "repository_metadata": {
+    "repository": "apache/commons-csv",
+    "repository_url": "https://github.com/apache/commons-csv",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:05.961858+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/commonscsv/commonscsv.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/commonscsv",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/commonscsv/apache__commons-csv",
+    "source_files": [
+      "apache__commons-csv/CodeQL__19195953/codeql-analysis.yml",
+      "apache__commons-csv/Dependency_Review__118581626/dependency-review.yml",
+      "apache__commons-csv/Java_CI__76511/maven.yml",
+      "apache__commons-csv/Scorecards_supply-chain_security__34667912/scorecards-analysis.yml",
+      "apache__commons-csv/CodeQL__19195953/run_26288273722.log",
+      "apache__commons-csv/Dependency_Review__118581626/run_26285006001.log",
+      "apache__commons-csv/Java_CI__76511/run_26288273782.log",
+      "apache__commons-csv/Scorecards_supply-chain_security__34667912/run_26288273849.log"
+    ],
+    "raw_workflow_file_count": 4,
+    "raw_log_file_count": 4,
+    "raw_workflow_command_count": 1,
+    "raw_log_run_group_count": 55,
+    "selected_test_oracle_count": 0,
+    "manual_fallback_used": true
+  },
+  "fixed_test_commands": [
+    {
+      "command": "mvn -Ddoclint=all --show-version --batch-mode --no-transfer-progress",
+      "oracle_priority": 1,
+      "fallback_source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/commonscsv/commons-csv.heragent.oracle.json",
+      "fallback_source_format": "regular heragent oracle",
+      "oracle_id": "commons-csv-env-ready-maven-build",
+      "category": "env_ready",
+      "source": "ci_workflow",
+      "workflow": "maven.yml",
+      "step": "Build with Maven"
+    },
+    {
+      "command": "set -e\nWORKDIR=/tmp/commons-csv-user-smoke\nrm -rf \"$WORKDIR\"\nmkdir -p \"$WORKDIR/src/main/java/example\"\ncat > \"$WORKDIR/pom.xml\" <<'EOF'\n<project xmlns=\"http://maven.apache.org/POM/4.0.0\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n  xsi:schemaLocation=\"http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd\">\n  <modelVersion>4.0.0</modelVersion>\n  <groupId>example</groupId>\n  <artifactId>commons-csv-user-smoke</artifactId>\n  <version>1.0-SNAPSHOT</version>\n  <properties>\n    <maven.compiler.source>8</maven.compiler.source>\n    <maven.compiler.target>8</maven.compiler.target>\n  </properties>\n  <dependencies>\n    <dependency>\n      <groupId>org.apache.commons</groupId>\n      <artifactId>commons-csv</artifactId>\n      <version>1.14.1</version>\n    </dependency>\n  </dependencies>\n</project>\nEOF\ncat > \"$WORKDIR/src/main/java/example/Smoke.java\" <<'EOF'\npackage example;\n\nimport java.io.StringReader;\nimport java.io.StringWriter;\nimport org.apache.commons.csv.CSVFormat;\nimport org.apache.commons.csv.CSVParser;\nimport org.apache.commons.csv.CSVPrinter;\nimport org.apache.commons.csv.CSVRecord;\n\npublic class Smoke {\n    public static void main(String[] args) throws Exception {\n        try (CSVParser parser = CSVFormat.DEFAULT.parse(new StringReader(\"a,b,c\\n1,2,3\\n\"))) {\n            for (CSVRecord record : parser) {\n                System.out.println(record.get(0) + \"-\" + record.get(1) + \"-\" + record.get(2));\n            }\n        }\n        StringWriter out = new StringWriter();\n        try (CSVPrinter printer = CSVFormat.DEFAULT.builder().setHeader(\"H1\", \"H2\").build().print(out)) {\n            printer.printRecord(\"x\", \"y\");\n        }\n        System.out.print(out.toString());\n    }\n}\nEOF\ncd \"$WORKDIR\"\nmvn -q -DskipTests compile dependency:build-classpath -Dmdep.outputFile=cp.txt\njava -cp target/classes:$(cat cp.txt) example.Smoke",
+      "oracle_priority": 2,
+      "fallback_source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/commonscsv/commons-csv.heragent.oracle.json",
+      "fallback_source_format": "regular heragent oracle",
+      "oracle_id": "commons-csv-downstream-maven-smoke",
+      "category": "runtime_smoke",
+      "source": "manual_validation"
+    },
+    {
+      "command": "mvn -Ddoclint=all --show-version --batch-mode --no-transfer-progress",
+      "oracle_priority": 3,
+      "fallback_source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/commonscsv/commons-csv.heragent.oracle.json",
+      "fallback_source_format": "regular heragent oracle",
+      "oracle_id": "commons-csv-ci-matrix-maven-build",
+      "category": "ci_strict",
+      "source": "ci_workflow",
+      "workflow": "maven.yml",
+      "step": "Build with Maven"
+    }
+  ],
+  "fallback_source_files": [
+    "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/commonscsv/commons-csv.heragent.oracle.json"
+  ]
+}

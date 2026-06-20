@@ -1,0 +1,12 @@
+{
+  "repo_url": "https://github.com/psf/black",
+  "owner_repo": "psf/black",
+  "commit_version": "c20423249e9d8dfb8581eebbfc67a13984ee45e9",
+  "fixed_test_commands": [
+    {
+      "name": "setupbench validation",
+      "command": "_pheragent_setupbench_log=\"$(mktemp /tmp/pheragent-setupbench.XXXXXX)\"\n(\nif [ -f .venv/bin/activate ]; then\n  . .venv/bin/activate\nfi\npython -m pytest && echo \"Setup successful\" || echo \"Setup failed\"\n) >\"$_pheragent_setupbench_log\" 2>&1\n_pheragent_setupbench_status=$?\ncat \"$_pheragent_setupbench_log\"\nif grep -q \"Setup successful\" \"$_pheragent_setupbench_log\" && ! grep -q \"Setup failed\" \"$_pheragent_setupbench_log\"; then\n  rm -f \"$_pheragent_setupbench_log\"\n  exit 0\nfi\nrm -f \"$_pheragent_setupbench_log\"\nif [ \"$_pheragent_setupbench_status\" -eq 0 ]; then\n  exit 1\nfi\nexit \"$_pheragent_setupbench_status\"",
+      "original_command": "python -m pytest && echo \"Setup successful\" || echo \"Setup failed\""
+    }
+  ]
+}

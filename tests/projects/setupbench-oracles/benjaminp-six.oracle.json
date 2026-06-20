@@ -1,0 +1,12 @@
+{
+  "repo_url": "https://github.com/benjaminp/six",
+  "owner_repo": "benjaminp/six",
+  "commit_version": "c1b416f24de52ebd8eaed3e379ab85ec9c3e935b",
+  "fixed_test_commands": [
+    {
+      "name": "setupbench validation",
+      "command": "_pheragent_setupbench_log=\"$(mktemp /tmp/pheragent-setupbench.XXXXXX)\"\n(\nif [ -f .venv/bin/activate ]; then\n  . .venv/bin/activate\nfi\npython -m pytest && echo \"Setup successful\" || echo \"Setup failed\"\n) >\"$_pheragent_setupbench_log\" 2>&1\n_pheragent_setupbench_status=$?\ncat \"$_pheragent_setupbench_log\"\nif grep -q \"Setup successful\" \"$_pheragent_setupbench_log\" && ! grep -q \"Setup failed\" \"$_pheragent_setupbench_log\"; then\n  rm -f \"$_pheragent_setupbench_log\"\n  exit 0\nfi\nrm -f \"$_pheragent_setupbench_log\"\nif [ \"$_pheragent_setupbench_status\" -eq 0 ]; then\n  exit 1\nfi\nexit \"$_pheragent_setupbench_status\"",
+      "original_command": "python -m pytest && echo \"Setup successful\" || echo \"Setup failed\""
+    }
+  ]
+}

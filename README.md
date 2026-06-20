@@ -86,9 +86,8 @@ Available ablation modes are `full`, `single-command-forward`,
 `single-command-recovery`, `without-local-repair`,
 `whole-script-forward`, `whole-script-recovery`,
 `without-checkpoint-rollback`, and `without-final-clean-replay`. The default is
-`without-final-clean-replay`, which preserves the original pheragent behavior.
-Use `full` for the paper-style setting that replays the final block scripts from
-a clean workspace checkpoint before reporting success.
+`full`, the paper-style setting that replays the final block scripts from a
+clean workspace checkpoint before reporting success.
 
 Clone and build multiple projects from an `owner/repo commit` file:
 

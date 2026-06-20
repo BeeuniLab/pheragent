@@ -1,0 +1,258 @@
+{
+  "source_root": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles",
+  "output_root": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles-fixed",
+  "source_file_count": 33,
+  "total_command_count": 258,
+  "projects_without_commands": [
+    "Vue",
+    "flask",
+    "git",
+    "jsonc",
+    "nest",
+    "opencv",
+    "react-native"
+  ],
+  "files": [
+    {
+      "project_dir": "Activiti",
+      "source_file": "Activiti/Activiti.test-only.heragent.oracle.json",
+      "output_file": "Activiti/Activiti.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 1
+    },
+    {
+      "project_dir": "RxJava",
+      "source_file": "RxJava/RxJava.test-only.heragent.oracle.json",
+      "output_file": "RxJava/RxJava.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 1
+    },
+    {
+      "project_dir": "TypeScript",
+      "source_file": "TypeScript/TypeScript.test-only.heragent.oracle.json",
+      "output_file": "TypeScript/TypeScript.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 1
+    },
+    {
+      "project_dir": "Vue",
+      "source_file": "Vue/Vue.test-only.heragent.oracle.json",
+      "output_file": "Vue/Vue.test-only.heragent.oracle.json",
+      "source_kind": "oracle_groups",
+      "command_count": 0
+    },
+    {
+      "project_dir": "axios",
+      "source_file": "axios/axios.test-only.heragent.oracle.json",
+      "output_file": "axios/axios.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 8
+    },
+    {
+      "project_dir": "bootstrap",
+      "source_file": "bootstrap/bootstrap.test-only.heragent.oracle.json",
+      "output_file": "bootstrap/bootstrap.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 2
+    },
+    {
+      "project_dir": "ccache",
+      "source_file": "ccache/ccache.test-only.heragent.oracle.json",
+      "output_file": "ccache/ccache.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 2
+    },
+    {
+      "project_dir": "commonscsv",
+      "source_file": "commonscsv/commonscsv.test-only.heragent.oracle.json",
+      "output_file": "commonscsv/commonscsv.test-only.heragent.oracle.json",
+      "source_kind": "regular_heragent_oracle_groups_fallback",
+      "command_count": 3,
+      "fallback_source_files": [
+        "commonscsv/commons-csv.heragent.oracle.json"
+      ]
+    },
+    {
+      "project_dir": "cpython",
+      "source_file": "cpython/cpython.test-only.heragent.oracle.json",
+      "output_file": "cpython/cpython.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 1
+    },
+    {
+      "project_dir": "deno",
+      "source_file": "deno/deno.test-only.heragent.oracle.json",
+      "output_file": "deno/deno.test-only.heragent.oracle.json",
+      "source_kind": "regular_heragent_oracle_groups_fallback",
+      "command_count": 4,
+      "fallback_source_files": [
+        "deno/deno.heragent.oracle.json"
+      ]
+    },
+    {
+      "project_dir": "distcc",
+      "source_file": "distcc/distcc.test-only.heragent.oracle.json",
+      "output_file": "distcc/distcc.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 1
+    },
+    {
+      "project_dir": "django",
+      "source_file": "django/django.test-only.heragent.oracle.json",
+      "output_file": "django/django.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 6
+    },
+    {
+      "project_dir": "dubbo",
+      "source_file": "dubbo/dubbo.test-only.heragent.oracle.json",
+      "output_file": "dubbo/dubbo.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 5
+    },
+    {
+      "project_dir": "express",
+      "source_file": "express/express.test-only.heragent.oracle.json",
+      "output_file": "express/express.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 2
+    },
+    {
+      "project_dir": "flask",
+      "source_file": "flask/flask.test-only.heragent.oracle.json",
+      "output_file": "flask/flask.test-only.heragent.oracle.json",
+      "source_kind": "oracle_groups",
+      "command_count": 0
+    },
+    {
+      "project_dir": "git",
+      "source_file": "git/git.test-only.heragent.oracle.json",
+      "output_file": "git/git.test-only.heragent.oracle.json",
+      "source_kind": "oracle_groups",
+      "command_count": 0
+    },
+    {
+      "project_dir": "guava",
+      "source_file": "guava/guava.test-only.heragent.oracle.json",
+      "output_file": "guava/guava.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 5
+    },
+    {
+      "project_dir": "json",
+      "source_file": "json/json.test-only.heragent.oracle.json",
+      "output_file": "json/json.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 3
+    },
+    {
+      "project_dir": "jsonc",
+      "source_file": "jsonc/jsonc.test-only.heragent.oracle.json",
+      "output_file": "jsonc/jsonc.test-only.heragent.oracle.json",
+      "source_kind": "oracle_groups",
+      "command_count": 0
+    },
+    {
+      "project_dir": "keras",
+      "source_file": "keras/keras.test-only.heragent.oracle.json",
+      "output_file": "keras/keras.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 6
+    },
+    {
+      "project_dir": "libevent",
+      "source_file": "libevent/libevent.test-only.heragent.oracle.json",
+      "output_file": "libevent/libevent.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 157
+    },
+    {
+      "project_dir": "mermaid",
+      "source_file": "mermaid/mermaid.test-only.heragent.oracle.json",
+      "output_file": "mermaid/mermaid.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 3
+    },
+    {
+      "project_dir": "mybatis-3",
+      "source_file": "mybatis-3/mybatis-3.test-only.heragent.oracle.json",
+      "output_file": "mybatis-3/mybatis-3.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 2
+    },
+    {
+      "project_dir": "nest",
+      "source_file": "nest/nest.test-only.heragent.oracle.json",
+      "output_file": "nest/nest.test-only.heragent.oracle.json",
+      "source_kind": "oracle_groups",
+      "command_count": 0
+    },
+    {
+      "project_dir": "opencv",
+      "source_file": "opencv/opencv.test-only.heragent.oracle.json",
+      "output_file": "opencv/opencv.test-only.heragent.oracle.json",
+      "source_kind": "oracle_groups",
+      "command_count": 0
+    },
+    {
+      "project_dir": "openvpn",
+      "source_file": "openvpn/openvpn.test-only.heragent.oracle.json",
+      "output_file": "openvpn/openvpn.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 2
+    },
+    {
+      "project_dir": "pandas",
+      "source_file": "pandas/pandas.test-only.heragent.oracle.json",
+      "output_file": "pandas/pandas.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 2
+    },
+    {
+      "project_dir": "pytest",
+      "source_file": "pytest/pytest.test-only.heragent.oracle.json",
+      "output_file": "pytest/pytest.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 19
+    },
+    {
+      "project_dir": "react",
+      "source_file": "react/react.test-only.heragent.oracle.json",
+      "output_file": "react/react.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 12
+    },
+    {
+      "project_dir": "react-native",
+      "source_file": "react-native/react-native.test-only.heragent.oracle.json",
+      "output_file": "react-native/react-native.test-only.heragent.oracle.json",
+      "source_kind": "oracle_groups",
+      "command_count": 0
+    },
+    {
+      "project_dir": "rocketmq",
+      "source_file": "rocketmq/rocketmq.test-only.heragent.oracle.json",
+      "output_file": "rocketmq/rocketmq.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 3
+    },
+    {
+      "project_dir": "scikit-learn",
+      "source_file": "scikit-learn/scikit-learn.test-only.heragent.oracle.json",
+      "output_file": "scikit-learn/scikit-learn.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 6
+    },
+    {
+      "project_dir": "spring",
+      "source_file": "spring/spring.test-only.heragent.oracle.json",
+      "output_file": "spring/spring.test-only.heragent.oracle.json",
+      "source_kind": "fixed_test_commands",
+      "command_count": 1
+    }
+  ],
+  "fallback_to_regular_heragent_projects": [
+    "commonscsv",
+    "deno"
+  ]
+}

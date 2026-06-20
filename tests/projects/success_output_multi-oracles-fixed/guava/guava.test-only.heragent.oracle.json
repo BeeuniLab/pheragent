@@ -1,0 +1,66 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/guava/guava.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values.",
+  "repository_metadata": {
+    "repository": "google/guava",
+    "repository_url": "https://github.com/google/guava",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:13.471119+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/guava/guava.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/guava",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/guava/google__guava",
+    "source_files": [
+      "google__guava/CI__6794244/ci.yml",
+      "google__guava/Deploy_docs__220297350/docs.yml",
+      "google__guava/Scorecard_supply-chain_security__52498466/scorecard.yml",
+      "google__guava/CI__6794244/run_26291796310.log",
+      "google__guava/Deploy_docs__220297350/run_25570119675.log",
+      "google__guava/Scorecard_supply-chain_security__52498466/run_26291794205.log"
+    ],
+    "raw_workflow_file_count": 3,
+    "raw_log_file_count": 3,
+    "raw_workflow_command_count": 7,
+    "raw_log_run_group_count": 61,
+    "selected_test_oracle_count": 5,
+    "manual_fallback_used": false
+  },
+  "fixed_test_commands": [
+    {
+      "command": "util/gradle_integration_tests.sh",
+      "oracle_id": "guava-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "CI",
+      "step": "Integration Test",
+      "oracle_priority": 1
+    },
+    {
+      "command": "./mvnw -B -ntp -P!standard-with-extra-repos -Dtoolchain.skip verify -U -Dmaven.javadoc.skip=true -Dsurefire.toolchain.version=17 -f $ROOT_POM",
+      "oracle_id": "guava-ci-test-02",
+      "source": "ci_log_run_group",
+      "workflow": "CI__6794244",
+      "oracle_priority": 2
+    },
+    {
+      "command": "./mvnw -B -ntp -P!standard-with-extra-repos -Dtoolchain.skip verify -U -Dmaven.javadoc.skip=true -Dsurefire.toolchain.version=8 -f $ROOT_POM",
+      "oracle_id": "guava-ci-test-03",
+      "source": "ci_log_run_group",
+      "workflow": "CI__6794244",
+      "oracle_priority": 3
+    },
+    {
+      "command": "./mvnw -B -ntp -P!standard-with-extra-repos -Dtoolchain.skip verify -U -Dmaven.javadoc.skip=true -Dsurefire.toolchain.version=11 -f $ROOT_POM",
+      "oracle_id": "guava-ci-test-04",
+      "source": "ci_log_run_group",
+      "workflow": "CI__6794244",
+      "oracle_priority": 4
+    },
+    {
+      "command": "./mvnw -B -ntp -P!standard-with-extra-repos -Dtoolchain.skip verify -U -Dmaven.javadoc.skip=true -Dsurefire.toolchain.version=25 -f $ROOT_POM",
+      "oracle_id": "guava-ci-test-05",
+      "source": "ci_log_run_group",
+      "workflow": "CI__6794244",
+      "oracle_priority": 5
+    }
+  ]
+}

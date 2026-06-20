@@ -17,7 +17,7 @@ AblationMode = Literal[
     "whole-script-forward",
     "whole-script-recovery",
 ]
-DEFAULT_ABLATION_MODE: AblationMode = "without-final-clean-replay"
+DEFAULT_ABLATION_MODE: AblationMode = "full"
 
 
 @dataclass(frozen=True, slots=True)

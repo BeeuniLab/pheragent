@@ -23,6 +23,7 @@ from .utils import slugify
 CommandRunner = Callable[[list[str], Path | None], CommandResult]
 BuilderFactory = Callable[[BuildRequest], EnvironmentBuilder]
 ProjectLogKey = tuple[str, str, str]
+LEGACY_MANIFEST_ABLATION_MODE = "without-final-clean-replay"
 
 
 @dataclass(slots=True)
@@ -885,7 +886,7 @@ def _manifest_ablation_mode(manifest: object) -> str:
     value = manifest.get("ablation_mode")
     if isinstance(value, str) and value:
         return value
-    return DEFAULT_ABLATION_MODE
+    return LEGACY_MANIFEST_ABLATION_MODE
 
 
 def _progress_control_json(ablation_mode: str) -> dict[str, object]:

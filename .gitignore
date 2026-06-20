@@ -34,6 +34,14 @@ dist/
 projects/
 !tests/projects/
 oracles/
+setupbench-runs/
+setupbench-runs*/
+executionagent-runs/
+gpt54-setupbench-runs/
+
+# Large local benchmark fixtures/results
+tests/projects/ExecutionAgent_success_output_multi-oracles/
+tests/projects/success_output_multi-oracles/
 
 # Repo-local caches created inside target projects
 .cache/

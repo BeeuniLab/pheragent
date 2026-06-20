@@ -1,0 +1,147 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/react/react.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values.",
+  "repository_metadata": {
+    "repository": "facebook/react",
+    "repository_url": "https://github.com/facebook/react",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:22.803529+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/react/react.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/react",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/react/facebook__react",
+    "source_files": [
+      "facebook__react/Compiler_Discord_Notify__138515534/compiler_discord_notify.yml",
+      "facebook__react/Compiler_Playground__103880096/compiler_playground.yml",
+      "facebook__react/Compiler_Publish_Prereleases_Nightly__111191405/compiler_prereleases_nightly.yml",
+      "facebook__react/Compiler_TypeScript__103880090/compiler_typescript.yml",
+      "facebook__react/DevTools_Discord_Notify__188805989/devtools_discord_notify.yml",
+      "facebook__react/Runtime_Commit_Artifacts_for_Meta_WWW_and_fbsource_V2__103956431/runtime_commit_artifacts.yml",
+      "facebook__react/Runtime_Discord_Notify__138515535/runtime_discord_notify.yml",
+      "facebook__react/Runtime_ESLint_Plugin_E2E__144504025/runtime_eslint_plugin_e2e.yml",
+      "facebook__react/Runtime_Fuzz_tests__103956432/runtime_fuzz_tests.yml",
+      "facebook__react/Runtime_Publish_Prereleases_Manual__109747446/runtime_prereleases_manual.yml",
+      "facebook__react/Runtime_Publish_Prereleases_Nightly__109747447/runtime_prereleases_nightly.yml",
+      "facebook__react/Runtime_Publish_Releases_from_NPM_Manual__146781699/runtime_releases_from_npm_manual.yml",
+      "facebook__react/Shared_Cleanup_Merged_Branch_Caches__151047095/shared_cleanup_merged_branch_caches.yml",
+      "facebook__react/Shared_Cleanup_Stale_Branch_Caches__151046788/shared_cleanup_stale_branch_caches.yml",
+      "facebook__react/Shared_Label_Core_Team_PRs__138531901/shared_label_core_team_prs.yml",
+      "facebook__react/Shared_Lint__103880092/shared_lint.yml",
+      "facebook__react/Shared_Manage_stale_issues_and_PRs__103956433/shared_stale.yml",
+      "facebook__react/Compiler_Discord_Notify__138515534/run_26270311032.log",
+      "facebook__react/Compiler_Playground__103880096/run_26270311074.log",
+      "facebook__react/Compiler_Publish_Prereleases_Nightly__111191405/run_26300862595.log",
+      "facebook__react/Compiler_TypeScript__103880090/run_26270311033.log",
+      "facebook__react/DevTools_Discord_Notify__188805989/run_26219168162.log",
+      "facebook__react/Runtime_Commit_Artifacts_for_Meta_WWW_and_fbsource_V2__103956431/run_26206508997.log",
+      "facebook__react/Runtime_Discord_Notify__138515535/run_26259630813.log",
+      "facebook__react/Runtime_ESLint_Plugin_E2E__144504025/run_26241687147.log",
+      "facebook__react/Runtime_Fuzz_tests__103956432/run_26300620491.log",
+      "facebook__react/Runtime_Publish_Prereleases_Manual__109747446/run_25451641780.log",
+      "facebook__react/Runtime_Publish_Prereleases_Nightly__109747447/run_25685028751.log",
+      "facebook__react/Runtime_Publish_Releases_from_NPM_Manual__146781699/run_24579527608.log",
+      "facebook__react/Shared_Cleanup_Merged_Branch_Caches__151047095/run_26243915945.log",
+      "facebook__react/Shared_Cleanup_Stale_Branch_Caches__151046788/run_26288281090.log",
+      "facebook__react/Shared_Label_Core_Team_PRs__138531901/run_26270311034.log",
+      "facebook__react/Shared_Lint__103880092/run_26270311035.log",
+      "facebook__react/Shared_Manage_stale_issues_and_PRs__103956433/run_26300526443.log"
+    ],
+    "raw_workflow_file_count": 17,
+    "raw_log_file_count": 17,
+    "raw_workflow_command_count": 85,
+    "raw_log_run_group_count": 231,
+    "selected_test_oracle_count": 11,
+    "manual_fallback_used": false
+  },
+  "fixed_test_commands": [
+    {
+      "command": "FUZZ_TEST_SEED=$RANDOM yarn test fuzz --ci",
+      "oracle_id": "react-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "(Runtime) Fuzz tests",
+      "step": "Run fuzz tests",
+      "oracle_priority": 1
+    },
+    {
+      "command": "FUZZ_TEST_SEED=$RANDOM yarn test --prod fuzz --ci",
+      "oracle_id": "react-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "(Runtime) Fuzz tests",
+      "step": "Run fuzz tests",
+      "oracle_priority": 2
+    },
+    {
+      "command": "CI=true yarn test",
+      "oracle_id": "react-ci-test-02",
+      "source": "ci_workflow_log",
+      "workflow": "(Compiler) Playground",
+      "step": "run step 9",
+      "oracle_priority": 3
+    },
+    {
+      "command": "yarn workspace babel-plugin-react-compiler jest",
+      "oracle_id": "react-ci-test-03",
+      "source": "ci_workflow_log",
+      "workflow": "(Compiler) TypeScript",
+      "step": "run step 5",
+      "oracle_priority": 4
+    },
+    {
+      "command": "xvfb-run -a yarn workspace react-forgive test",
+      "oracle_id": "react-ci-test-04",
+      "source": "ci_workflow_log",
+      "workflow": "(Compiler) TypeScript",
+      "step": "run step 5",
+      "oracle_priority": 5
+    },
+    {
+      "command": "yarn workspace eslint-plugin-react-compiler test",
+      "oracle_id": "react-ci-test-05",
+      "source": "ci_log_run_group",
+      "workflow": "Compiler_TypeScript__103880090",
+      "oracle_priority": 6
+    },
+    {
+      "command": "yarn workspace react-compiler-runtime test",
+      "oracle_id": "react-ci-test-06",
+      "source": "ci_log_run_group",
+      "workflow": "Compiler_TypeScript__103880090",
+      "oracle_priority": 7
+    },
+    {
+      "command": "yarn workspace babel-plugin-react-compiler test",
+      "oracle_id": "react-ci-test-07",
+      "source": "ci_log_run_group",
+      "workflow": "Compiler_TypeScript__103880090",
+      "oracle_priority": 8
+    },
+    {
+      "command": "yarn workspace react-mcp-server test",
+      "oracle_id": "react-ci-test-08",
+      "source": "ci_log_run_group",
+      "workflow": "Compiler_TypeScript__103880090",
+      "oracle_priority": 9
+    },
+    {
+      "command": "yarn workspace make-read-only-util test",
+      "oracle_id": "react-ci-test-09",
+      "source": "ci_log_run_group",
+      "workflow": "Compiler_TypeScript__103880090",
+      "oracle_priority": 10
+    },
+    {
+      "command": "yarn workspace react-compiler-healthcheck test",
+      "oracle_id": "react-ci-test-10",
+      "source": "ci_log_run_group",
+      "workflow": "Compiler_TypeScript__103880090",
+      "oracle_priority": 11
+    },
+    {
+      "command": "yarn workspace snap test",
+      "oracle_id": "react-ci-test-11",
+      "source": "ci_log_run_group",
+      "workflow": "Compiler_TypeScript__103880090",
+      "oracle_priority": 12
+    }
+  ]
+}

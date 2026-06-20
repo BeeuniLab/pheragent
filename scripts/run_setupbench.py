@@ -21,10 +21,24 @@ TASK_DESCRIPTION_KEYS = (
     "prompt",
     "task",
 )
+ABLATION_MODES = (
+    "full",
+    "without-local-repair",
+    "without-checkpoint-rollback",
+    "without-final-clean-replay",
+    "single-command-forward",
+    "single-command-recovery",
+    "whole-script-forward",
+    "whole-script-recovery",
+)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.project_retries < 0:
+        raise SystemExit("--project-retries must be >= 0")
+    if args.jobs < 1:
+        raise SystemExit("--jobs must be >= 1")
     run_root = args.run_root.resolve()
     projects_root = run_root / "projects"
     state_root = run_root / "state"
@@ -118,66 +132,38 @@ def main(argv: list[str] | None = None) -> int:
     results: list[dict[str, Any]] = []
     failure_count = 0
     for index, item in enumerate(items, start=1):
-        owner_repo = item["owner_repo"]
-        commit = item["commit_version"]
-        project_slug = slug(owner_repo)
-        oracle_file = resolve_path(item["oracle_file"])
-        task_description = task_description_for_item(item, oracle_file)
-        project_file = project_files_root / f"{project_slug}.txt"
-        project_file.write_text(f"{owner_repo} {commit}\n", encoding="utf-8")
-        log_path = logs_root / f"{index:03d}-{project_slug}.log"
-
-        command = build_command(
+        payload = run_project(
             args=args,
+            index=index,
+            total=len(items),
+            item=item,
             runner=runner,
-            project_file=project_file,
-            project_slug=project_slug,
-            oracle_file=oracle_file,
-            task_description=task_description,
             projects_root=projects_root,
             state_root=state_root,
+            project_files_root=project_files_root,
+            logs_root=logs_root,
             base_dockerfile=base_dockerfile,
         )
-
-        print(f"\n===== [{index}/{len(items)}] {owner_repo}@{commit} =====", flush=True)
-        print(f"log: {log_path}", flush=True)
-        result = run_command(command, log_path=log_path, echo=args.stream_logs)
-        manifest_path = find_manifest(state_root / project_slug)
-        manifest_info = read_manifest_info(manifest_path)
-        payload = {
-            "ok": result.returncode == 0,
-            "index": index,
-            "owner_repo": owner_repo,
-            "commit_version": commit,
-            "project_slug": project_slug,
-            "project_file": str(project_file),
-            "oracle_file": str(oracle_file),
-            "task_description": task_description,
-            "log_path": str(log_path),
-            "returncode": result.returncode,
-            "manifest_path": str(manifest_path) if manifest_path else None,
-            "manifest_ok": manifest_info.get("ok"),
-            "manifest_error": manifest_info.get("error"),
-            "final_image": manifest_info.get("final_image"),
-            "llm_usage": manifest_info.get("llm_usage"),
-            "command": command,
-        }
         append_jsonl(jsonl_path, payload)
         results.append(payload)
 
-        if result.returncode != 0:
+        if not payload["ok"]:
             failure_count += 1
             if args.rerun_failures:
                 update_failure_record(failures_path, payload, failed=True)
             else:
                 append_failure(failures_path, payload)
-            print(f"[setupbench] failed: {owner_repo} rc={result.returncode}", flush=True)
+            print(
+                f"[setupbench] failed: {payload['owner_repo']} "
+                f"rc={payload['returncode']}",
+                flush=True,
+            )
             if args.stop_on_failure:
                 break
         else:
             if args.rerun_failures:
                 update_failure_record(failures_path, payload, failed=False)
-            print(f"[setupbench] ok: {owner_repo}", flush=True)
+            print(f"[setupbench] ok: {payload['owner_repo']}", flush=True)
 
     summary = {
         "ok": failure_count == 0,
@@ -238,8 +224,29 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--llm-max-tokens", type=int, default=4096)
     parser.add_argument("--llm-retries", type=int, default=3)
     parser.add_argument("--llm-retry-delay", type=float, default=1.0)
+    parser.add_argument(
+        "--ablation",
+        choices=ABLATION_MODES,
+        default="full",
+        help="Progress-control ablation mode passed through to pheragent build-projects.",
+    )
     parser.add_argument("--max-repair-attempts", type=int, default=2)
     parser.add_argument("--max-probe-failures", type=int, default=5)
+    parser.add_argument(
+        "--project-retries",
+        type=int,
+        default=0,
+        help=(
+            "Number of extra whole-project attempts after a failed run. "
+            "Retries reset that project's workspace/state before rerunning."
+        ),
+    )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        help="Number of projects the underlying pheragent build-projects command may run.",
+    )
     parser.add_argument("--command-timeout", type=float, default=1800.0)
     parser.add_argument("--oracle-timeout", type=float, default=1800.0)
     parser.add_argument("--docker-build-timeout", type=float, default=7200.0)
@@ -275,6 +282,108 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.set_defaults(require_uv=True)
     return parser.parse_args(argv)
+
+
+def run_project(
+    *,
+    args: argparse.Namespace,
+    index: int,
+    total: int,
+    item: dict[str, Any],
+    runner: list[str],
+    projects_root: Path,
+    state_root: Path,
+    project_files_root: Path,
+    logs_root: Path,
+    base_dockerfile: Path,
+) -> dict[str, Any]:
+    owner_repo = item["owner_repo"]
+    commit = item["commit_version"]
+    project_slug = slug(owner_repo)
+    oracle_file = resolve_path(item["oracle_file"])
+    task_description = task_description_for_item(item, oracle_file)
+    project_file = project_files_root / f"{project_slug}.txt"
+    project_file.write_text(f"{owner_repo} {commit}\n", encoding="utf-8")
+
+    max_attempts = args.project_retries + 1
+    attempt_payloads: list[dict[str, Any]] = []
+
+    for attempt in range(1, max_attempts + 1):
+        if attempt > 1:
+            reset_project_workspace(
+                project_slug,
+                projects_root=projects_root,
+                state_root=state_root,
+            )
+
+        log_path = project_log_path(
+            logs_root,
+            index=index,
+            project_slug=project_slug,
+            attempt=attempt,
+            max_attempts=max_attempts,
+        )
+        command = build_command(
+            args=args,
+            runner=runner,
+            project_file=project_file,
+            project_slug=project_slug,
+            oracle_file=oracle_file,
+            task_description=task_description,
+            projects_root=projects_root,
+            state_root=state_root,
+            base_dockerfile=base_dockerfile,
+        )
+
+        if attempt == 1:
+            print(f"\n===== [{index}/{total}] {owner_repo}@{commit} =====", flush=True)
+        else:
+            print(
+                f"\n===== [{index}/{total}] retry {attempt}/{max_attempts} "
+                f"{owner_repo}@{commit} =====",
+                flush=True,
+            )
+        print(f"log: {log_path}", flush=True)
+
+        result = run_command(command, log_path=log_path, echo=args.stream_logs)
+        manifest_path = find_manifest(state_root / project_slug)
+        manifest_info = read_manifest_info(manifest_path)
+        payload = {
+            "ok": result.returncode == 0,
+            "index": index,
+            "owner_repo": owner_repo,
+            "commit_version": commit,
+            "project_slug": project_slug,
+            "project_file": str(project_file),
+            "oracle_file": str(oracle_file),
+            "task_description": task_description,
+            "log_path": str(log_path),
+            "returncode": result.returncode,
+            "manifest_path": str(manifest_path) if manifest_path else None,
+            "manifest_ok": manifest_info.get("ok"),
+            "manifest_error": manifest_info.get("error"),
+            "final_image": manifest_info.get("final_image"),
+            "llm_usage": manifest_info.get("llm_usage"),
+            "command": command,
+            "attempt": attempt,
+            "max_attempts": max_attempts,
+            "project_retries": args.project_retries,
+        }
+        attempt_payloads.append(payload)
+
+        if result.returncode == 0:
+            break
+        if attempt < max_attempts:
+            print(
+                f"[setupbench] retrying: {owner_repo} "
+                f"rc={result.returncode} next_attempt={attempt + 1}/{max_attempts}",
+                flush=True,
+            )
+
+    final_payload = attempt_payloads[-1]
+    if len(attempt_payloads) > 1:
+        final_payload["attempts"] = summarize_attempts(attempt_payloads)
+    return final_payload
 
 
 def build_command(
@@ -332,10 +441,14 @@ def build_command(
         str(args.llm_retries),
         "--llm-retry-delay",
         str(args.llm_retry_delay),
+        "--ablation",
+        args.ablation,
         "--max-repair-attempts",
         str(args.max_repair_attempts),
         "--max-probe-failures",
         str(args.max_probe_failures),
+        "--jobs",
+        str(args.jobs),
     ]
     if task_description:
         command.extend(["--task-description", task_description])
@@ -598,13 +711,51 @@ def reset_selected_failed_workspaces(
     state_root: Path,
 ) -> None:
     for item in items:
-        project_slug = slug(item["owner_repo"])
-        for path in (projects_root / project_slug, state_root / project_slug):
-            if path.exists():
-                if path.is_dir() and not path.is_symlink():
-                    shutil.rmtree(path)
-                else:
-                    path.unlink()
+        reset_project_workspace(
+            slug(item["owner_repo"]),
+            projects_root=projects_root,
+            state_root=state_root,
+        )
+
+
+def reset_project_workspace(
+    project_slug: str,
+    *,
+    projects_root: Path,
+    state_root: Path,
+) -> None:
+    for path in (projects_root / project_slug, state_root / project_slug):
+        if path.exists():
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+
+
+def project_log_path(
+    logs_root: Path,
+    *,
+    index: int,
+    project_slug: str,
+    attempt: int,
+    max_attempts: int,
+) -> Path:
+    if max_attempts == 1:
+        return logs_root / f"{index:03d}-{project_slug}.log"
+    return logs_root / f"{index:03d}-{project_slug}-attempt-{attempt}.log"
+
+
+def summarize_attempts(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "attempt": payload["attempt"],
+            "ok": payload["ok"],
+            "returncode": payload["returncode"],
+            "manifest_error": payload.get("manifest_error"),
+            "log_path": payload["log_path"],
+        }
+        for payload in payloads
+    ]
 
 
 def append_jsonl(path: Path, payload: dict[str, Any]) -> None:

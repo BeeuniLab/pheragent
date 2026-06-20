@@ -155,8 +155,8 @@ def _add_common_args(parser: argparse.ArgumentParser, *, include_dockerfile: boo
         ),
         default=DEFAULT_ABLATION_MODE,
         help=(
-            "Progress-control ablation mode. Default keeps current behavior "
-            "without final clean replay."
+            "Progress-control ablation mode. Default uses the full agent "
+            "with final clean replay."
         ),
     )
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
@@ -259,8 +259,8 @@ def _add_batch_args(parser: argparse.ArgumentParser) -> None:
         ),
         default=DEFAULT_ABLATION_MODE,
         help=(
-            "Progress-control ablation mode. Default keeps current behavior "
-            "without final clean replay."
+            "Progress-control ablation mode. Default uses the full agent "
+            "with final clean replay."
         ),
     )
     parser.add_argument("--keep-container", action="store_true")

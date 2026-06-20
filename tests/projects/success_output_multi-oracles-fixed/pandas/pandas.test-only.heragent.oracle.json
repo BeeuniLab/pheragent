@@ -1,0 +1,60 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/pandas/pandas.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values.",
+  "repository_metadata": {
+    "repository": "pandas-dev/pandas",
+    "repository_url": "https://github.com/pandas-dev/pandas",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:21.581817+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/pandas/pandas.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/pandas",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/pandas/pandas-dev__pandas",
+    "source_files": [
+      "pandas-dev__pandas/Clean_closed_branch_caches__57316759/cache-cleanup.yml",
+      "pandas-dev__pandas/Code_Checks__17032044/code-checks.yml",
+      "pandas-dev__pandas/CodeQL__31308357/codeql.yml",
+      "pandas-dev__pandas/Deprecations_Bot__50129818/deprecation-tracking-bot.yml",
+      "pandas-dev__pandas/Doc_Build_and_Upload__17032045/docbuild-and-upload.yml",
+      "pandas-dev__pandas/GitHub_Actions_Security_Analysis_with_zizmor___277966961/security.yml",
+      "pandas-dev__pandas/Stale_PRs__2574104/stale-pr.yml",
+      "pandas-dev__pandas/Unit_Tests__54497638/unit-tests.yml",
+      "pandas-dev__pandas/Update_pixi.lock__252534833/update-pixi-lock.yml",
+      "pandas-dev__pandas/Wheel_builder__33431716/wheels.yml",
+      "pandas-dev__pandas/Clean_closed_branch_caches__57316759/run_26295248136.log",
+      "pandas-dev__pandas/Code_Checks__17032044/run_26296549663.log",
+      "pandas-dev__pandas/CodeQL__31308357/run_25616223822.log",
+      "pandas-dev__pandas/Deprecations_Bot__50129818/run_26232711469.log",
+      "pandas-dev__pandas/Doc_Build_and_Upload__17032045/run_26296549602.log",
+      "pandas-dev__pandas/GitHub_Actions_Security_Analysis_with_zizmor___277966961/run_25970198322.log",
+      "pandas-dev__pandas/Stale_PRs__2574104/run_26261225463.log",
+      "pandas-dev__pandas/Unit_Tests__54497638/run_26296549607.log",
+      "pandas-dev__pandas/Update_pixi.lock__252534833/run_25982424625.log",
+      "pandas-dev__pandas/Wheel_builder__33431716/run_26268990054.log"
+    ],
+    "raw_workflow_file_count": 10,
+    "raw_log_file_count": 10,
+    "raw_workflow_command_count": 50,
+    "raw_log_run_group_count": 672,
+    "selected_test_oracle_count": 1,
+    "manual_fallback_used": false
+  },
+  "fixed_test_commands": [
+    {
+      "command": ". ~/virtualenvs/pandas-dev/bin/activate",
+      "oracle_id": "pandas-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "Unit Tests",
+      "step": "Run Tests",
+      "oracle_priority": 1
+    },
+    {
+      "command": "python -m pytest -m 'not slow and not network and not clipboard and not single_cpu' pandas",
+      "oracle_id": "pandas-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "Unit Tests",
+      "step": "Run Tests",
+      "oracle_priority": 2
+    }
+  ]
+}

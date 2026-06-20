@@ -1,0 +1,54 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/cpython/cpython.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values.",
+  "repository_metadata": {
+    "repository": "python/cpython",
+    "repository_url": "https://github.com/python/cpython",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:06.792804+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/cpython/cpython.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/cpython",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/cpython/python__cpython",
+    "source_files": [
+      "python__cpython/Add_issue_header__66538777/add-issue-header.yml",
+      "python__cpython/Check_labels__53618720/require-pr-label.yml",
+      "python__cpython/Docs__21720/doc.yml",
+      "python__cpython/JIT__80381540/jit.yml",
+      "python__cpython/Lint__56536102/lint.yml",
+      "python__cpython/Mark_stale_pull_requests__4282302/stale.yml",
+      "python__cpython/mypy__57053973/mypy.yml",
+      "python__cpython/new-bugs-announce_notifier__23904993/new-bugs-announce-notifier.yml",
+      "python__cpython/Tail_calling_interpreter__137471957/tail-call.yml",
+      "python__cpython/Verify_bundled_libexpat__44012534/verify-expat.yml",
+      "python__cpython/Verify_bundled_wheels__27692609/verify-ensurepip-wheels.yml",
+      "python__cpython/Add_issue_header__66538777/run_26298368571.log",
+      "python__cpython/Check_labels__53618720/run_26298640643.log",
+      "python__cpython/Docs__21720/run_26293380446.log",
+      "python__cpython/JIT__80381540/run_26289649430.log",
+      "python__cpython/Lint__56536102/run_26298010451.log",
+      "python__cpython/Mark_stale_pull_requests__4282302/run_26288578656.log",
+      "python__cpython/mypy__57053973/run_26297482822.log",
+      "python__cpython/new-bugs-announce_notifier__23904993/run_26298368460.log",
+      "python__cpython/Tail_calling_interpreter__137471957/run_26289649246.log",
+      "python__cpython/Verify_bundled_libexpat__44012534/run_26054539300.log",
+      "python__cpython/Verify_bundled_wheels__27692609/run_25628735151.log"
+    ],
+    "raw_workflow_file_count": 11,
+    "raw_log_file_count": 11,
+    "raw_workflow_command_count": 31,
+    "raw_log_run_group_count": 182,
+    "selected_test_oracle_count": 1,
+    "manual_fallback_used": false
+  },
+  "fixed_test_commands": [
+    {
+      "command": "./python -m test --multiprocess 0 --timeout 4500 --verbose2 --verbose3",
+      "oracle_id": "cpython-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "JIT",
+      "step": "Test tier two interpreter",
+      "oracle_priority": 1
+    }
+  ]
+}

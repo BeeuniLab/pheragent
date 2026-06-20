@@ -1,0 +1,186 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/pytest/pytest.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values.",
+  "repository_metadata": {
+    "repository": "pytest-dev/pytest",
+    "repository_url": "https://github.com/pytest-dev/pytest",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:22.354389+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/pytest/pytest.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/pytest",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/pytest/pytest-dev__pytest",
+    "source_files": [
+      "pytest-dev__pytest/close_needs-information_issues__56971788/stale.yml",
+      "pytest-dev__pytest/deploy__22159234/deploy.yml",
+      "pytest-dev__pytest/prepare_release_pr__4299130/prepare-release-pr.yml",
+      "pytest-dev__pytest/test__22158026/test.yml",
+      "pytest-dev__pytest/Update_Plugin_List__5405286/update-plugin-list.yml",
+      "pytest-dev__pytest/close_needs-information_issues__56971788/run_26264782350.log",
+      "pytest-dev__pytest/deploy__22159234/run_24094454579.log",
+      "pytest-dev__pytest/prepare_release_pr__4299130/run_24093415567.log",
+      "pytest-dev__pytest/test__22158026/run_26299076292.log",
+      "pytest-dev__pytest/Update_Plugin_List__5405286/run_25977448461.log"
+    ],
+    "raw_workflow_file_count": 5,
+    "raw_log_file_count": 5,
+    "raw_workflow_command_count": 13,
+    "raw_log_run_group_count": 612,
+    "selected_test_oracle_count": 19,
+    "manual_fallback_used": false
+  },
+  "fixed_test_commands": [
+    {
+      "command": "tox run -e py311 --installpkg `find dist/*.tar.gz`",
+      "oracle_id": "pytest-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "test",
+      "step": "Test without coverage",
+      "oracle_priority": 1
+    },
+    {
+      "command": "tox run -e py310-twisted25-coverage --installpkg `find dist/*.tar.gz`",
+      "oracle_id": "pytest-ci-test-02",
+      "source": "ci_workflow_log",
+      "workflow": "test",
+      "step": "Test with coverage",
+      "oracle_priority": 2
+    },
+    {
+      "command": "tox run -e py310-twisted24-coverage --installpkg `find dist/*.tar.gz`",
+      "oracle_id": "pytest-ci-test-03",
+      "source": "ci_log_run_group",
+      "workflow": "test__22158026",
+      "step": "Test with coverage",
+      "oracle_priority": 3
+    },
+    {
+      "command": "tox run -e py314-coverage --installpkg `find dist/*.tar.gz`",
+      "oracle_id": "pytest-ci-test-04",
+      "source": "ci_log_run_group",
+      "workflow": "test__22158026",
+      "step": "Test with coverage",
+      "oracle_priority": 4
+    },
+    {
+      "command": "tox run -e py310-pluggymain-pylib-xdist --installpkg `find dist/*.tar.gz`",
+      "oracle_id": "pytest-ci-test-05",
+      "source": "ci_log_run_group",
+      "workflow": "test__22158026",
+      "step": "Test without coverage",
+      "oracle_priority": 5
+    },
+    {
+      "command": "tox run -e py310-asynctest-coverage --installpkg `find dist/*.tar.gz`",
+      "oracle_id": "pytest-ci-test-06",
+      "source": "ci_log_run_group",
+      "workflow": "test__22158026",
+      "step": "Test with coverage",
+      "oracle_priority": 6
+    },
+    {
+      "command": "tox run -e py310-xdist --installpkg `find dist/*.tar.gz`",
+      "oracle_id": "pytest-ci-test-07",
+      "source": "ci_log_run_group",
+      "workflow": "test__22158026",
+      "step": "Test without coverage",
+      "oracle_priority": 7
+    },
+    {
+      "command": "tox run -e py313 --installpkg `find dist/*.tar.gz`",
+      "oracle_id": "pytest-ci-test-08",
+      "source": "ci_log_run_group",
+      "workflow": "test__22158026",
+      "step": "Test without coverage",
+      "oracle_priority": 8
+    },
+    {
+      "command": "tox run -e py312 --installpkg `find dist/*.tar.gz`",
+      "oracle_id": "pytest-ci-test-09",
+      "source": "ci_log_run_group",
+      "workflow": "test__22158026",
+      "step": "Test without coverage",
+      "oracle_priority": 9
+    },
+    {
+      "command": "tox run -e py310-freeze --installpkg `find dist/*.tar.gz`",
+      "oracle_id": "pytest-ci-test-10",
+      "source": "ci_log_run_group",
+      "workflow": "test__22158026",
+      "step": "Test without coverage",
+      "oracle_priority": 10
+    },
+    {
+      "command": "tox run -e py310-lsof-numpy-pexpect-coverage --installpkg `find dist/*.tar.gz`",
+      "oracle_id": "pytest-ci-test-11",
+      "source": "ci_log_run_group",
+      "workflow": "test__22158026",
+      "step": "Test with coverage",
+      "oracle_priority": 11
+    },
+    {
+      "command": "tox run -e py312-coverage --installpkg `find dist/*.tar.gz`",
+      "oracle_id": "pytest-ci-test-12",
+      "source": "ci_log_run_group",
+      "workflow": "test__22158026",
+      "step": "Test with coverage",
+      "oracle_priority": 12
+    },
+    {
+      "command": "tox run -e py312-xdist --installpkg `find dist/*.tar.gz`",
+      "oracle_id": "pytest-ci-test-13",
+      "source": "ci_log_run_group",
+      "workflow": "test__22158026",
+      "step": "Test without coverage",
+      "oracle_priority": 13
+    },
+    {
+      "command": "tox run -e py314-xdist --installpkg `find dist/*.tar.gz`",
+      "oracle_id": "pytest-ci-test-14",
+      "source": "ci_log_run_group",
+      "workflow": "test__22158026",
+      "step": "Test without coverage",
+      "oracle_priority": 14
+    },
+    {
+      "command": "tox run -e py313-xdist --installpkg `find dist/*.tar.gz`",
+      "oracle_id": "pytest-ci-test-15",
+      "source": "ci_log_run_group",
+      "workflow": "test__22158026",
+      "step": "Test without coverage",
+      "oracle_priority": 15
+    },
+    {
+      "command": "tox run -e py311-coverage --installpkg `find dist/*.tar.gz`",
+      "oracle_id": "pytest-ci-test-16",
+      "source": "ci_log_run_group",
+      "workflow": "test__22158026",
+      "step": "Test with coverage",
+      "oracle_priority": 16
+    },
+    {
+      "command": "tox run -e doctesting-coverage --installpkg `find dist/*.tar.gz`",
+      "oracle_id": "pytest-ci-test-17",
+      "source": "ci_log_run_group",
+      "workflow": "test__22158026",
+      "step": "Test with coverage",
+      "oracle_priority": 17
+    },
+    {
+      "command": "tox run -e py313-pexpect-coverage --installpkg `find dist/*.tar.gz`",
+      "oracle_id": "pytest-ci-test-18",
+      "source": "ci_log_run_group",
+      "workflow": "test__22158026",
+      "step": "Test with coverage",
+      "oracle_priority": 18
+    },
+    {
+      "command": "tox run -e plugins --installpkg `find dist/*.tar.gz`",
+      "oracle_id": "pytest-ci-test-19",
+      "source": "ci_log_run_group",
+      "workflow": "test__22158026",
+      "step": "Test without coverage",
+      "oracle_priority": 19
+    }
+  ]
+}

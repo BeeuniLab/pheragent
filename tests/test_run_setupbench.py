@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 
 
@@ -323,3 +324,92 @@ def test_build_command_passes_task_description(tmp_path: Path) -> None:
     assert command[task_index + 1] == (
         "SetupBench target validation command: python -m whisper --help"
     )
+    jobs_index = command.index("--jobs")
+    assert command[jobs_index + 1] == "1"
+
+
+def test_run_project_retries_failed_project_and_returns_final_payload(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_setupbench = load_run_setupbench()
+    oracle = tmp_path / "oracle.json"
+    oracle.write_text(json.dumps({"description": "Run oracle."}), encoding="utf-8")
+    projects_root = tmp_path / "projects"
+    state_root = tmp_path / "state"
+    project_files_root = tmp_path / "project-files"
+    logs_root = tmp_path / "logs"
+    for path in (projects_root, state_root, project_files_root, logs_root):
+        path.mkdir()
+
+    calls = []
+
+    def fake_run_command(command, *, log_path, echo):
+        calls.append((command, log_path, echo))
+        if len(calls) == 1:
+            marker = projects_root / "owner-repo" / "first-marker"
+            marker.parent.mkdir(parents=True)
+            marker.write_text("stale workspace\n", encoding="utf-8")
+            return subprocess.CompletedProcess(command, 1)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(run_setupbench, "run_command", fake_run_command)
+    monkeypatch.setattr(
+        run_setupbench,
+        "find_manifest",
+        lambda state_dir: state_dir / "repo" / "runs" / "run" / "manifest.json",
+    )
+    monkeypatch.setattr(
+        run_setupbench,
+        "read_manifest_info",
+        lambda path: {
+            "ok": len(calls) == 2,
+            "error": None if len(calls) == 2 else "oracle validation failed",
+            "final_image": "image:tag" if len(calls) == 2 else None,
+            "llm_usage": {"requests": len(calls)},
+        },
+    )
+
+    args = run_setupbench.parse_args(
+        ["--no-require-uv", "--project-retries", "1", "--runner", "python -m pheragent"]
+    )
+    payload = run_setupbench.run_project(
+        args=args,
+        index=1,
+        total=1,
+        item={
+            "owner_repo": "owner/repo",
+            "commit_version": "abc123",
+            "oracle_file": str(oracle),
+        },
+        runner=["python", "-m", "pheragent"],
+        projects_root=projects_root,
+        state_root=state_root,
+        project_files_root=project_files_root,
+        logs_root=logs_root,
+        base_dockerfile=tmp_path / "Dockerfile",
+    )
+
+    assert len(calls) == 2
+    assert calls[0][1] == logs_root / "001-owner-repo-attempt-1.log"
+    assert calls[1][1] == logs_root / "001-owner-repo-attempt-2.log"
+    assert not (projects_root / "owner-repo" / "first-marker").exists()
+    assert payload["ok"] is True
+    assert payload["attempt"] == 2
+    assert payload["max_attempts"] == 2
+    assert payload["attempts"] == [
+        {
+            "attempt": 1,
+            "ok": False,
+            "returncode": 1,
+            "manifest_error": "oracle validation failed",
+            "log_path": str(logs_root / "001-owner-repo-attempt-1.log"),
+        },
+        {
+            "attempt": 2,
+            "ok": True,
+            "returncode": 0,
+            "manifest_error": None,
+            "log_path": str(logs_root / "001-owner-repo-attempt-2.log"),
+        },
+    ]

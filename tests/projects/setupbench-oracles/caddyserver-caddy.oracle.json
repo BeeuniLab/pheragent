@@ -1,0 +1,12 @@
+{
+  "repo_url": "https://github.com/caddyserver/caddy",
+  "owner_repo": "caddyserver/caddy",
+  "commit_version": "782a3c7ac60c82311fe9fb8889dd843dfe26c0bc",
+  "fixed_test_commands": [
+    {
+      "name": "setupbench validation",
+      "command": "_pheragent_setupbench_log=\"$(mktemp /tmp/pheragent-setupbench.XXXXXX)\"\n(\ncaddy list-modules | grep -q 'http' && echo 'Setup successful' || echo 'Setup failed'\n) >\"$_pheragent_setupbench_log\" 2>&1\n_pheragent_setupbench_status=$?\ncat \"$_pheragent_setupbench_log\"\nif grep -q \"Setup successful\" \"$_pheragent_setupbench_log\" && ! grep -q \"Setup failed\" \"$_pheragent_setupbench_log\"; then\n  rm -f \"$_pheragent_setupbench_log\"\n  exit 0\nfi\nrm -f \"$_pheragent_setupbench_log\"\nif [ \"$_pheragent_setupbench_status\" -eq 0 ]; then\n  exit 1\nfi\nexit \"$_pheragent_setupbench_status\"",
+      "original_command": "caddy list-modules | grep -q 'http' && echo 'Setup successful' || echo 'Setup failed'"
+    }
+  ]
+}

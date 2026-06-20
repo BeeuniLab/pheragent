@@ -1,0 +1,64 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/bootstrap/bootstrap.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values.",
+  "repository_metadata": {
+    "repository": "twbs/bootstrap",
+    "repository_url": "https://github.com/twbs/bootstrap",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:05.452021+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/bootstrap/bootstrap.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/bootstrap",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/bootstrap/twbs__bootstrap",
+    "source_files": [
+      "twbs__bootstrap/Bundlewatch__1030890/bundlewatch.yml",
+      "twbs__bootstrap/Close_Issue_Awaiting_Reply__20412350/issue-close-require.yml",
+      "twbs__bootstrap/CodeQL__1149056/codeql.yml",
+      "twbs__bootstrap/Compress_Images__26633268/calibreapp-image-actions.yml",
+      "twbs__bootstrap/cspell__16687980/cspell.yml",
+      "twbs__bootstrap/CSS__72796/css.yml",
+      "twbs__bootstrap/CSS_node-sass___2687666/node-sass.yml",
+      "twbs__bootstrap/Docs__72798/docs.yml",
+      "twbs__bootstrap/Issue_Labeled__20412351/issue-labeled.yml",
+      "twbs__bootstrap/JS_Tests__72792/js.yml",
+      "twbs__bootstrap/Lint__72793/lint.yml",
+      "twbs__bootstrap/Scorecard_supply-chain_security__174235920/scorecard.yml",
+      "twbs__bootstrap/Bundlewatch__1030890/run_26280934185.log",
+      "twbs__bootstrap/Close_Issue_Awaiting_Reply__20412350/run_26007674570.log",
+      "twbs__bootstrap/CodeQL__1149056/run_26280934210.log",
+      "twbs__bootstrap/Compress_Images__26633268/run_25535800283.log",
+      "twbs__bootstrap/cspell__16687980/run_26280934215.log",
+      "twbs__bootstrap/CSS__72796/run_26280934187.log",
+      "twbs__bootstrap/CSS_node-sass___2687666/run_26261830803.log",
+      "twbs__bootstrap/Docs__72798/run_26261830816.log",
+      "twbs__bootstrap/Issue_Labeled__20412351/run_26013530424.log",
+      "twbs__bootstrap/JS_Tests__72792/run_26261830802.log",
+      "twbs__bootstrap/Lint__72793/run_26261830805.log",
+      "twbs__bootstrap/Scorecard_supply-chain_security__174235920/run_26260904976.log"
+    ],
+    "raw_workflow_file_count": 12,
+    "raw_log_file_count": 12,
+    "raw_workflow_command_count": 17,
+    "raw_log_run_group_count": 46,
+    "selected_test_oracle_count": 2,
+    "manual_fallback_used": false
+  },
+  "fixed_test_commands": [
+    {
+      "command": "npm run css-test",
+      "oracle_id": "bootstrap-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "CSS",
+      "step": "Run CSS tests",
+      "oracle_priority": 1
+    },
+    {
+      "command": "npm run js-test",
+      "oracle_id": "bootstrap-ci-test-02",
+      "source": "ci_workflow_log",
+      "workflow": "JS Tests",
+      "step": "Run JS tests",
+      "oracle_priority": 2
+    }
+  ]
+}

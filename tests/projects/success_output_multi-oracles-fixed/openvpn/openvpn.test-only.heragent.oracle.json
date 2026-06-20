@@ -1,0 +1,46 @@
+{
+  "source_file": "/home/lix/EnvAgent/love/lix_pheragent/tests/projects/success_output_multi-oracles/openvpn/openvpn.test-only.heragent.oracle.json",
+  "source_format": "test-only.heragent.oracle.json",
+  "conversion_note": "Converted for pheragent --oracle-file compatibility. Current pheragent reads top-level fixed_test_commands entries and executes command values.",
+  "repository_metadata": {
+    "repository": "OpenVPN/openvpn",
+    "repository_url": "https://github.com/OpenVPN/openvpn",
+    "oracle_schema_version": "test-only-raw-ci-1.0",
+    "generated_at": "2026-06-07T16:25:18.960192+00:00",
+    "oracle_file": "ExecutionAgent_success_output_multi-oracles/openvpn/openvpn.test-only.heragent.oracle.json",
+    "source_project_dir": "ExecutionAgent_success_output_multi-oracles/openvpn",
+    "source_repo_log_dir": "ExecutionAgent_success_output_multi-oracles/openvpn/OpenVPN__openvpn",
+    "source_files": [
+      "OpenVPN__openvpn/Build__10367444/build.yaml",
+      "OpenVPN__openvpn/coverity-scan__70304383/coverity-scan.yml",
+      "OpenVPN__openvpn/Deploy_Doxygen_documentation_to_Pages__147023529/doxygen.yml",
+      "OpenVPN__openvpn/Build__10367444/run_26292002625.log",
+      "OpenVPN__openvpn/coverity-scan__70304383/run_25824926535.log",
+      "OpenVPN__openvpn/Deploy_Doxygen_documentation_to_Pages__147023529/run_25866816202.log"
+    ],
+    "raw_workflow_file_count": 3,
+    "raw_log_file_count": 3,
+    "raw_workflow_command_count": 37,
+    "raw_log_run_group_count": 448,
+    "selected_test_oracle_count": 2,
+    "manual_fallback_used": false
+  },
+  "fixed_test_commands": [
+    {
+      "command": "make -j3 check VERBOSE=1",
+      "oracle_id": "openvpn-ci-test-01",
+      "source": "ci_workflow_log",
+      "workflow": "Build",
+      "step": "make check",
+      "oracle_priority": 1
+    },
+    {
+      "command": "make -j4 check VERBOSE=1",
+      "oracle_id": "openvpn-ci-test-02",
+      "source": "ci_workflow_log",
+      "workflow": "Build",
+      "step": "make check",
+      "oracle_priority": 2
+    }
+  ]
+}
