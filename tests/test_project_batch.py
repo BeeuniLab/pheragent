@@ -5,10 +5,13 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 from pheragent.models import BuildRequest, BuildResult, CommandResult
 from pheragent.project_batch import (
     ProjectBatchBuilder,
     ProjectSpec,
+    _BatchDirectoryLock,
     isolate_project_oracles,
     parse_projects_file,
     prepare_project,
@@ -1299,6 +1302,38 @@ def test_project_batch_builder_logs_build_failures_concisely(tmp_path: Path) -> 
     assert "pallets/flask" in failure_log
     assert "build_failed" in failure_log
     assert "20-python-deps" not in failure_log
+
+
+def test_project_batch_builder_rejects_concurrent_batch_for_same_projects_dir(
+    tmp_path: Path,
+) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text("pallets/flask 2579ce9\n", encoding="utf-8")
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    stale_failure_log = projects_dir / "failed-projects.log"
+    stale_failure_log.write_text("old\tfailure\n", encoding="utf-8")
+
+    def fake_runner(command: list[str], cwd: Path | None) -> CommandResult:
+        del command, cwd
+        raise AssertionError("locked batch should not prepare projects")
+
+    with (
+        _BatchDirectoryLock(projects_dir),
+        pytest.raises(RuntimeError, match="projects-dir is already being built"),
+    ):
+        ProjectBatchBuilder(
+            projects_file=projects_file,
+            projects_dir=projects_dir,
+            base_request=BuildRequest(
+                repo_path=tmp_path,
+                base_dockerfile=tmp_path / "Dockerfile",
+                run_id=None,
+            ),
+            command_runner=fake_runner,
+        ).build_all()
+
+    assert stale_failure_log.read_text(encoding="utf-8") == "old\tfailure\n"
 
 
 def test_project_batch_builder_writes_llm_usage_jsonl(tmp_path: Path) -> None:

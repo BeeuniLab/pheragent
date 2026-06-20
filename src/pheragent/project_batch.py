@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
+import threading
 from collections import Counter
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,9 +23,16 @@ from .orchestrator import EnvironmentBuilder
 from .process import run_command
 from .utils import slugify
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows fallback is best effort only.
+    fcntl = None
+
 CommandRunner = Callable[[list[str], Path | None], CommandResult]
 BuilderFactory = Callable[[BuildRequest], EnvironmentBuilder]
 ProjectLogKey = tuple[str, str, str]
+_ACTIVE_PROJECT_DIR_LOCK = threading.Lock()
+_ACTIVE_PROJECT_DIRS: set[Path] = set()
 
 
 @dataclass(slots=True)
@@ -345,43 +355,45 @@ class ProjectBatchBuilder:
         self.builder_factory = builder_factory
 
     def build_all(self) -> BatchBuildResult:
-        specs = parse_projects_file(self.projects_file)
-        if self.limit is not None:
-            specs = specs[: self.limit]
+        self.projects_dir.mkdir(parents=True, exist_ok=True)
+        with _BatchDirectoryLock(self.projects_dir):
+            specs = parse_projects_file(self.projects_file)
+            if self.limit is not None:
+                specs = specs[: self.limit]
 
-        failures_log_path = self.projects_dir / "failed-projects.log"
-        if failures_log_path.exists():
-            failures_log_path.unlink()
-        llm_usage_log_path = self.projects_dir / "llm-usage-projects.jsonl"
-        if llm_usage_log_path.exists():
-            llm_usage_log_path.unlink()
-        no_repo_log_path = self.projects_dir / "no-repo-projects.log"
-        known_no_repo_keys = _read_no_repo_log_keys(no_repo_log_path)
-        version_mismatch_log_path = self.projects_dir / "version-mismatch-projects.log"
+            failures_log_path = self.projects_dir / "failed-projects.log"
+            if failures_log_path.exists():
+                failures_log_path.unlink()
+            llm_usage_log_path = self.projects_dir / "llm-usage-projects.jsonl"
+            if llm_usage_log_path.exists():
+                llm_usage_log_path.unlink()
+            no_repo_log_path = self.projects_dir / "no-repo-projects.log"
+            known_no_repo_keys = _read_no_repo_log_keys(no_repo_log_path)
+            version_mismatch_log_path = self.projects_dir / "version-mismatch-projects.log"
 
-        results = self._build_specs(
-            specs,
-            known_no_repo_keys=known_no_repo_keys,
-            failures_log_path=failures_log_path,
-            no_repo_log_path=no_repo_log_path,
-            version_mismatch_log_path=version_mismatch_log_path,
-            llm_usage_log_path=llm_usage_log_path,
-        )
+            results = self._build_specs(
+                specs,
+                known_no_repo_keys=known_no_repo_keys,
+                failures_log_path=failures_log_path,
+                no_repo_log_path=no_repo_log_path,
+                version_mismatch_log_path=version_mismatch_log_path,
+                llm_usage_log_path=llm_usage_log_path,
+            )
 
-        return BatchBuildResult(
-            ok=all(result.ok or result.skipped for result in results),
-            projects_dir=self.projects_dir,
-            oracles_dir=self.oracles_dir,
-            results=results,
-            failures_log_path=failures_log_path if failures_log_path.exists() else None,
-            no_repo_log_path=no_repo_log_path if no_repo_log_path.exists() else None,
-            version_mismatch_log_path=(
-                version_mismatch_log_path if version_mismatch_log_path.exists() else None
-            ),
-            llm_usage_log_path=llm_usage_log_path if llm_usage_log_path.exists() else None,
-            ablation_mode=self.base_request.ablation_mode,
-            progress_control=_progress_control_json(self.base_request.ablation_mode),
-        )
+            return BatchBuildResult(
+                ok=all(result.ok or result.skipped for result in results),
+                projects_dir=self.projects_dir,
+                oracles_dir=self.oracles_dir,
+                results=results,
+                failures_log_path=failures_log_path if failures_log_path.exists() else None,
+                no_repo_log_path=no_repo_log_path if no_repo_log_path.exists() else None,
+                version_mismatch_log_path=(
+                    version_mismatch_log_path if version_mismatch_log_path.exists() else None
+                ),
+                llm_usage_log_path=llm_usage_log_path if llm_usage_log_path.exists() else None,
+                ablation_mode=self.base_request.ablation_mode,
+                progress_control=_progress_control_json(self.base_request.ablation_mode),
+            )
 
     def _build_specs(
         self,
@@ -828,6 +840,95 @@ class ProjectBatchBuilder:
         if not replaced:
             lines.append(new_line)
         version_mismatch_log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+class _BatchDirectoryLock:
+    def __init__(self, projects_dir: Path):
+        self.projects_dir = projects_dir
+        self.lock_path = projects_dir / ".pheragent-batch.lock"
+        self._handle = None
+        self._fallback_lock_dir: Path | None = None
+        self._active_dir_registered = False
+
+    def __enter__(self) -> _BatchDirectoryLock:
+        self._register_active_dir()
+        try:
+            self._acquire_file_lock()
+        except Exception:
+            self._unregister_active_dir()
+            raise
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        del exc_type, exc, traceback
+        try:
+            self._release_file_lock()
+        finally:
+            self._unregister_active_dir()
+
+    def _register_active_dir(self) -> None:
+        with _ACTIVE_PROJECT_DIR_LOCK:
+            if self.projects_dir in _ACTIVE_PROJECT_DIRS:
+                raise RuntimeError(
+                    "projects-dir is already being built by this pheragent process: "
+                    f"{self.projects_dir}"
+                )
+            _ACTIVE_PROJECT_DIRS.add(self.projects_dir)
+            self._active_dir_registered = True
+
+    def _unregister_active_dir(self) -> None:
+        if not self._active_dir_registered:
+            return
+        with _ACTIVE_PROJECT_DIR_LOCK:
+            _ACTIVE_PROJECT_DIRS.discard(self.projects_dir)
+        self._active_dir_registered = False
+
+    def _acquire_file_lock(self) -> None:
+        if fcntl is None:
+            self._acquire_fallback_lock()
+            return
+
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = self.lock_path.open("a+", encoding="utf-8")
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            handle.seek(0)
+            owner = handle.read().strip()
+            handle.close()
+            owner_hint = f" ({owner})" if owner else ""
+            raise RuntimeError(
+                "projects-dir is already being built by another pheragent process: "
+                f"{self.projects_dir}{owner_hint}"
+            ) from exc
+
+        handle.seek(0)
+        handle.truncate()
+        handle.write(f"pid={os.getpid()}\n")
+        handle.flush()
+        self._handle = handle
+
+    def _release_file_lock(self) -> None:
+        if self._handle is not None:
+            fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
+            self._handle.close()
+            self._handle = None
+        if self._fallback_lock_dir is not None:
+            with suppress(FileNotFoundError):
+                self._fallback_lock_dir.rmdir()
+            self._fallback_lock_dir = None
+
+    def _acquire_fallback_lock(self) -> None:
+        lock_dir = self.projects_dir / ".pheragent-batch.lockdir"
+        try:
+            lock_dir.mkdir()
+        except FileExistsError as exc:
+            raise RuntimeError(
+                "projects-dir is already being built by another pheragent process: "
+                f"{self.projects_dir}"
+            ) from exc
+        (lock_dir / "owner").write_text(f"pid={os.getpid()}\n", encoding="utf-8")
+        self._fallback_lock_dir = lock_dir
 
 
 def _project_log_key(spec: ProjectSpec) -> ProjectLogKey:
