@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shlex
+import uuid
 from pathlib import Path
 
 from .models import BuildRequest, Checkpoint, CommandResult
@@ -12,7 +13,9 @@ class DockerRuntime:
     def __init__(self, request: BuildRequest, run_id: str):
         self.request = request.normalized()
         self.run_id = run_id
-        self.base_image = f"{slugify(self.request.image_prefix)}:{run_id}-base"
+        self.base_image = (
+            f"{slugify(self.request.image_prefix)}:{run_id}-{self._new_image_hash()}-base"
+        )
         self.current_container: str | None = None
         self._container_counter = 0
         self._checkpoint_counter = 0
@@ -129,7 +132,8 @@ class DockerRuntime:
         safe_block = slugify(block_id or "base")
         image_ref = (
             f"{slugify(self.request.image_prefix)}:"
-            f"{self.run_id}-{self._checkpoint_counter:03d}-{safe_block}-{slugify(kind)}"
+            f"{self.run_id}-{self._new_image_hash()}-"
+            f"{self._checkpoint_counter:03d}-{safe_block}-{slugify(kind)}"
         )
         result = self._run_command(
             ["docker", "commit", self.current_container or "", image_ref],
@@ -160,6 +164,9 @@ class DockerRuntime:
         inspect = run_command(["docker", "inspect", name], timeout=30)
         if inspect.ok:
             run_command(["docker", "rm", "-f", name], timeout=60)
+
+    def _new_image_hash(self) -> str:
+        return uuid.uuid4().hex[:12]
 
     def cleanup(self) -> None:
         if not self.request.keep_container:

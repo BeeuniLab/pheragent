@@ -1464,6 +1464,44 @@ def test_environment_builder_resumes_from_checkpoint_without_replanning(
     assert result.blocks[1].status == "succeeded"
 
 
+def test_environment_builder_infers_resume_block_from_hashed_checkpoint_tag(
+    tmp_path: Path,
+) -> None:
+    blocks = [
+        CommandBlock(
+            id="00-preflight",
+            title="Preflight",
+            goal="inspect",
+            script="#!/bin/sh\necho preflight\n",
+            order=0,
+        ),
+        CommandBlock(
+            id="01-tooling",
+            title="Tooling",
+            goal="install tools",
+            script="#!/bin/sh\necho tooling\n",
+            order=1,
+        ),
+    ]
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="resume-run",
+    )
+    builder = EnvironmentBuilder(
+        request,
+        planner=FailingPlanner(),
+        repair_planner=RepairPlanner(),
+        runtime_factory=FakeRuntime,
+    )
+
+    image_ref = "pheragent:resume-run-a1b2c3d4e5f6-002-01-tooling-success"
+
+    assert builder._infer_resume_block_id(blocks, image_ref) == "01-tooling"
+    assert builder._resume_start_index(blocks, image_ref) == 2
+
+
 def test_environment_builder_start_at_block_overrides_resume_tag(tmp_path: Path) -> None:
     FakeRuntime.instances = []
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")

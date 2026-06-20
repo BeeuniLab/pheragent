@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from pheragent.docker_runtime import DockerRuntime
@@ -74,3 +75,46 @@ def test_start_removes_stale_named_container_before_run(
     assert commands[0][:2] == ["docker", "inspect"]
     assert commands[1][:3] == ["docker", "rm", "-f"]
     assert commands[2][:2] == ["docker", "run"]
+
+
+def test_generated_images_include_unique_hashes_with_same_run_id(tmp_path: Path) -> None:
+    request = BuildRequest(repo_path=tmp_path, base_dockerfile=tmp_path / "Dockerfile")
+
+    first = DockerRuntime(request, "test")
+    second = DockerRuntime(request, "test")
+
+    assert first.base_image != second.base_image
+    assert re.fullmatch(r"pheragent:test-[0-9a-f]{12}-base", first.base_image)
+    assert re.fullmatch(r"pheragent:test-[0-9a-f]{12}-base", second.base_image)
+
+
+def test_commit_images_include_unique_hash_and_keep_resume_suffix(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run_command(command: list[str], *, timeout: float, cwd=None) -> CommandResult:
+        del timeout, cwd
+        commands.append(command)
+        if command[:2] == ["docker", "commit"]:
+            return CommandResult(exit_code=0)
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr("pheragent.docker_runtime.run_command", fake_run_command)
+    request = BuildRequest(repo_path=tmp_path, base_dockerfile=tmp_path / "Dockerfile")
+    runtime = DockerRuntime(request, "test")
+    runtime.current_container = "container"
+
+    checkpoint = runtime.commit(
+        block_id="01-python-deps",
+        parent_image_ref=runtime.base_image,
+        kind="success",
+    )
+
+    assert checkpoint.image_ref == commands[0][-1]
+    assert re.fullmatch(
+        r"pheragent:test-[0-9a-f]{12}-001-01-python-deps-success",
+        checkpoint.image_ref,
+    )
+    assert checkpoint.image_ref.endswith("-01-python-deps-success")
