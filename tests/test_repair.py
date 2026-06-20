@@ -12,6 +12,7 @@ from pheragent.models import (
     RepoContext,
 )
 from pheragent.repair import (
+    _REPAIR_SYSTEM_PROMPT,
     OpenAIResponsesRepairConfig,
     OpenAIResponsesRepairPlanner,
     RepairCommand,
@@ -160,6 +161,13 @@ def test_repair_hints_dedupe_duplicate_requirements_without_repo_edit() -> None:
     assert "requirements.txt').read_text()" in hint.command
     assert ".write_text(" not in hint.command
     assert "sed -i" not in hint.command
+
+
+def test_repair_prompt_avoids_rejected_python_file_writes_for_temp_requirements() -> None:
+    assert "Safety filtering rejects Python file-write APIs" in _REPAIR_SYSTEM_PROMPT
+    assert ".write_text(" in _REPAIR_SYSTEM_PROMPT
+    assert "use shell redirection to /tmp" in _REPAIR_SYSTEM_PROMPT
+    assert "Do not use Python file writes even for /tmp" in _REPAIR_SYSTEM_PROMPT
 
 
 def test_repair_hints_relax_dunder_version_validation() -> None:
