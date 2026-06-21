@@ -13,7 +13,12 @@ from pheragent.models import (
     RepoContext,
 )
 from pheragent.orchestrator import EnvironmentBuilder, _split_shell_script_commands
-from pheragent.repair import RepairCommand, RepairPlanner, RepairProbeCommand
+from pheragent.repair import (
+    FailureLocalization,
+    RepairCommand,
+    RepairPlanner,
+    RepairProbeCommand,
+)
 
 
 class FakeRuntime:
@@ -27,6 +32,7 @@ class FakeRuntime:
         self.started: list[str] = []
         self.recreated: list[str] = []
         self.commits: list[str] = []
+        self.command_sequences: list[list[str]] = []
         self.block_runs = 0
 
     def build_base_image(self) -> CommandResult:
@@ -58,6 +64,23 @@ class FakeRuntime:
         if "build-essential" in command:
             return CommandResult(exit_code=0, stdout="installed")
         return CommandResult(exit_code=0, stdout="ok")
+
+    def execute_command_sequence(
+        self,
+        commands: list[str],
+        *,
+        timeout: float,
+    ) -> list[CommandResult]:
+        del timeout
+        self.command_sequences.append(commands)
+        return [
+            CommandResult(
+                exit_code=0,
+                stdout="ok",
+                command=["pheragent-command-forward-persistent", str(index), command],
+            )
+            for index, command in enumerate(commands, start=1)
+        ]
 
     def commit(
         self,
@@ -134,6 +157,125 @@ def test_environment_builder_repairs_failed_block_and_persists_patch(tmp_path: P
     assert first_log.is_file()
     assert '"phase": "docker_build"' in first_log.read_text(encoding="utf-8")
     assert '"log_path"' in (result.state_dir / "executions.jsonl").read_text(encoding="utf-8")
+
+
+def test_environment_builder_repairs_earlier_localized_block_and_replays_suffix(
+    tmp_path: Path,
+) -> None:
+    class EarlierRootRuntime(FakeRuntime):
+        def __init__(self, request: BuildRequest, run_id: str):
+            super().__init__(request, run_id)
+            self.has_correct_runtime = False
+            self.script_runs: list[str] = []
+
+        def recreate_from(self, image_ref: str) -> str:
+            self.has_correct_runtime = False
+            return super().recreate_from(image_ref)
+
+        def execute_script(self, script_path: Path, *, timeout: float) -> CommandResult:
+            del timeout
+            self.block_runs += 1
+            self.script_runs.append(script_path.name)
+            script = script_path.read_text(encoding="utf-8")
+            if script_path.name == "20-runtime.sh":
+                if "install-correct-runtime" in script:
+                    self.has_correct_runtime = True
+                return CommandResult(exit_code=0, stdout="runtime ok")
+            if script_path.name == "50-validation.sh" and not self.has_correct_runtime:
+                return CommandResult(exit_code=1, stderr="wrong runtime selected")
+            return CommandResult(exit_code=0, stdout="ok")
+
+    class EarlierRootLLMRepairPlanner:
+        def __init__(self) -> None:
+            self.localized_blocks: list[str] = []
+            self.repaired_blocks: list[str] = []
+
+        def localize_failure(self, block, result, *, context=None, heuristic_hints=None):
+            del result, heuristic_hints
+            assert context is not None
+            self.localized_blocks.append(block.id)
+            return FailureLocalization(
+                root_cause_block_id="20-runtime",
+                rationale="validation failure came from runtime choice",
+            )
+
+        def suggest(self, block, result, *, context=None, heuristic_hints=None):
+            del result, context, heuristic_hints
+            self.repaired_blocks.append(block.id)
+            return [
+                RepairCommand(
+                    title="Install correct runtime",
+                    command="install-correct-runtime",
+                    patch_script="echo install-correct-runtime",
+                )
+            ]
+
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    blocks = [
+        CommandBlock(
+            id="00-preflight",
+            title="Preflight",
+            goal="inspect",
+            script="#!/bin/sh\necho preflight\n",
+            order=0,
+        ),
+        CommandBlock(
+            id="20-runtime",
+            title="Runtime",
+            goal="install runtime",
+            script="#!/bin/sh\necho runtime\n",
+            order=20,
+        ),
+        CommandBlock(
+            id="30-deps",
+            title="Dependencies",
+            goal="install deps",
+            script="#!/bin/sh\necho deps\n",
+            order=30,
+        ),
+        CommandBlock(
+            id="50-validation",
+            title="Validation",
+            goal="validate runtime",
+            script="#!/bin/sh\necho validate\n",
+            order=50,
+        ),
+    ]
+    llm_planner = EarlierRootLLMRepairPlanner()
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="earlier-root",
+        max_repair_attempts=1,
+        ablation_mode="without-final-clean-replay",
+    )
+
+    result = EnvironmentBuilder(
+        request,
+        planner=StaticPlanner(blocks),
+        repair_planner=RepairPlanner(llm_planner=llm_planner),
+        runtime_factory=EarlierRootRuntime,
+    ).build()
+
+    assert result.ok
+    assert llm_planner.localized_blocks == ["50-validation"]
+    assert llm_planner.repaired_blocks == ["20-runtime"]
+    runtime = FakeRuntime.instances[-1]
+    assert runtime.recreated.count("fake:00-preflight-success") == 2
+    assert runtime.script_runs == [
+        "00-preflight.sh",
+        "20-runtime.sh",
+        "30-deps.sh",
+        "50-validation.sh",
+        "20-runtime.sh",
+        "30-deps.sh",
+        "50-validation.sh",
+    ]
+    assert "install-correct-runtime" in (
+        result.scripts_dir / "20-runtime.sh"
+    ).read_text(encoding="utf-8")
 
 
 def test_environment_builder_full_ablation_runs_final_clean_replay(tmp_path: Path) -> None:
@@ -266,28 +408,24 @@ def test_environment_builder_single_command_forward_executes_commands(
         execution for execution in result.executions if execution.phase == "command_forward"
     ]
     command_texts = [execution.command[-1] for execution in command_forward if execution.command]
+    runtime = next(instance for instance in FakeRuntime.instances if instance.command_sequences)
 
     assert result.ok
     assert result.progress_control is not None
     assert result.progress_control.forward_granularity == "command"
     assert result.final_clean_replay_ok is True
     assert len(command_forward) == 6
-    assert command_texts[0] == "set -eu\nexport DEMO_FLAG=1"
-    assert command_texts[1] == "set -eu\nexport DEMO_FLAG=1\ncd src"
-    assert command_texts[2] == "set -eu\nexport DEMO_FLAG=1\ncd src\necho one"
-    assert command_texts[3] == "set -eu\nexport DEMO_FLAG=1\ncd src\necho two"
-    assert command_texts[4] == (
-        "set -eu\nexport DEMO_FLAG=1\ncd src\nbuild_docs() {\n  echo docs\n}"
-    )
-    assert command_texts[5] == (
-        "set -eu\n"
-        "export DEMO_FLAG=1\n"
-        "cd src\n"
-        "build_docs() {\n"
-        "  echo docs\n"
-        "}\n"
-        "build_docs"
-    )
+    assert runtime.command_sequences == [
+        [
+            "export DEMO_FLAG=1",
+            "cd src",
+            "echo one",
+            "echo two",
+            "build_docs() {\n  echo docs\n}",
+            "build_docs",
+        ]
+    ]
+    assert command_texts == runtime.command_sequences[0]
     assert not any(execution.phase == "block" for execution in result.executions)
     assert any(execution.phase == "clean_replay" for execution in result.executions)
 
@@ -1135,6 +1273,7 @@ def test_environment_builder_plans_with_container_preflight_context(tmp_path: Pa
         state_dir=tmp_path / ".pheragent",
         run_id="runtime-context",
         task_description="Setup target: import demo and run the demo CLI.",
+        ablation_mode="without-final-clean-replay",
     )
 
     result = EnvironmentBuilder(
@@ -1445,6 +1584,7 @@ def test_environment_builder_resumes_from_checkpoint_without_replanning(
         state_dir=state_dir,
         run_id="resume-run",
         resume_from=resume_image,
+        ablation_mode="without-final-clean-replay",
     )
 
     result = EnvironmentBuilder(
@@ -1529,6 +1669,7 @@ def test_environment_builder_start_at_block_overrides_resume_tag(tmp_path: Path)
         run_id="resume-explicit",
         resume_from="custom:image",
         start_at_block="01-tooling",
+        ablation_mode="without-final-clean-replay",
     )
 
     result = EnvironmentBuilder(

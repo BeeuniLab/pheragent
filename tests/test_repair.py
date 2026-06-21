@@ -734,6 +734,20 @@ def test_openai_responses_repair_payload_includes_repair_context(tmp_path: Path)
     assert "max_output_tokens" not in probe_payload
     assert "temperature" not in probe_payload
 
+    localization_payload = planner._localization_request_payload(block, result, context)
+    assert isinstance(localization_payload["input"], list)
+    localization_text = localization_payload["input"][0]["content"][0]["text"]
+    localization_content = json.loads(localization_text)
+    assert localization_content["repair_context"]["previous_blocks"][0]["id"] == "00-preflight"
+    assert "json" in localization_text.lower()
+
+    localization = planner._parse_localization(
+        '{"root_cause_block_id":"00-preflight","rationale":"missing prior tool"}'
+    )
+    assert localization is not None
+    assert localization.root_cause_block_id == "00-preflight"
+    assert localization.rationale == "missing prior tool"
+
 
 def test_openai_chat_completions_repair_uses_chat_payload_and_usage() -> None:
     class FakeChatCompletions:

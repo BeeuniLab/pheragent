@@ -20,7 +20,7 @@ SETUPBENCH_PROJECT_RETRIES="${SETUPBENCH_PROJECT_RETRIES:-0}"
 ONLY='^(TA-Lib/ta-lib-python|apache/cassandra|habitat-sh/habitat|servo/servo|monero-project/monero|aarora4/whisper|microsoft/TypeScript-Vue-Starter|openai/openai-node|celery/celery|fsspec/filesystem_spec|nedbat/coveragepy|public-apis/public-apis|python-hyper/rfc3986|pypa/packaging|Ousret/charset_normalizer|pallets/click|dstl/Stone-Soup|psf/black|testing-cabal/testtools|bolsote/isoduration|openstack/stevedore|nvbn/thefuck|falconry/falcon|dishait/tov-template|johnpapa/vscode-angular-snippets|reflex-dev/reflex)$'
 
 args=(
-  --run-root setupbench-runs-all-gpt-4.1-2rerun
+  --run-root setupbench-runs-all-gpt-5.4-multiblock
   --fresh-results
   --only "$ONLY"
   --base-dockerfile tests/dockerfile/Dockerfile.heragent-thin

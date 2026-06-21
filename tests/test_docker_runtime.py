@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 from pheragent.docker_runtime import DockerRuntime
@@ -118,3 +119,42 @@ def test_commit_images_include_unique_hash_and_keep_resume_suffix(
         checkpoint.image_ref,
     )
     assert checkpoint.image_ref.endswith("-01-python-deps-success")
+
+
+def test_execute_command_sequence_keeps_shell_state_between_commands(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    started_commands: list[list[str]] = []
+    real_popen = subprocess.Popen
+
+    def fake_popen(command: list[str], **kwargs):
+        started_commands.append(command)
+        return real_popen(["sh"], **kwargs)
+
+    monkeypatch.setattr("pheragent.docker_runtime.subprocess.Popen", fake_popen)
+    request = BuildRequest(repo_path=tmp_path, base_dockerfile=tmp_path / "Dockerfile")
+    runtime = DockerRuntime(request, "test")
+    runtime.current_container = "container"
+
+    results = runtime.execute_command_sequence(
+        ["VALUE=persistent", 'echo "$VALUE"'],
+        timeout=5,
+    )
+
+    assert [result.exit_code for result in results] == [0, 0]
+    assert results[0].stdout == ""
+    assert results[1].stdout == "persistent\n"
+    assert results[0].command[-1] == "VALUE=persistent"
+    assert results[1].command[-1] == 'echo "$VALUE"'
+    assert started_commands == [
+        [
+            "docker",
+            "exec",
+            "-i",
+            "--workdir",
+            "/workspace/repo",
+            "container",
+            "sh",
+        ]
+    ]

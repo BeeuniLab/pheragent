@@ -42,6 +42,12 @@ class RepairProbeCommand:
 
 
 @dataclass(slots=True)
+class FailureLocalization:
+    root_cause_block_id: str
+    rationale: str = ""
+
+
+@dataclass(slots=True)
 class OpenAIResponsesRepairConfig:
     model: str = "gpt-5.5"
     api_mode: LLMApiMode = "responses"
@@ -63,9 +69,40 @@ class OpenAIResponsesRepairPlanner:
         self.last_probe_raw_response: str | None = None
         self.last_probe_parse_diagnostics: list[str] = []
         self.token_usage_by_phase = {
+            "localization": _empty_token_usage(),
             "probe": _empty_token_usage(),
             "repair": _empty_token_usage(),
         }
+
+    def localize_failure(
+        self,
+        block: CommandBlock,
+        result: CommandResult,
+        *,
+        context: RepairContext | None = None,
+        heuristic_hints: list[RepairCommand] | None = None,
+    ) -> FailureLocalization | None:
+        api_key = os.getenv(self.config.api_key_env)
+        if not api_key:
+            raise RuntimeError(f"missing API key in env var {self.config.api_key_env}")
+        base_url = _resolve_openai_base_url(
+            configured_base_url=self.config.base_url,
+            base_url_env=self.config.base_url_env,
+            api_mode=self.config.api_mode,
+        )
+
+        content = self._create_response(
+            _openai_client(base_url=base_url, api_key=api_key, timeout=self.config.timeout),
+            self._localization_request_payload(
+                block,
+                result,
+                context,
+                heuristic_hints=heuristic_hints,
+            ),
+            error_context="LLM failure localization",
+            usage_phase="localization",
+        )
+        return self._parse_localization(content)
 
     def propose_probes(
         self,
@@ -151,6 +188,29 @@ class OpenAIResponsesRepairPlanner:
         if self.config.api_mode == "chat-completions":
             return _chat_completion_payload(self.config.model, _REPAIR_SYSTEM_PROMPT, user_text)
         return _responses_payload(self.config.model, _REPAIR_SYSTEM_PROMPT, user_text)
+
+    def _localization_request_payload(
+        self,
+        block: CommandBlock,
+        result: CommandResult,
+        context: RepairContext | None = None,
+        *,
+        heuristic_hints: list[RepairCommand] | None = None,
+    ) -> dict[str, Any]:
+        payload = self._failure_payload(
+            block,
+            result,
+            context,
+            heuristic_hints=heuristic_hints,
+        )
+        user_text = json.dumps(payload, ensure_ascii=False, indent=2)
+        if self.config.api_mode == "chat-completions":
+            return _chat_completion_payload(
+                self.config.model,
+                _LOCALIZATION_SYSTEM_PROMPT,
+                user_text,
+            )
+        return _responses_payload(self.config.model, _LOCALIZATION_SYSTEM_PROMPT, user_text)
 
     def _probe_request_payload(
         self,
@@ -297,6 +357,20 @@ class OpenAIResponsesRepairPlanner:
             )
         return _dedupe(repairs[:3])
 
+    def _parse_localization(self, content: str) -> FailureLocalization | None:
+        data = _parse_json_object(content)
+        root_cause_block_id = _optional_text(
+            data.get("root_cause_block_id")
+            or data.get("root_cause_block")
+            or data.get("block_id")
+        )
+        if not root_cause_block_id:
+            return None
+        return FailureLocalization(
+            root_cause_block_id=root_cause_block_id,
+            rationale=_optional_text(data.get("rationale") or data.get("reason")) or "",
+        )
+
     def _parse_probes(self, content: str) -> list[RepairProbeCommand]:
         self.last_probe_parse_diagnostics = []
         try:
@@ -343,6 +417,30 @@ class RepairPlanner:
         self.last_probe_error: str | None = None
         self.last_probe_raw_response: str | None = None
         self.last_probe_parse_diagnostics: list[str] = []
+
+    def localize_failure(
+        self,
+        block: CommandBlock,
+        result: CommandResult,
+        *,
+        context: RepairContext | None = None,
+    ) -> FailureLocalization | None:
+        heuristic_hints = _heuristic_repair_hints(block, result)
+
+        if self.llm_planner is not None and hasattr(self.llm_planner, "localize_failure"):
+            try:
+                localization = self.llm_planner.localize_failure(
+                    block,
+                    result,
+                    context=context,
+                    heuristic_hints=heuristic_hints,
+                )
+                if localization is not None:
+                    return localization
+            except Exception:
+                pass
+
+        return _heuristic_failure_localization(block, result, context)
 
     def propose_probes(
         self,
@@ -569,6 +667,66 @@ def _heuristic_repair_hints(block: CommandBlock, result: CommandResult) -> list[
             )
 
     return suggestions
+
+
+def _heuristic_failure_localization(
+    block: CommandBlock,
+    result: CommandResult,
+    context: RepairContext | None,
+) -> FailureLocalization | None:
+    if context is None or not context.previous_blocks:
+        return FailureLocalization(block.id, "no previous successful block context")
+    output = result.combined_output.lower()
+    candidates: list[tuple[tuple[str, ...], tuple[str, ...], str]] = [
+        (
+            ("python", "venv"),
+            ("python: not found", "python3: not found", "no module named", "pytest: not found"),
+            "python runtime/dependency evidence matched the failure output",
+        ),
+        (
+            ("node", "npm", "pnpm", "yarn"),
+            ("node: not found", "npm: not found", "pnpm: not found", "yarn: not found"),
+            "node runtime/dependency evidence matched the failure output",
+        ),
+        (
+            ("go", "golang"),
+            ("go: not found", "go.mod", "go version"),
+            "go runtime/dependency evidence matched the failure output",
+        ),
+        (
+            ("rust", "cargo"),
+            ("cargo: not found", "rustc: not found"),
+            "rust runtime/dependency evidence matched the failure output",
+        ),
+        (
+            ("java", "maven", "gradle"),
+            ("java: not found", "mvn: not found", "gradle: not found", "gradlew"),
+            "java runtime/dependency evidence matched the failure output",
+        ),
+        (
+            ("system", "native", "build-config"),
+            ("gcc: not found", "cc: not found", "make: not found", "pkg-config: not found"),
+            "system/native build evidence matched the failure output",
+        ),
+    ]
+    for block_tokens, output_tokens, rationale in candidates:
+        if not any(token in output for token in output_tokens):
+            continue
+        localized = _latest_previous_block_matching(context.previous_blocks, block_tokens)
+        if localized is not None:
+            return FailureLocalization(localized.id, rationale)
+    return FailureLocalization(block.id, "failure appears local to the failed block")
+
+
+def _latest_previous_block_matching(
+    previous_blocks: list[CommandBlock],
+    tokens: tuple[str, ...],
+) -> CommandBlock | None:
+    for previous in reversed(previous_blocks):
+        haystack = f"{previous.id} {previous.title} {previous.goal}".lower()
+        if any(token in haystack for token in tokens):
+            return previous
+    return None
 
 
 def make_repair_planner(
@@ -930,6 +1088,31 @@ def _allowed_absolute_rm_target(target: str) -> bool:
     }
     first_part = relative.split("/", 1)[0]
     return first_part in safe_names
+
+
+_LOCALIZATION_SYSTEM_PROMPT = """
+You localize the root-cause block for one failed environment setup block.
+Return strict JSON only:
+{
+  "root_cause_block_id": "one block id from repair_context.previous_blocks or the failed block id",
+  "rationale": "short reason"
+}
+
+Rules:
+- The failed block is where the symptom appeared. It may not be the block that
+  introduced the faulty state.
+- Use the failed block, stdout/stderr tails, previous successful blocks, recent
+  execution evidence, probe results, and heuristic hints.
+- If an earlier runtime, system package, dependency, native-build, or tooling
+  block should have produced the missing or inconsistent resource, return that
+  earlier block id.
+- If the evidence is weak or the failure is local to the failed block, return
+  the failed block id.
+- Never invent block ids. Choose only from repair_context.previous_blocks plus
+  the failed block.
+- Do not suggest repair commands here; only localize the root-cause block.
+- The word JSON appears here intentionally because JSON mode requires an explicit JSON instruction.
+""".strip()
 
 
 _REPAIR_SYSTEM_PROMPT = """

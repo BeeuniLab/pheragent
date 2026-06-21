@@ -498,6 +498,28 @@ class EnvironmentBuilder:
                 last_result=last_result,
             )
 
+        earlier_root_block = self._localized_earlier_root_block(
+            failed_block=block,
+            failure_result=last_result,
+            repo_context=repo_context,
+            baseline_image=baseline_image,
+            completed_blocks=completed_blocks,
+            executions=executions,
+            all_blocks=all_blocks,
+        )
+        if earlier_root_block is not None and all_blocks is not None:
+            return self._run_earlier_block_recovery(
+                runtime=runtime,
+                failed_block=block,
+                root_block=earlier_root_block,
+                all_blocks=all_blocks,
+                repo_context=repo_context,
+                completed_blocks=completed_blocks,
+                checkpoints=checkpoints,
+                executions=executions,
+                failure_result=last_result,
+            )
+
         probe_failures = 0
         max_probe_failures = max(0, self.request.max_probe_failures)
         probe_disabled = max_probe_failures == 0
@@ -677,6 +699,224 @@ class EnvironmentBuilder:
         self.store.update_block(block)
         self._recreate_from_checkpoint(runtime, baseline_image)
         return False, baseline_image
+
+    def _localized_earlier_root_block(
+        self,
+        *,
+        failed_block: CommandBlock,
+        failure_result: CommandResult,
+        repo_context: RepoContext,
+        baseline_image: str,
+        completed_blocks: list[CommandBlock],
+        executions: list[BlockExecution],
+        all_blocks: list[CommandBlock] | None,
+    ) -> CommandBlock | None:
+        if not self.progress_control.checkpoint_rollback or all_blocks is None:
+            return None
+        if not completed_blocks:
+            return None
+        repair_context = self._repair_context(
+            repo_context=repo_context,
+            baseline_image=baseline_image,
+            completed_blocks=completed_blocks,
+            executions=executions,
+            strategy_notes=[
+                "Before repairing the failed block, localize whether an earlier "
+                "block introduced the faulty state. Return the failed block id "
+                "when evidence is weak.",
+            ],
+        )
+        localization = self.repair_planner.localize_failure(
+            failed_block,
+            failure_result,
+            context=repair_context,
+        )
+        if localization is None or localization.root_cause_block_id == failed_block.id:
+            return None
+        completed_by_id = {block.id: block for block in completed_blocks}
+        root_block = completed_by_id.get(localization.root_cause_block_id)
+        if root_block is None or not root_block.baseline_checkpoint:
+            return None
+        root_index = all_blocks.index(root_block)
+        failed_index = all_blocks.index(failed_block)
+        if root_index >= failed_index:
+            return None
+        self._emit(
+            f"run {self.run_id}: block {failed_block.id} failure localized to "
+            f"earlier block {root_block.id}; rollback to {root_block.baseline_checkpoint}"
+        )
+        return root_block
+
+    def _run_earlier_block_recovery(
+        self,
+        *,
+        runtime: DockerRuntime,
+        failed_block: CommandBlock,
+        root_block: CommandBlock,
+        all_blocks: list[CommandBlock],
+        repo_context: RepoContext,
+        completed_blocks: list[CommandBlock],
+        checkpoints: list[Checkpoint],
+        executions: list[BlockExecution],
+        failure_result: CommandResult,
+    ) -> tuple[bool, str]:
+        root_index = all_blocks.index(root_block)
+        failed_index = all_blocks.index(failed_block)
+        root_baseline = root_block.baseline_checkpoint
+        if root_baseline is None:
+            root_block.status = "failed"
+            root_block.last_error = "earlier block recovery requires root baseline checkpoint"
+            self.store.update_block(root_block)
+            return False, failed_block.baseline_checkpoint or ""
+
+        suffix = all_blocks[root_index : failed_index + 1]
+        invalidated_ids = {block.id for block in suffix}
+        checkpoints[:] = [
+            checkpoint for checkpoint in checkpoints if checkpoint.block_id not in invalidated_ids
+        ]
+        for block in suffix:
+            block.status = "planned"
+            block.success_checkpoint = None
+            block.last_error = None
+            self.store.update_block(block)
+
+        stable_prefix = all_blocks[:root_index]
+        last_result = failure_result
+        for repair_attempt in range(1, self.request.max_repair_attempts + 1):
+            repair_context = self._repair_context(
+                repo_context=repo_context,
+                baseline_image=root_baseline,
+                completed_blocks=stable_prefix,
+                executions=executions,
+                strategy_notes=[
+                    f"Failure appeared in {failed_block.id}, but localization selected "
+                    f"{root_block.id} as the root-cause block. Repair the root block, "
+                    "then replay and validate the invalidated suffix.",
+                ],
+            )
+            suggestions = self.repair_planner.suggest(
+                root_block,
+                last_result,
+                context=repair_context,
+            )
+            self._record_llm_repair_status(
+                block=root_block,
+                attempt=repair_attempt,
+                baseline_image=root_baseline,
+                executions=executions,
+                ok=bool(suggestions),
+            )
+            if not suggestions:
+                error = getattr(self.repair_planner, "last_llm_error", None)
+                if _should_continue_llm_repair_failure(error):
+                    continue
+                break
+
+            repair = suggestions[min(repair_attempt - 1, len(suggestions) - 1)]
+            self._emit(
+                f"run {self.run_id}: root-cause block {root_block.id} repair "
+                f"attempt {repair_attempt}"
+            )
+            self._recreate_from_checkpoint(runtime, root_baseline)
+            repair_result = runtime.execute_command(
+                repair.command,
+                timeout=self.request.command_timeout,
+            )
+            execution = self._execution_from_result(
+                block_id=root_block.id,
+                phase="repair",
+                attempt=repair_attempt,
+                command_result=repair_result,
+                checkpoint_before=root_baseline,
+                repair_command=repair.command,
+            )
+            executions.append(execution)
+            self.store.append_execution(execution)
+            if not repair_result.ok:
+                last_result = repair_result
+                continue
+
+            if self.progress_control.patch_back:
+                root_block = self.repair_planner.patch_block(root_block, repair)
+                self.store.update_block(root_block)
+
+            replay_ok, replay_image, replay_failure = self._replay_block_suffix(
+                runtime=runtime,
+                blocks=suffix,
+                baseline_image=root_baseline,
+                repaired_root_id=root_block.id,
+                checkpoints=checkpoints,
+                executions=executions,
+                attempt=repair_attempt + 1,
+            )
+            if replay_ok:
+                return True, replay_image
+            if replay_failure is not None:
+                last_result = replay_failure
+
+        failed_block.status = "failed"
+        failed_block.last_error = tail_text(last_result.combined_output, max_chars=4000)
+        self.store.update_block(failed_block)
+        self._recreate_from_checkpoint(runtime, root_baseline)
+        return False, root_baseline
+
+    def _replay_block_suffix(
+        self,
+        *,
+        runtime: DockerRuntime,
+        blocks: list[CommandBlock],
+        baseline_image: str,
+        repaired_root_id: str,
+        checkpoints: list[Checkpoint],
+        executions: list[BlockExecution],
+        attempt: int,
+    ) -> tuple[bool, str, CommandResult | None]:
+        current_image = baseline_image
+        self._recreate_from_checkpoint(runtime, current_image)
+        for block in blocks:
+            block.baseline_checkpoint = current_image
+            self.store.update_block(block)
+            result = self._execute_block(runtime, block, attempt, current_image, executions)
+            validation_result = self._validate_block(
+                runtime,
+                block,
+                attempt,
+                current_image,
+                executions,
+            )
+            if result.ok and (validation_result is None or validation_result.ok):
+                finalize_result = self._finalize_checkpoint_tools(
+                    runtime=runtime,
+                    block=block,
+                    attempt=attempt,
+                    baseline_image=current_image,
+                    executions=executions,
+                )
+                if not finalize_result.ok:
+                    block.status = "failed"
+                    block.last_error = tail_text(finalize_result.combined_output, max_chars=4000)
+                    self.store.update_block(block)
+                    self._recreate_from_checkpoint(runtime, current_image)
+                    return False, current_image, finalize_result
+                checkpoint = runtime.commit(
+                    block_id=block.id,
+                    parent_image_ref=current_image,
+                    kind="repaired" if block.id == repaired_root_id else "success",
+                )
+                checkpoints.append(checkpoint)
+                block.success_checkpoint = checkpoint.image_ref
+                block.status = "succeeded"
+                self.store.update_block(block)
+                current_image = checkpoint.image_ref
+                continue
+            if result.ok and validation_result is not None:
+                result = validation_result
+            block.status = "failed"
+            block.last_error = tail_text(result.combined_output, max_chars=4000)
+            self.store.update_block(block)
+            self._recreate_from_checkpoint(runtime, current_image)
+            return False, current_image, result
+        return True, current_image, None
 
     def _run_whole_script_forward(
         self,
@@ -1445,15 +1685,19 @@ class EnvironmentBuilder:
                 command=["pheragent-command-forward", block.id],
             )
         stdout_parts: list[str] = []
-        context_commands: list[str] = []
-        for index, command in enumerate(commands, start=1):
+        command_results = runtime.execute_command_sequence(
+            commands,
+            timeout=self.request.command_timeout,
+        )
+        for index, (command, result) in enumerate(
+            zip(commands, command_results, strict=False),
+            start=1,
+        ):
             self._emit(
                 f"run {self.run_id}: block {block.id} command {index}/{len(commands)}"
             )
-            command_to_run = "\n".join(["set -eu", *context_commands, command])
-            result = runtime.execute_command(command_to_run, timeout=self.request.command_timeout)
             if not result.command:
-                result.command = ["sh", "-lc", command_to_run]
+                result.command = ["pheragent-command-forward-persistent", str(index), command]
             execution = self._execution_from_result(
                 block_id=block.id,
                 phase="command_forward",
@@ -1463,15 +1707,22 @@ class EnvironmentBuilder:
             )
             executions.append(execution)
             self.store.append_execution(execution)
-            stdout_parts.append(f"[{index}/{len(commands)}] {command_to_run}\n{result.stdout}")
+            stdout_parts.append(f"[{index}/{len(commands)}] {command}\n{result.stdout}")
             if not result.ok:
                 return result
-            if _is_shell_context_command(command):
-                context_commands.append(command)
+        if len(command_results) < len(commands):
+            return CommandResult(
+                exit_code=1,
+                stderr=(
+                    "[pheragent] persistent command forward ended before all commands "
+                    f"completed ({len(command_results)}/{len(commands)})"
+                ),
+                command=["pheragent-command-forward-persistent", block.id],
+            )
         return CommandResult(
             exit_code=0,
             stdout="\n".join(stdout_parts),
-            command=["pheragent-command-forward", block.id],
+            command=["pheragent-command-forward-persistent", block.id],
         )
 
     def _finalize_checkpoint_tools(

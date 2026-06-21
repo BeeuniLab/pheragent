@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import contextlib
+import queue
 import shlex
+import subprocess
+import sys
+import threading
+import time
 import uuid
 from pathlib import Path
+from typing import TextIO
 
 from .models import BuildRequest, Checkpoint, CommandResult
 from .process import run_command
@@ -120,6 +127,235 @@ class DockerRuntime:
             timeout=timeout,
         )
 
+    def execute_command_sequence(
+        self,
+        commands: list[str],
+        *,
+        timeout: float,
+    ) -> list[CommandResult]:
+        self._require_container()
+        if not commands:
+            return []
+        shell_command = [
+            "docker",
+            "exec",
+            "-i",
+            "--workdir",
+            self.request.container_workdir,
+            self.current_container or "",
+            "sh",
+        ]
+        start = time.monotonic()
+        try:
+            process = subprocess.Popen(
+                shell_command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+            )
+        except FileNotFoundError as exc:
+            return [
+                CommandResult(
+                    exit_code=None,
+                    stderr=f"command_not_found: {exc}",
+                    duration_s=time.monotonic() - start,
+                    command=[
+                        *shell_command,
+                        "pheragent-command-forward-persistent",
+                        "1",
+                        commands[0],
+                    ],
+                )
+            ]
+        except OSError as exc:
+            return [
+                CommandResult(
+                    exit_code=None,
+                    stderr=f"os_error: {exc}",
+                    duration_s=time.monotonic() - start,
+                    command=[
+                        *shell_command,
+                        "pheragent-command-forward-persistent",
+                        "1",
+                        commands[0],
+                    ],
+                )
+            ]
+
+        output_queue: queue.Queue[tuple[str, str | None]] = queue.Queue()
+        stdout_thread = threading.Thread(
+            target=_enqueue_pipe,
+            args=("stdout", process.stdout, output_queue),
+            daemon=True,
+        )
+        stderr_thread = threading.Thread(
+            target=_enqueue_pipe,
+            args=("stderr", process.stderr, output_queue),
+            daemon=True,
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+
+        results: list[CommandResult] = []
+        try:
+            try:
+                _write_shell(process, "set -eu\n")
+            except BrokenPipeError:
+                results.append(
+                    CommandResult(
+                        exit_code=process.poll(),
+                        stderr="persistent shell exited before initialization",
+                        duration_s=time.monotonic() - start,
+                        command=[
+                            *shell_command,
+                            "pheragent-command-forward-persistent",
+                            "1",
+                            commands[0],
+                        ],
+                    )
+                )
+                return results
+            for index, command in enumerate(commands, start=1):
+                result = self._execute_persistent_shell_command(
+                    process=process,
+                    output_queue=output_queue,
+                    command=command,
+                    command_index=index,
+                    shell_command=shell_command,
+                    timeout=timeout,
+                )
+                results.append(result)
+                if not result.ok:
+                    break
+        finally:
+            if process.poll() is None:
+                with contextlib.suppress(BrokenPipeError):
+                    _write_shell(process, "exit\n")
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+            stdout_thread.join(timeout=5)
+            stderr_thread.join(timeout=5)
+        return results
+
+    def _execute_persistent_shell_command(
+        self,
+        *,
+        process: subprocess.Popen[str],
+        output_queue: queue.Queue[tuple[str, str | None]],
+        command: str,
+        command_index: int,
+        shell_command: list[str],
+        timeout: float,
+    ) -> CommandResult:
+        start = time.monotonic()
+        sentinel = f"__PHERAGENT_DONE_{uuid.uuid4().hex}__"
+        stdout_chunks: list[str] = []
+        stderr_chunks: list[str] = []
+        try:
+            _write_shell(
+                process,
+                (
+                    f"\n{command}\n"
+                    "_pheragent_status=$?\n"
+                    f"printf '\\n{sentinel}:%s\\n' \"$_pheragent_status\"\n"
+                ),
+            )
+        except BrokenPipeError:
+            return CommandResult(
+                exit_code=process.poll(),
+                stderr="persistent shell exited before command could be written",
+                duration_s=time.monotonic() - start,
+                command=[
+                    *shell_command,
+                    "pheragent-command-forward-persistent",
+                    str(command_index),
+                    command,
+                ],
+            )
+
+        exit_code: int | None = None
+        timed_out = False
+        while True:
+            remaining = timeout - (time.monotonic() - start)
+            if remaining <= 0:
+                timed_out = True
+                process.kill()
+                exit_code = None
+                break
+            try:
+                stream_name, chunk = output_queue.get(timeout=min(0.1, remaining))
+            except queue.Empty:
+                if process.poll() is not None:
+                    exit_code = process.returncode
+                    break
+                continue
+            if chunk is None:
+                if process.poll() is not None:
+                    exit_code = process.returncode
+                    break
+                continue
+            if stream_name == "stdout":
+                stdout_chunks.append(chunk)
+                if self.request.stream_logs:
+                    sys.stdout.write(chunk)
+                    sys.stdout.flush()
+                stdout_text = "".join(stdout_chunks)
+                marker_index = stdout_text.find(sentinel)
+                if marker_index >= 0:
+                    marker_tail = stdout_text[marker_index + len(sentinel) :]
+                    marker_line = marker_tail.splitlines()[0] if marker_tail else ""
+                    if marker_line.startswith(":"):
+                        try:
+                            exit_code = int(marker_line[1:])
+                        except ValueError:
+                            exit_code = 1
+                        _drain_available_output(
+                            output_queue,
+                            stdout_chunks=stdout_chunks,
+                            stderr_chunks=stderr_chunks,
+                            stream_logs=self.request.stream_logs,
+                        )
+                        break
+            else:
+                stderr_chunks.append(chunk)
+                if self.request.stream_logs:
+                    sys.stderr.write(chunk)
+                    sys.stderr.flush()
+
+        _drain_available_output(
+            output_queue,
+            stdout_chunks=stdout_chunks,
+            stderr_chunks=stderr_chunks,
+            stream_logs=self.request.stream_logs,
+        )
+        stdout = _strip_sentinel("".join(stdout_chunks), sentinel)
+        stderr = "".join(stderr_chunks)
+        if timed_out:
+            stderr = (stderr + "\n[persistent shell timed out]").strip()
+        elif exit_code is None:
+            exit_code = process.poll()
+            stderr = (stderr + "\n[persistent shell exited without status sentinel]").strip()
+        return CommandResult(
+            exit_code=exit_code,
+            stdout=stdout,
+            stderr=stderr,
+            timed_out=timed_out,
+            duration_s=time.monotonic() - start,
+            command=[
+                *shell_command,
+                "pheragent-command-forward-persistent",
+                str(command_index),
+                command,
+            ],
+        )
+
     def commit(
         self,
         *,
@@ -183,3 +419,68 @@ class DockerRuntime:
         if self.request.stream_logs:
             return run_command(command, timeout=timeout, stream_output=True)
         return run_command(command, timeout=timeout)
+
+
+def _write_shell(process: subprocess.Popen[str], text: str) -> None:
+    if process.stdin is None:
+        raise BrokenPipeError("persistent shell stdin is closed")
+    process.stdin.write(text)
+    process.stdin.flush()
+
+
+def _enqueue_pipe(
+    stream_name: str,
+    pipe: TextIO | None,
+    output_queue: queue.Queue[tuple[str, str | None]],
+) -> None:
+    if pipe is None:
+        output_queue.put((stream_name, None))
+        return
+    try:
+        for line in iter(pipe.readline, ""):
+            output_queue.put((stream_name, line))
+    finally:
+        pipe.close()
+        output_queue.put((stream_name, None))
+
+
+def _drain_available_output(
+    output_queue: queue.Queue[tuple[str, str | None]],
+    *,
+    stdout_chunks: list[str],
+    stderr_chunks: list[str],
+    stream_logs: bool,
+) -> None:
+    while True:
+        try:
+            stream_name, chunk = output_queue.get_nowait()
+        except queue.Empty:
+            return
+        if chunk is None:
+            continue
+        if stream_name == "stdout":
+            stdout_chunks.append(chunk)
+            if stream_logs:
+                sys.stdout.write(chunk)
+                sys.stdout.flush()
+        else:
+            stderr_chunks.append(chunk)
+            if stream_logs:
+                sys.stderr.write(chunk)
+                sys.stderr.flush()
+
+
+def _strip_sentinel(stdout: str, sentinel: str) -> str:
+    marker_index = stdout.find(sentinel)
+    if marker_index < 0:
+        return stdout
+    line_start = stdout.rfind("\n", 0, marker_index) + 1
+    line_end = stdout.find("\n", marker_index)
+    if line_end < 0:
+        line_end = len(stdout)
+    else:
+        line_end += 1
+    prefix = stdout[:line_start]
+    if prefix.endswith("\n"):
+        prefix = prefix[:-1]
+    return prefix + stdout[line_end:]

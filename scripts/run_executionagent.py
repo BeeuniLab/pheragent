@@ -43,15 +43,6 @@ def main(argv: list[str] | None = None) -> int:
         limit=args.limit,
         only=args.only,
     )
-    oracle_index = build_oracle_index(resolve_path(args.oracle_root))
-    runnable, skipped = attach_oracles(
-        projects,
-        oracle_index=oracle_index,
-        fail_missing_oracle=args.fail_missing_oracle,
-        include_empty_oracles=args.include_empty_oracles,
-        include_invalid_shell_oracles=args.include_invalid_shell_oracles,
-    )
-
     summary_path = results_root / "summary.json"
     jsonl_path = results_root / "results.jsonl"
     failures_path = results_root / "failures.tsv"
@@ -62,16 +53,54 @@ def main(argv: list[str] | None = None) -> int:
     else:
         jsonl_path.touch()
         failures_path.touch()
+
+    if args.skip_oracle:
+        runnable = runnable_without_oracles(projects)
+        skipped: list[dict[str, Any]] = []
+    else:
+        oracle_index = build_oracle_index(resolve_path(args.oracle_root))
+        runnable, skipped = attach_oracles(
+            projects,
+            oracle_index=oracle_index,
+            fail_missing_oracle=args.fail_missing_oracle,
+            include_empty_oracles=args.include_empty_oracles,
+            include_invalid_shell_oracles=args.include_invalid_shell_oracles,
+        )
+
+    skipped_existing_results: list[dict[str, Any]] = []
+    if args.skip_existing_results:
+        completed_owner_repos = load_completed_owner_repos(jsonl_path)
+        runnable, skipped_existing_results = filter_existing_results(
+            runnable,
+            completed_owner_repos=completed_owner_repos,
+        )
+
+    skipped_existing_success: list[dict[str, Any]] = []
+    if args.skip_existing_success:
+        runnable, skipped_existing_success = filter_existing_success(
+            runnable,
+            state_root=state_root,
+        )
+
     skipped_path.write_text(json.dumps(skipped, indent=2, ensure_ascii=True) + "\n")
 
     print(f"executionagent projects selected: {len(projects)}")
-    print(f"runnable with oracle: {len(runnable)}")
-    print(f"skipped without usable oracle: {len(skipped)}")
-    print(f"oracle root: {resolve_path(args.oracle_root)}")
+    if args.skip_oracle:
+        print(f"runnable without oracle: {len(runnable)}")
+    else:
+        print(f"runnable with oracle: {len(runnable)}")
+        print(f"skipped without usable oracle: {len(skipped)}")
+        print(f"oracle root: {resolve_path(args.oracle_root)}")
+    if skipped_existing_results:
+        print(f"skipped existing result records: {len(skipped_existing_results)}")
+    if skipped_existing_success:
+        print(f"skipped existing successful manifests: {len(skipped_existing_success)}")
     print(f"run root: {run_root}")
     print(f"summary: {summary_path}")
 
     if args.validate_oracles:
+        if args.skip_oracle:
+            raise SystemExit("--validate-oracles cannot be used with --skip-oracle")
         validate_oracles(runnable)
         print(f"validated {len(runnable)} oracle files")
         return 0
@@ -125,13 +154,17 @@ def main(argv: list[str] | None = None) -> int:
         "selected": len(projects),
         "runnable": len(runnable),
         "skipped": len(skipped),
+        "skipped_existing_results": len(skipped_existing_results),
+        "skipped_existing_success": len(skipped_existing_success),
         "completed": len(results),
         "failures": failure_count,
         "run_root": str(run_root),
-        "oracle_root": str(resolve_path(args.oracle_root)),
+        "oracle_root": None if args.skip_oracle else str(resolve_path(args.oracle_root)),
         "results_jsonl": str(jsonl_path),
         "failures_tsv": str(failures_path),
         "skipped_json": str(skipped_path),
+        "existing_result_skips": skipped_existing_results,
+        "existing_success_skips": skipped_existing_success,
         "results": results,
     }
     summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=True) + "\n")
@@ -224,6 +257,21 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--validate-oracles", action="store_true")
     parser.add_argument("--stop-on-failure", action="store_true")
+    parser.add_argument(
+        "--skip-oracle",
+        action="store_true",
+        help="Run setup builds only; do not load or pass per-project oracle files.",
+    )
+    parser.add_argument(
+        "--skip-existing-results",
+        action="store_true",
+        help="Skip owner/repo entries already present in this run-root's results.jsonl.",
+    )
+    parser.add_argument(
+        "--skip-existing-success",
+        action="store_true",
+        help="Skip projects with an existing ok manifest under this run-root's state directory.",
+    )
     parser.add_argument(
         "--fail-missing-oracle",
         action="store_true",
@@ -370,6 +418,85 @@ def attach_oracles(
     return runnable, skipped
 
 
+def runnable_without_oracles(projects: list[dict[str, str]]) -> list[dict[str, Any]]:
+    return [
+        {
+            **project,
+            "project_slug": slug(project["owner_repo"]),
+            "oracle_file": None,
+            "oracle_repository": None,
+            "oracle_command_count": 0,
+            "shell_syntax_error_count": 0,
+        }
+        for project in projects
+    ]
+
+
+def load_completed_owner_repos(path: Path) -> set[str]:
+    completed: set[str] = set()
+    if not path.is_file():
+        return completed
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        owner_repo = payload.get("owner_repo")
+        if isinstance(owner_repo, str) and owner_repo:
+            completed.add(owner_repo)
+    return completed
+
+
+def filter_existing_results(
+    items: list[dict[str, Any]],
+    *,
+    completed_owner_repos: set[str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    runnable: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for item in items:
+        if item["owner_repo"] in completed_owner_repos:
+            skipped.append(
+                {
+                    "owner_repo": item["owner_repo"],
+                    "commit": item["commit"],
+                    "project_slug": item["project_slug"],
+                    "reason": "existing_result",
+                }
+            )
+        else:
+            runnable.append(item)
+    return runnable, skipped
+
+
+def filter_existing_success(
+    items: list[dict[str, Any]],
+    *,
+    state_root: Path,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    runnable: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for item in items:
+        manifest_path = find_manifest(state_root / item["project_slug"])
+        manifest_info = read_manifest_info(manifest_path)
+        if manifest_info.get("ok") is True and manifest_info.get("final_image"):
+            skipped.append(
+                {
+                    "owner_repo": item["owner_repo"],
+                    "commit": item["commit"],
+                    "project_slug": item["project_slug"],
+                    "reason": "existing_success",
+                    "manifest_path": str(manifest_path) if manifest_path else None,
+                    "final_image": manifest_info.get("final_image"),
+                }
+            )
+        else:
+            runnable.append(item)
+    return runnable, skipped
+
+
 def run_project(
     *,
     args: argparse.Namespace,
@@ -415,14 +542,14 @@ def run_project(
         if attempt == 1:
             print(
                 f"\n===== [{index}/{total}] {item['owner_repo']}@{item['commit']} "
-                f"oracle_commands={item['oracle_command_count']} =====",
+                f"oracle_commands={item.get('oracle_command_count', 0)} =====",
                 flush=True,
             )
         else:
             print(
                 f"\n===== [{index}/{total}] retry {attempt}/{max_attempts} "
                 f"{item['owner_repo']}@{item['commit']} "
-                f"oracle_commands={item['oracle_command_count']} =====",
+                f"oracle_commands={item.get('oracle_command_count', 0)} =====",
                 flush=True,
             )
         print(f"log: {log_path}", flush=True)
@@ -436,8 +563,8 @@ def run_project(
             "commit_version": item["commit"],
             "project_slug": item["project_slug"],
             "project_file": str(project_file),
-            "oracle_file": str(item["oracle_file"]),
-            "oracle_command_count": item["oracle_command_count"],
+            "oracle_file": str(item["oracle_file"]) if item.get("oracle_file") else None,
+            "oracle_command_count": item.get("oracle_command_count", 0),
             "log_path": str(log_path),
             "returncode": result.returncode,
             "manifest_path": str(manifest_path) if manifest_path else None,
@@ -490,10 +617,6 @@ def build_command(
         args.run_id_prefix,
         "--base-dockerfile",
         str(base_dockerfile),
-        "--oracle-file",
-        str(item["oracle_file"]),
-        "--oracle-timeout",
-        str(args.oracle_timeout),
         "--command-timeout",
         str(args.command_timeout),
         "--docker-build-timeout",
@@ -527,6 +650,15 @@ def build_command(
         "--jobs",
         str(args.jobs),
     ]
+    if not args.skip_oracle and item.get("oracle_file"):
+        command.extend(
+            [
+                "--oracle-file",
+                str(item["oracle_file"]),
+                "--oracle-timeout",
+                str(args.oracle_timeout),
+            ]
+        )
     if args.model:
         command.extend(["--model", args.model])
     if args.openai_base_url:
