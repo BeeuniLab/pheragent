@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Protocol
 
 from .models import CommandBlock, RepoContext
@@ -30,20 +31,13 @@ class RuleBasedBlockPlanner:
                 validation_command="test -d .",
             )
         ]
-        order = 1
-        for language in context.languages:
-            builder = getattr(self, f"_plan_{language}", None)
-            if builder is None:
-                continue
-            block = builder(order, context)
-            if block is not None:
-                blocks.append(block)
-                order += 1
-        if len(blocks) == 1:
+
+        languages = [language for language in context.languages if _language_supported(language)]
+        if not languages:
             blocks.append(
                 CommandBlock(
                     id="10-generic-inspect",
-                    order=1,
+                    order=10,
                     title="Generic Inspect",
                     goal="Provide a minimal generic repository inspection block.",
                     script=shell_script(
@@ -55,83 +49,185 @@ find . -maxdepth 2 -type f | sort | sed -n '1,120p'
                     validation_command="test -d .",
                 )
             )
+            return blocks
+
+        if len(languages) == 1:
+            language = languages[0]
+            blocks.append(_runtime_block(language, 20))
+            blocks.append(_dependency_block(language, 30, context))
+            blocks.append(_test_tooling_block(50, context))
+            return blocks
+
+        if len(languages) == 2:
+            blocks.append(_system_packages_block(10, context))
+            for offset, language in enumerate(languages):
+                blocks.append(_runtime_block(language, 20 + offset))
+            for offset, language in enumerate(languages):
+                blocks.append(_dependency_block(language, 30 + offset, context))
+            blocks.append(_test_tooling_block(50, context))
+            return blocks
+
+        blocks.append(_system_packages_block(10, context))
+        blocks.append(_combined_runtime_block(20, languages))
+        blocks.append(_combined_dependency_block(30, languages, context))
+        if _needs_native_build_config(context):
+            blocks.append(_native_build_config_block(40))
+        blocks.append(_test_tooling_block(50, context))
         return blocks
-
-    def _plan_python(self, order: int, context: RepoContext) -> CommandBlock:
-        python_validation = (
-            'python3 -c "import sys; print(sys.version)" '
-            '|| python -c "import sys; print(sys.version)"'
-        )
-        return CommandBlock(
-            id=_ordered_id(order, "python-deps"),
-            order=order,
-            title="Python Dependencies",
-            goal="Install Python project dependencies from detected manifests.",
-            script=shell_script(_python_script(use_uv="uv" in context.package_managers)),
-            validation_command=_safe_python_validation_command(context, python_validation),
-        )
-
-    def _plan_node(self, order: int, context: RepoContext) -> CommandBlock:
-        return CommandBlock(
-            id=_ordered_id(order, "node-deps"),
-            order=order,
-            title="Node Dependencies",
-            goal="Install Node.js dependencies from detected lockfiles.",
-            script=shell_script(_node_script(context.package_managers)),
-            validation_command=_first_present(
-                context.test_commands,
-                prefix="npm",
-                fallback="node --version && npm --version",
-            ),
-        )
-
-    def _plan_go(self, order: int, context: RepoContext) -> CommandBlock:
-        return CommandBlock(
-            id=_ordered_id(order, "go-deps"),
-            order=order,
-            title="Go Dependencies",
-            goal="Download Go module dependencies.",
-            script=shell_script(_go_script()),
-            validation_command=_safe_go_validation_command(),
-        )
-
-    def _plan_rust(self, order: int, context: RepoContext) -> CommandBlock:
-        return CommandBlock(
-            id=_ordered_id(order, "rust-deps"),
-            order=order,
-            title="Rust Dependencies",
-            goal="Fetch Rust crate dependencies.",
-            script=shell_script(
-                """
-echo "[pheragent] fetching rust dependencies"
-cargo --version
-cargo fetch
-"""
-            ),
-            validation_command=_first_present(
-                context.test_commands,
-                prefix="cargo",
-                fallback="cargo test --no-run",
-            ),
-        )
-
-    def _plan_java(self, order: int, context: RepoContext) -> CommandBlock:
-        return CommandBlock(
-            id=_ordered_id(order, "java-deps"),
-            order=order,
-            title="Java Dependencies",
-            goal="Warm Maven or Gradle dependencies.",
-            script=shell_script(_java_script(context.package_managers)),
-            validation_command=_first_present(
-                context.test_commands,
-                prefix="mvn",
-                fallback="mvn -q -DskipTests test || ./gradlew testClasses || gradle testClasses",
-            ),
-        )
 
 
 def _ordered_id(order: int, title: str) -> str:
     return f"{order:02d}-{slugify(title)}"
+
+
+def _language_supported(language: str) -> bool:
+    return language in {"python", "node", "go", "rust", "java"}
+
+
+def _runtime_block(language: str, order: int) -> CommandBlock:
+    return CommandBlock(
+        id=_ordered_id(order, f"{language}-runtime"),
+        order=order,
+        title=f"{language.title()} Runtime",
+        goal=f"Verify the {language} runtime and core command-line tools.",
+        script=shell_script(_runtime_script(language)),
+        validation_command=_runtime_validation_command(language),
+    )
+
+
+def _dependency_block(language: str, order: int, context: RepoContext) -> CommandBlock:
+    return CommandBlock(
+        id=_ordered_id(order, f"{language}-deps"),
+        order=order,
+        title=f"{language.title()} Dependencies",
+        goal=f"Install {language} project dependencies from detected manifests.",
+        script=shell_script(_dependency_script(language, context)),
+        validation_command=_dependency_validation_command(language),
+    )
+
+
+def _combined_runtime_block(order: int, languages: list[str]) -> CommandBlock:
+    return CommandBlock(
+        id=_ordered_id(order, "runtime-toolchain"),
+        order=order,
+        title="Runtime Toolchain",
+        goal="Verify all detected language runtimes and core command-line tools.",
+        script=shell_script(_join_scripts(_runtime_script(language) for language in languages)),
+        validation_command=_join_validation(
+            _runtime_validation_command(language) for language in languages
+        ),
+    )
+
+
+def _combined_dependency_block(
+    order: int,
+    languages: list[str],
+    context: RepoContext,
+) -> CommandBlock:
+    return CommandBlock(
+        id=_ordered_id(order, "project-dependencies"),
+        order=order,
+        title="Project Dependencies",
+        goal="Install project dependencies across detected ecosystems.",
+        script=shell_script(
+            _join_scripts(_dependency_script(language, context) for language in languages)
+        ),
+        validation_command=_join_validation(
+            _dependency_validation_command(language) for language in languages
+        ),
+    )
+
+
+def _system_packages_block(order: int, context: RepoContext) -> CommandBlock:
+    return CommandBlock(
+        id=_ordered_id(order, "system-packages"),
+        order=order,
+        title="System Packages",
+        goal="Install common OS packages shared by the detected ecosystems.",
+        script=shell_script(_system_packages_script(context)),
+        validation_command="command -v git >/dev/null 2>&1 || true",
+    )
+
+
+def _native_build_config_block(order: int) -> CommandBlock:
+    return CommandBlock(
+        id=_ordered_id(order, "native-build-config"),
+        order=order,
+        title="Native Build Config",
+        goal="Check native build tools used by compiled dependencies.",
+        script=shell_script(_native_build_config_script()),
+        validation_command=(
+            "command -v cc >/dev/null 2>&1 || "
+            "command -v gcc >/dev/null 2>&1 || true"
+        ),
+    )
+
+
+def _test_tooling_block(order: int, context: RepoContext) -> CommandBlock:
+    return CommandBlock(
+        id=_ordered_id(order, "test-tooling"),
+        order=order,
+        title="Test Tooling",
+        goal="Prepare lightweight test and validation tooling without running full suites.",
+        script=shell_script(_test_tooling_script(context)),
+        validation_command=_test_tooling_validation_command(context),
+    )
+
+
+def _runtime_script(language: str) -> str:
+    if language == "python":
+        return _python_runtime_script()
+    if language == "node":
+        return _node_runtime_script()
+    if language == "go":
+        return _go_runtime_script()
+    if language == "rust":
+        return _rust_runtime_script()
+    if language == "java":
+        return _java_runtime_script()
+    raise ValueError(f"unsupported language: {language}")
+
+
+def _dependency_script(language: str, context: RepoContext) -> str:
+    if language == "python":
+        return _python_script(use_uv="uv" in context.package_managers)
+    if language == "node":
+        return _node_script(context.package_managers)
+    if language == "go":
+        return _go_script()
+    if language == "rust":
+        return _rust_dependency_script()
+    if language == "java":
+        return _java_script(context.package_managers)
+    raise ValueError(f"unsupported language: {language}")
+
+
+def _runtime_validation_command(language: str) -> str:
+    if language == "python":
+        return _python_runtime_validation_command()
+    if language == "node":
+        return "node --version && npm --version"
+    if language == "go":
+        return 'PATH="/usr/local/go/bin:$PATH" go version'
+    if language == "rust":
+        return "cargo --version"
+    if language == "java":
+        return "java -version || mvn -version || gradle -version"
+    raise ValueError(f"unsupported language: {language}")
+
+
+def _dependency_validation_command(language: str) -> str:
+    if language == "python":
+        return _python_dependency_validation_command()
+    if language == "node":
+        return "test -d node_modules || test ! -f package.json"
+    if language == "go":
+        return _safe_go_validation_command()
+    if language == "rust":
+        return "cargo fetch --locked || cargo fetch"
+    if language == "java":
+        return "mvn -q -DskipTests test || ./gradlew testClasses || gradle testClasses || true"
+    raise ValueError(f"unsupported language: {language}")
 
 
 def _first_present(values: list[str], *, prefix: str, fallback: str) -> str:
@@ -139,6 +235,19 @@ def _first_present(values: list[str], *, prefix: str, fallback: str) -> str:
         if value.startswith(prefix):
             return value
     return fallback
+
+
+def _join_scripts(parts: Iterable[str]) -> str:
+    return "\n\n".join(str(part).strip() for part in parts if str(part).strip())
+
+
+def _join_validation(commands: Iterable[str]) -> str:
+    return " && ".join(f"( {command} )" for command in commands if command)
+
+
+def _needs_native_build_config(context: RepoContext) -> bool:
+    native_languages = {"go", "rust", "java"}
+    return any(language in native_languages for language in context.languages)
 
 
 def _safe_python_validation_command(context: RepoContext, fallback: str) -> str:
@@ -171,6 +280,22 @@ def _safe_go_validation_command() -> str:
     )
 
 
+def _python_runtime_validation_command() -> str:
+    return (
+        'python3 -c "import sys; print(sys.version)" '
+        '|| python -c "import sys; print(sys.version)"'
+    )
+
+
+def _python_dependency_validation_command() -> str:
+    return (
+        "if [ -x .venv/bin/python ]; then PYTHON_BIN=./.venv/bin/python; "
+        "elif command -v python3 >/dev/null 2>&1; then PYTHON_BIN=python3; "
+        "else PYTHON_BIN=python; fi; "
+        '"$PYTHON_BIN" -c "import sys; print(sys.version)"'
+    )
+
+
 def _preflight_script() -> str:
     return """
 echo "[pheragent] preflight"
@@ -185,6 +310,78 @@ command -v node >/dev/null 2>&1 && node --version || true
 command -v npm >/dev/null 2>&1 && npm --version || true
 command -v go >/dev/null 2>&1 && go version || true
 command -v cargo >/dev/null 2>&1 && cargo --version || true
+"""
+
+
+def _system_packages_script(context: RepoContext) -> str:
+    extra_packages = ""
+    if _needs_native_build_config(context):
+        extra_packages = " build-essential pkg-config"
+    return f"""
+echo "[pheragent] preparing system packages"
+if command -v apt-get >/dev/null 2>&1; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y --no-install-recommends ca-certificates curl git{extra_packages}
+elif command -v apk >/dev/null 2>&1; then
+  apk add --no-cache ca-certificates curl git make gcc g++ pkgconf
+elif command -v dnf >/dev/null 2>&1; then
+  dnf install -y ca-certificates curl git gcc gcc-c++ make pkgconf-pkg-config
+else
+  echo "[pheragent] no supported OS package manager detected; skipping system packages"
+fi
+"""
+
+
+def _python_runtime_script() -> str:
+    return """
+echo "[pheragent] checking python runtime"
+if command -v python3 >/dev/null 2>&1; then
+  PYTHON_BIN=python3
+elif command -v python >/dev/null 2>&1; then
+  PYTHON_BIN=python
+else
+  echo "python executable not found" >&2
+  exit 127
+fi
+"$PYTHON_BIN" -c "import sys; print(sys.version)"
+"""
+
+
+def _node_runtime_script() -> str:
+    return """
+echo "[pheragent] checking node runtime"
+node --version
+npm --version
+"""
+
+
+def _go_runtime_script() -> str:
+    return """
+echo "[pheragent] checking go runtime"
+export PATH="/usr/local/go/bin:$PATH"
+go version
+"""
+
+
+def _rust_runtime_script() -> str:
+    return """
+echo "[pheragent] checking rust runtime"
+cargo --version
+rustc --version
+"""
+
+
+def _java_runtime_script() -> str:
+    return """
+echo "[pheragent] checking java runtime"
+java -version || true
+mvn -version || true
+if [ -x ./gradlew ]; then
+  ./gradlew --version || true
+elif command -v gradle >/dev/null 2>&1; then
+  gradle -version || true
+fi
 """
 
 
@@ -229,7 +426,6 @@ fi
 if [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; then
   "$PYTHON_BIN" -m pip install -e '.[dev]' || "$PYTHON_BIN" -m pip install -e .
 fi
-"$PYTHON_BIN" -m pytest --version >/dev/null 2>&1 || "$PYTHON_BIN" -m pip install pytest
 """
     )
 
@@ -278,6 +474,14 @@ fi
 """
 
 
+def _rust_dependency_script() -> str:
+    return """
+echo "[pheragent] fetching rust dependencies"
+cargo --version
+cargo fetch --locked || cargo fetch
+"""
+
+
 def _java_script(package_managers: list[str]) -> str:
     has_maven = "maven" in package_managers
     has_gradle = "gradle" in package_managers
@@ -295,6 +499,112 @@ if {{ [ -f build.gradle ] || [ -f build.gradle.kts ]; }} && {gradle_enabled}; th
     ./gradlew dependencies --no-daemon || true
   else
     gradle dependencies || true
+  fi
+fi
+"""
+
+
+def _native_build_config_script() -> str:
+    return """
+echo "[pheragent] checking native build configuration"
+command -v cc >/dev/null 2>&1 && cc --version || true
+command -v gcc >/dev/null 2>&1 && gcc --version || true
+command -v make >/dev/null 2>&1 && make --version || true
+command -v pkg-config >/dev/null 2>&1 && pkg-config --version || true
+"""
+
+
+def _test_tooling_script(context: RepoContext) -> str:
+    scripts: list[str] = []
+    if "python" in context.languages:
+        scripts.append(_python_test_tooling_script())
+    if "node" in context.languages:
+        scripts.append(_node_test_tooling_script())
+    if "go" in context.languages:
+        scripts.append(_go_test_tooling_script())
+    if "rust" in context.languages:
+        scripts.append(_rust_test_tooling_script())
+    if "java" in context.languages:
+        scripts.append(_java_test_tooling_script())
+    return _join_scripts(scripts) or 'echo "[pheragent] no test tooling detected"'
+
+
+def _test_tooling_validation_command(context: RepoContext) -> str:
+    commands: list[str] = []
+    if "python" in context.languages:
+        commands.append(
+            _safe_python_validation_command(context, _python_runtime_validation_command())
+        )
+    if "node" in context.languages:
+        commands.append("node --version && npm --version")
+    if "go" in context.languages:
+        commands.append(_safe_go_validation_command())
+    if "rust" in context.languages:
+        commands.append("cargo test --no-run || cargo check")
+    if "java" in context.languages:
+        commands.append(
+            "mvn -q -DskipTests test || ./gradlew testClasses || "
+            "gradle testClasses || true"
+        )
+    return _join_validation(commands) or "test -d ."
+
+
+def _python_test_tooling_script() -> str:
+    return """
+echo "[pheragent] preparing python test tooling"
+if [ -x .venv/bin/python ]; then
+  PYTHON_BIN=./.venv/bin/python
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON_BIN=python3
+elif command -v python >/dev/null 2>&1; then
+  PYTHON_BIN=python
+else
+  echo "python executable not found" >&2
+  exit 127
+fi
+"$PYTHON_BIN" -m pytest --version >/dev/null 2>&1 || "$PYTHON_BIN" -m pip install pytest
+"""
+
+
+def _node_test_tooling_script() -> str:
+    return """
+echo "[pheragent] preparing node test tooling"
+node --version
+npm --version
+if command -v pnpm >/dev/null 2>&1; then pnpm --version; fi
+if command -v yarn >/dev/null 2>&1; then yarn --version; fi
+"""
+
+
+def _go_test_tooling_script() -> str:
+    return """
+echo "[pheragent] preparing go test tooling"
+export PATH="/usr/local/go/bin:$PATH"
+go test -run '^$' ./... || go list -mod=mod ./... >/dev/null
+"""
+
+
+def _rust_test_tooling_script() -> str:
+    return """
+echo "[pheragent] preparing rust test tooling"
+cargo test --no-run || cargo check
+"""
+
+
+def _java_test_tooling_script() -> str:
+    return """
+echo "[pheragent] preparing java test tooling"
+if [ -f pom.xml ]; then
+  mvn -q -DskipTests test || true
+fi
+if [ -f build.gradle ] || [ -f build.gradle.kts ]; then
+  if [ -x ./gradlew ]; then
+    ./gradlew testClasses --no-daemon || true
+  elif [ -f ./gradlew ]; then
+    chmod +x ./gradlew
+    ./gradlew testClasses --no-daemon || true
+  elif command -v gradle >/dev/null 2>&1; then
+    gradle testClasses || true
   fi
 fi
 """

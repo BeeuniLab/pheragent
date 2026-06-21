@@ -1033,8 +1033,22 @@ Rules:
 - If repo_context.task_description is present, use it as the target setup goal:
   install the tools/dependencies needed for that task, while keeping validation
   lightweight and environment-focused.
-- Split setup into coarse, replayable blocks: preflight, system deps, language deps,
-  build/test prep.
+- Prefer 4-7 functional blocks per repository. Use fewer blocks for
+  single-ecosystem repositories with simple setup. Use more blocks when the
+  repository requires multiple runtimes, native build toolchains, or long
+  dependency installation logic.
+- Split a block when it mixes different repair owners:
+  system packages, language runtime installation, virtualenv/package-manager
+  bootstrap, project dependency installation, native build configuration,
+  test-tooling or validation preparation.
+- Prefer this block template and naming scheme:
+  00-preflight, 10-system-packages, 20-runtime-toolchain,
+  30-project-dependencies, optional 40-native-build-config,
+  50-test-tooling, optional 60-service-or-final-validation-prep.
+- For multi-language repositories, split runtime and dependency blocks by
+  ecosystem when useful, such as 20-python-runtime, 21-node-runtime,
+  30-python-deps, 31-node-deps. Keep the total block count capped at 7 when
+  practical.
 - Use POSIX sh, not bash-specific syntax.
 - Keep commands deterministic and idempotent where practical.
 - Do not start long-running services in setup blocks.

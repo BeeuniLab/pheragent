@@ -122,14 +122,14 @@ def test_environment_builder_repairs_failed_block_and_persists_patch(tmp_path: P
     ).build()
 
     assert result.ok
-    python_block = next(block for block in result.blocks if block.id == "01-python-deps")
+    python_block = next(block for block in result.blocks if block.id == "30-python-deps")
     assert python_block.status == "succeeded"
-    assert "build-essential" in (result.scripts_dir / "01-python-deps.sh").read_text(
+    assert "build-essential" in (result.scripts_dir / "30-python-deps.sh").read_text(
         encoding="utf-8"
     )
     assert any(execution.phase == "repair" for execution in result.executions)
     runtime = FakeRuntime.instances[-1]
-    assert runtime.recreated.count("fake:00-preflight-success") == 2
+    assert runtime.recreated.count("fake:20-python-runtime-success") == 2
     first_log = Path(result.executions[0].log_path or "")
     assert first_log.is_file()
     assert '"phase": "docker_build"' in first_log.read_text(encoding="utf-8")

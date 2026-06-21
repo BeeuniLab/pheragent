@@ -157,8 +157,8 @@ Resume from an existing checkpoint image:
 ```bash
 uv run pheragent build \
   --repo /path/to/repo \
-  --resume-from pheragent:previous-run-003-01-python-deps-success \
-  --start-at-block 02-tests
+  --resume-from pheragent:previous-run-003-30-python-deps-success \
+  --start-at-block 50-test-tooling
 ```
 
 When `--start-at-block` is omitted, `pheragent` tries to infer the completed
