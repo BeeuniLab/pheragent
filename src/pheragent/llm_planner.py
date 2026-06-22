@@ -919,7 +919,8 @@ if [ -f uv.lock ]; then
   ensure_pytest /workspace/repo/.venv/bin/python
   expose_venv_tools
 else
-  if [ ! -d .venv ]; then
+  if [ ! -x .venv/bin/python ]; then
+    rm -rf .venv
     "$PYTHON_BIN" -m venv .venv
   fi
   ./.venv/bin/python -m pip install --upgrade pip setuptools wheel

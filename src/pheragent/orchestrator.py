@@ -106,7 +106,13 @@ class EnvironmentBuilder:
         context = self._analyze_repo_context()
         self.store.save_context(context)
         self._emit(f"run {self.run_id}: plan blocks")
-        blocks = self.store.write_blocks(self.planner.plan(context))
+        blocks = self.store.write_blocks(
+            _ensure_inherited_block_preludes(
+                self.planner.plan(context),
+                workdir=self.request.container_workdir,
+                context=context,
+            )
+        )
         result = BuildResult(
             ok=True,
             run_id=self.run_id,
@@ -337,9 +343,21 @@ class EnvironmentBuilder:
             existing_blocks = self.store.list_blocks()
             if existing_blocks:
                 self._emit(f"run {self.run_id}: reuse existing block scripts")
-                return self.store.write_blocks(existing_blocks)
+                return self.store.write_blocks(
+                    _ensure_inherited_block_preludes(
+                        existing_blocks,
+                        workdir=self.request.container_workdir,
+                        context=context,
+                    )
+                )
         self._emit(f"run {self.run_id}: plan blocks")
-        return self.store.write_blocks(self.planner.plan(context))
+        return self.store.write_blocks(
+            _ensure_inherited_block_preludes(
+                self.planner.plan(context),
+                workdir=self.request.container_workdir,
+                context=context,
+            )
+        )
 
     def _collect_container_context(
         self,
@@ -1907,6 +1925,70 @@ class EnvironmentBuilder:
     def _emit(self, message: str) -> None:
         if self.request.stream_logs:
             print(f"[pheragent] {message}", file=sys.stderr, flush=True)
+
+
+_INHERITED_PRELUDE_BEGIN = "# [pheragent] inherited environment prelude begin"
+_INHERITED_PRELUDE_END = "# [pheragent] inherited environment prelude end"
+
+
+def _ensure_inherited_block_preludes(
+    blocks: list[CommandBlock],
+    *,
+    workdir: str,
+    context: RepoContext,
+) -> list[CommandBlock]:
+    return [
+        _ensure_inherited_block_prelude(block, workdir=workdir, context=context)
+        for block in blocks
+    ]
+
+
+def _ensure_inherited_block_prelude(
+    block: CommandBlock,
+    *,
+    workdir: str,
+    context: RepoContext,
+) -> CommandBlock:
+    del context
+    if _INHERITED_PRELUDE_BEGIN in block.script:
+        return block
+    block.script = _prepend_inherited_prelude(block.script, workdir=workdir)
+    return block
+
+
+def _prepend_inherited_prelude(script: str, *, workdir: str) -> str:
+    prelude = _inherited_environment_prelude(workdir)
+    body_lines = _shell_script_body_lines(script)
+    return "#!/bin/sh\nset -eu\n\n" + prelude + "\n\n" + "\n".join(body_lines).strip() + "\n"
+
+
+def _inherited_environment_prelude(workdir: str) -> str:
+    quoted_workdir = shlex.quote(workdir)
+    return f"""
+{_INHERITED_PRELUDE_BEGIN}
+PHERAGENT_WORKDIR={quoted_workdir}
+cd "$PHERAGENT_WORKDIR"
+mkdir -p "$PHERAGENT_WORKDIR/.cache/pip" "$PHERAGENT_WORKDIR/.cache/uv"
+export PIP_CACHE_DIR="$PHERAGENT_WORKDIR/.cache/pip"
+export UV_CACHE_DIR="$PHERAGENT_WORKDIR/.cache/uv"
+export PATH="$PHERAGENT_WORKDIR/.venv/bin:$PHERAGENT_WORKDIR/.pheragent-tools/bin:$PHERAGENT_WORKDIR/node_modules/.bin:/usr/local/bin:$PATH"
+
+if [ -x "$PHERAGENT_WORKDIR/.venv/bin/python" ]; then
+  ln -sf "$PHERAGENT_WORKDIR/.venv/bin/python" /usr/local/bin/python || true
+  ln -sf "$PHERAGENT_WORKDIR/.venv/bin/python" /usr/local/bin/python3 || true
+fi
+if [ -x "$PHERAGENT_WORKDIR/.venv/bin/pip" ]; then
+  ln -sf "$PHERAGENT_WORKDIR/.venv/bin/pip" /usr/local/bin/pip || true
+  ln -sf "$PHERAGENT_WORKDIR/.venv/bin/pip" /usr/local/bin/pip3 || true
+fi
+if [ -x "$PHERAGENT_WORKDIR/.venv/bin/pytest" ]; then
+  ln -sf "$PHERAGENT_WORKDIR/.venv/bin/pytest" /usr/local/bin/pytest || true
+fi
+if [ -x "$PHERAGENT_WORKDIR/.pheragent-tools/bin/uv" ]; then
+  ln -sf "$PHERAGENT_WORKDIR/.pheragent-tools/bin/uv" /usr/local/bin/uv || true
+fi
+{_INHERITED_PRELUDE_END}
+""".strip()
 
 
 def _split_shell_script_commands(script: str) -> list[str]:

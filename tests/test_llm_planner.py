@@ -435,6 +435,8 @@ def test_openai_responses_planner_treats_python_language_deps_as_safe_dependency
     assert "python dependencies" in blocks[0].script
     assert "pip install --no-deps -e ." in blocks[0].script
     assert "ensure_pytest /workspace/repo/.venv/bin/python" in blocks[0].script
+    assert "if [ ! -x .venv/bin/python ]; then" in blocks[0].script
+    assert "rm -rf .venv" in blocks[0].script
     assert blocks[0].validation_command == (
         "cd /workspace/repo && test -x .venv/bin/python && "
         '.venv/bin/python -c "import sys; print(sys.version)"'

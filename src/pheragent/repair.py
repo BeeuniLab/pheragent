@@ -881,7 +881,7 @@ def _uv_tool_venv_command() -> str:
 def _project_venv_pip_command() -> str:
     return (
         "cd /workspace/repo && "
-        "if [ ! -x .venv/bin/python ]; then python3 -m venv .venv; fi && "
+        "if [ ! -x .venv/bin/python ]; then rm -rf .venv && python3 -m venv .venv; fi && "
         "./.venv/bin/python -m pip --version >/dev/null 2>&1 || "
         "./.venv/bin/python -m ensurepip --upgrade || true; "
         "./.venv/bin/python -m pip install --upgrade pip setuptools wheel pytest && "

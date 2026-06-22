@@ -37,6 +37,7 @@ def test_repair_hints_use_project_venv_for_pep_668_failure() -> None:
 
     assert suggestions
     assert suggestions[0].title == "Use project virtualenv pip"
+    assert "rm -rf .venv" in suggestions[0].command
     assert "python3 -m venv .venv" in suggestions[0].command
     assert "./.venv/bin/python -m pip install" in suggestions[0].command
     assert "PIP_BREAK_SYSTEM_PACKAGES" not in suggestions[0].command

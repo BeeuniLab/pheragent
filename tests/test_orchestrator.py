@@ -147,9 +147,9 @@ def test_environment_builder_repairs_failed_block_and_persists_patch(tmp_path: P
     assert result.ok
     python_block = next(block for block in result.blocks if block.id == "30-python-deps")
     assert python_block.status == "succeeded"
-    assert "build-essential" in (result.scripts_dir / "30-python-deps.sh").read_text(
-        encoding="utf-8"
-    )
+    repaired_script = (result.scripts_dir / "30-python-deps.sh").read_text(encoding="utf-8")
+    assert "build-essential" in repaired_script
+    assert "[pheragent] inherited environment prelude begin" in repaired_script
     assert any(execution.phase == "repair" for execution in result.executions)
     runtime = FakeRuntime.instances[-1]
     assert runtime.recreated.count("fake:20-python-runtime-success") == 2
@@ -157,6 +157,72 @@ def test_environment_builder_repairs_failed_block_and_persists_patch(tmp_path: P
     assert first_log.is_file()
     assert '"phase": "docker_build"' in first_log.read_text(encoding="utf-8")
     assert '"log_path"' in (result.state_dir / "executions.jsonl").read_text(encoding="utf-8")
+
+
+def test_environment_builder_inlines_inherited_prelude_in_planned_blocks(
+    tmp_path: Path,
+) -> None:
+    block = CommandBlock(
+        id="01-custom",
+        title="Custom",
+        goal="exercise prelude injection",
+        script="#!/bin/sh\nset -eu\n\necho custom\n",
+        order=1,
+    )
+    request = BuildRequest(
+        repo_path=tmp_path,
+        state_dir=tmp_path / ".pheragent",
+        run_id="prelude-run",
+    )
+
+    result = EnvironmentBuilder(
+        request,
+        planner=StaticPlanner([block]),
+        repair_planner=RepairPlanner(),
+    ).plan_only()
+
+    script = (result.scripts_dir / "01-custom.sh").read_text(encoding="utf-8")
+    assert script.count("[pheragent] inherited environment prelude begin") == 1
+    assert 'export PATH="$PHERAGENT_WORKDIR/.venv/bin:' in script
+    assert 'ln -sf "$PHERAGENT_WORKDIR/.venv/bin/python" /usr/local/bin/python' in script
+    assert script.index("[pheragent] inherited environment prelude begin") < script.index(
+        "echo custom"
+    )
+
+
+def test_environment_builder_preserves_existing_inherited_prelude(
+    tmp_path: Path,
+) -> None:
+    block = CommandBlock(
+        id="01-custom",
+        title="Custom",
+        goal="exercise idempotent prelude injection",
+        script=(
+            "#!/bin/sh\n"
+            "set -eu\n\n"
+            "# [pheragent] inherited environment prelude begin\n"
+            "echo custom-prelude\n"
+            "# [pheragent] inherited environment prelude end\n\n"
+            "echo custom\n"
+        ),
+        order=1,
+    )
+    request = BuildRequest(
+        repo_path=tmp_path,
+        state_dir=tmp_path / ".pheragent",
+        run_id="prelude-existing-run",
+    )
+
+    result = EnvironmentBuilder(
+        request,
+        planner=StaticPlanner([block]),
+        repair_planner=RepairPlanner(),
+    ).plan_only()
+
+    script = (result.scripts_dir / "01-custom.sh").read_text(encoding="utf-8")
+    assert script.count("[pheragent] inherited environment prelude begin") == 1
+    assert "echo custom-prelude" in script
+    assert 'export PATH="$PHERAGENT_WORKDIR' not in script
 
 
 def test_environment_builder_repairs_earlier_localized_block_and_replays_suffix(
@@ -414,16 +480,16 @@ def test_environment_builder_single_command_forward_executes_commands(
     assert result.progress_control is not None
     assert result.progress_control.forward_granularity == "command"
     assert result.final_clean_replay_ok is True
-    assert len(command_forward) == 6
-    assert runtime.command_sequences == [
-        [
-            "export DEMO_FLAG=1",
-            "cd src",
-            "echo one",
-            "echo two",
-            "build_docs() {\n  echo docs\n}",
-            "build_docs",
-        ]
+    assert len(command_forward) == len(runtime.command_sequences[0])
+    assert runtime.command_sequences[0][0] == "PHERAGENT_WORKDIR=/workspace/repo"
+    assert any(command.startswith("export PATH=") for command in runtime.command_sequences[0])
+    assert runtime.command_sequences[0][-6:] == [
+        "export DEMO_FLAG=1",
+        "cd src",
+        "echo one",
+        "echo two",
+        "build_docs() {\n  echo docs\n}",
+        "build_docs",
     ]
     assert command_texts == runtime.command_sequences[0]
     assert not any(execution.phase == "block" for execution in result.executions)
