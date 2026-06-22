@@ -638,6 +638,31 @@ def test_openai_responses_planner_replaces_task_validation_build_test_script() -
     assert "localhost" not in blocks[0].validation_command
 
 
+def test_openai_responses_planner_replaces_node_runtime_checks_with_safe_script() -> None:
+    planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
+
+    blocks = planner._parse_blocks(
+        json.dumps(
+            {
+                "blocks": [
+                    {
+                        "id": "21-node-runtime",
+                        "order": 21,
+                        "title": "Node Runtime",
+                        "goal": "verify node runtime",
+                        "script": "node --version && npm --version",
+                        "validation_command": "node --version && npm --version",
+                    }
+                ]
+            }
+        )
+    )
+
+    assert "ensuring node runtime" in blocks[0].script
+    assert "apt-get install -y --no-install-recommends nodejs npm" in blocks[0].script
+    assert blocks[0].validation_command == "node --version && npm --version"
+
+
 def test_openai_responses_planner_sanitizes_wagtail_module_cli() -> None:
     planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
 

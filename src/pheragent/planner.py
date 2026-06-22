@@ -350,7 +350,23 @@ fi
 
 def _node_runtime_script() -> str:
     return """
-echo "[pheragent] checking node runtime"
+echo "[pheragent] ensuring node runtime"
+if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends nodejs npm
+  elif command -v apk >/dev/null 2>&1; then
+    apk add --no-cache nodejs npm
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y nodejs npm
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y nodejs npm
+  else
+    echo "node/npm not found and no supported package manager is available" >&2
+    exit 127
+  fi
+fi
 node --version
 npm --version
 """

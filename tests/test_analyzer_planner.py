@@ -104,3 +104,7 @@ def test_rule_based_planner_splits_two_language_repo_but_caps_blocks(tmp_path: P
         "50-test-tooling",
     ]
     assert len(blocks) == 7
+    node_runtime = next(block for block in blocks if block.id == "21-node-runtime")
+    assert "ensuring node runtime" in node_runtime.script
+    assert "apt-get install -y --no-install-recommends nodejs npm" in node_runtime.script
+    assert node_runtime.validation_command == "node --version && npm --version"

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .models import CommandBlock, LLMApiMode, RepoContext, to_jsonable
-from .planner import BlockPlanner, RuleBasedBlockPlanner, _preflight_script
+from .planner import BlockPlanner, RuleBasedBlockPlanner, _node_runtime_script, _preflight_script
 from .utils import shell_script, slugify
 
 
@@ -147,6 +147,9 @@ class OpenAIResponsesBlockPlanner:
             if _is_python_dependency_block(block_id, title, script, validation_command):
                 script = _safe_python_dependency_script()
                 validation_command = _safe_python_dependency_validation_command()
+            elif _is_node_runtime_block(block_id, title, script, validation_command):
+                script = _node_runtime_script()
+                validation_command = "node --version && npm --version"
             elif not is_preflight and _is_go_dependency_block(
                 block_id,
                 title,
@@ -613,6 +616,31 @@ def _is_python_dependency_block(
 def _is_build_test_prep_block(block_id: str, title: str) -> bool:
     haystack = f"{block_id} {title}".lower()
     return ("build" in haystack or "test" in haystack) and "prep" in haystack
+
+
+def _is_node_runtime_block(
+    block_id: str,
+    title: str,
+    script: str = "",
+    validation_command: str | None = None,
+) -> bool:
+    haystack = f"{block_id} {title}".lower()
+    has_node_label = re.search(r"(?:^|[^a-z0-9])node(?:js)?(?:[^a-z0-9]|$)", haystack)
+    if has_node_label and ("runtime" in haystack or "toolchain" in haystack):
+        return True
+
+    command_haystack = f"{script}\n{validation_command or ''}".lower()
+    version_checks = (
+        "node --version" in command_haystack
+        or "node -v" in command_haystack
+        or "npm --version" in command_haystack
+        or "npm -v" in command_haystack
+    )
+    installs_deps = re.search(
+        r"\b(?:npm|pnpm|yarn)\s+(?:install|ci|add|run)\b",
+        command_haystack,
+    )
+    return bool(has_node_label and version_checks and not installs_deps)
 
 
 def _is_go_dependency_block(
