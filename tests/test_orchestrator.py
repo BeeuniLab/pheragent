@@ -251,10 +251,19 @@ def test_environment_builder_repairs_earlier_localized_block_and_replays_suffix(
                 return CommandResult(exit_code=1, stderr="wrong runtime selected")
             return CommandResult(exit_code=0, stdout="ok")
 
+        def execute_command(self, command: str, *, timeout: float) -> CommandResult:
+            if "probe-runtime" in command:
+                return CommandResult(exit_code=0, stdout="runtime probe output")
+            if "install-correct-runtime" in command:
+                return CommandResult(exit_code=0, stdout="installed correct runtime")
+            return super().execute_command(command, timeout=timeout)
+
     class EarlierRootLLMRepairPlanner:
         def __init__(self) -> None:
             self.localized_blocks: list[str] = []
+            self.probed_blocks: list[str] = []
             self.repaired_blocks: list[str] = []
+            self.repair_contexts: list[RepairContext | None] = []
 
         def localize_failure(self, block, result, *, context=None, heuristic_hints=None):
             del result, heuristic_hints
@@ -265,9 +274,23 @@ def test_environment_builder_repairs_earlier_localized_block_and_replays_suffix(
                 rationale="validation failure came from runtime choice",
             )
 
-        def suggest(self, block, result, *, context=None, heuristic_hints=None):
+        def propose_probes(self, block, result, *, context=None, heuristic_hints=None):
             del result, context, heuristic_hints
+            self.probed_blocks.append(block.id)
+            return [
+                RepairProbeCommand(
+                    title="Probe runtime",
+                    command="probe-runtime",
+                )
+            ]
+
+        def suggest(self, block, result, *, context=None, heuristic_hints=None):
+            del result, heuristic_hints
             self.repaired_blocks.append(block.id)
+            self.repair_contexts.append(context)
+            assert context is not None
+            assert context.probe_results
+            assert "runtime probe output" in context.probe_results[0].stdout_tail
             return [
                 RepairCommand(
                     title="Install correct runtime",
@@ -327,9 +350,12 @@ def test_environment_builder_repairs_earlier_localized_block_and_replays_suffix(
 
     assert result.ok
     assert llm_planner.localized_blocks == ["50-validation"]
+    assert llm_planner.probed_blocks == ["20-runtime"]
     assert llm_planner.repaired_blocks == ["20-runtime"]
+    assert llm_planner.repair_contexts
+    assert any(execution.phase == "probe" for execution in result.executions)
     runtime = FakeRuntime.instances[-1]
-    assert runtime.recreated.count("fake:00-preflight-success") == 2
+    assert runtime.recreated.count("fake:00-preflight-success") == 4
     assert runtime.script_runs == [
         "00-preflight.sh",
         "20-runtime.sh",

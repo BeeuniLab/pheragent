@@ -337,6 +337,12 @@ class OpenAIResponsesRepairPlanner:
                     f"{diagnostic_prefix}.command rejected: {command_rejection}"
                 )
                 continue
+            command_effect_rejection = _repair_command_effect_rejection_reason(command)
+            if command_effect_rejection:
+                self.last_parse_diagnostics.append(
+                    f"{diagnostic_prefix}.command rejected: {command_effect_rejection}"
+                )
+                continue
             patch_rejection = _repair_command_rejection_reason(patch_script)
             if patch_rejection:
                 self.last_parse_diagnostics.append(
@@ -1028,6 +1034,70 @@ def _repair_command_rejection_reason(command: str) -> str | None:
     return None
 
 
+def _repair_command_effect_rejection_reason(command: str) -> str | None:
+    normalized = re.sub(r"\s+", " ", command.strip().lower())
+    if not normalized:
+        return "empty command"
+
+    repair_tokens = (
+        "apt-get install",
+        "apt install",
+        "apk add",
+        "dnf install",
+        "yum install",
+        "pip install",
+        "pip3 install",
+        "python -m pip install",
+        "python3 -m pip install",
+        ".venv/bin/python -m pip install",
+        "./.venv/bin/python -m pip install",
+        "uv sync",
+        "uv pip install",
+        "poetry install",
+        "pipenv install",
+        "npm install",
+        "npm i ",
+        "pnpm install",
+        "yarn install",
+        "cargo fetch",
+        "cargo install",
+        "go mod download",
+        "go install",
+        "chmod ",
+        "ln -s",
+        "ln -sf",
+        "rm -rf .venv",
+        "python3 -m venv",
+        "python -m venv",
+        "mkdir ",
+        "touch ",
+        "export ",
+    )
+    if any(token in normalized for token in repair_tokens):
+        return None
+
+    diagnostic_patterns = (
+        r"^(?:sudo\s+)?dpkg-query\b",
+        r"^(?:sudo\s+)?dpkg\s+-[ls]\b",
+        r"^(?:sudo\s+)?apt-cache\b",
+        r"^(?:sudo\s+)?command\s+-v\b",
+        r"^(?:sudo\s+)?which\b",
+        r"^(?:sudo\s+)?whereis\b",
+        r"^(?:sudo\s+)?type\b",
+        r"^(?:sudo\s+)?test\b",
+        r"^(?:sudo\s+)?ls\b",
+        r"^(?:sudo\s+)?cat\b",
+        r"^(?:sudo\s+)?echo\b",
+        r"^(?:sudo\s+)?python(?:3)?\s+--version\b",
+        r"^(?:sudo\s+)?node\s+--version\b",
+        r"^(?:sudo\s+)?npm\s+--version\b",
+        r"^(?:sudo\s+)?pip(?:3)?\s+--version\b",
+    )
+    if any(re.search(pattern, normalized) for pattern in diagnostic_patterns):
+        return "repair command is a pure diagnostic/probe command"
+    return None
+
+
 def _repo_code_modification_rejection_reason(normalized_command: str) -> str | None:
     for token in ("conftest.py", "sitecustomize.py"):
         if token in normalized_command:
@@ -1137,6 +1207,13 @@ Rules:
   command succeeds.
 - Make command validate only the repair itself from the failed block baseline
   (for example, install a missing package and run a small import/version check).
+- command may include checks or validation, but it must not be only a probe.
+  Pure diagnostic commands such as dpkg-query, command -v, which, --version
+  checks, ls, cat, test, or echo belong in probes, not repairs. A repair command
+  should include a state-changing fix, such as apt-get install, venv creation,
+  symlink repair, chmod, or environment setup. For missing Debian/Ubuntu
+  packages, use apt-get update followed by apt-get install -y
+  --no-install-recommends for the required packages.
 - patch_script must be the persistent, replayable form of the successful repair.
   If command installs a package, exports an environment variable, changes pip
   flags, or replaces validation assumptions, patch_script must include the same

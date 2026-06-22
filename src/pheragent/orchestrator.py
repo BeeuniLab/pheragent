@@ -800,6 +800,9 @@ class EnvironmentBuilder:
 
         stable_prefix = all_blocks[:root_index]
         last_result = failure_result
+        probe_failures = 0
+        max_probe_failures = max(0, self.request.max_probe_failures)
+        probe_disabled = max_probe_failures == 0
         for repair_attempt in range(1, self.request.max_repair_attempts + 1):
             repair_context = self._repair_context(
                 repo_context=repo_context,
@@ -812,6 +815,69 @@ class EnvironmentBuilder:
                     "then replay and validate the invalidated suffix.",
                 ],
             )
+            probes: list[RepairProbeCommand] = []
+            if not probe_disabled and probe_failures < max_probe_failures:
+                probes = self.repair_planner.propose_probes(
+                    root_block,
+                    last_result,
+                    context=repair_context,
+                )
+                self._record_llm_probe_status(
+                    block=root_block,
+                    attempt=repair_attempt,
+                    baseline_image=root_baseline,
+                    executions=executions,
+                )
+                probe_error = getattr(self.repair_planner, "last_probe_error", None)
+                if probe_error:
+                    probe_failures += 1
+                    self._emit(
+                        f"run {self.run_id}: root-cause block {root_block.id} "
+                        f"LLM probe attempt {repair_attempt} failed "
+                        f"({probe_failures}/{max_probe_failures}): "
+                        f"{tail_text(probe_error, max_chars=500)}"
+                    )
+                    if (
+                        probe_failures < max_probe_failures
+                        and repair_attempt < self.request.max_repair_attempts
+                    ):
+                        continue
+                    self._emit(
+                        f"run {self.run_id}: root-cause block {root_block.id} "
+                        "continue repair without probes"
+                    )
+                    probes = []
+                elif (
+                    not probes
+                    and getattr(self.repair_planner, "last_probe_raw_response", None)
+                    is not None
+                ):
+                    probe_disabled = True
+                    self._emit(
+                        f"run {self.run_id}: root-cause block {root_block.id} "
+                        "LLM requested no probes; skip future probes"
+                    )
+            probe_results = self._run_repair_probes(
+                runtime=runtime,
+                block=root_block,
+                baseline_image=root_baseline,
+                attempt=repair_attempt,
+                probes=probes,
+                executions=executions,
+            )
+            if probe_results:
+                repair_context = self._repair_context(
+                    repo_context=repo_context,
+                    baseline_image=root_baseline,
+                    completed_blocks=stable_prefix,
+                    executions=executions,
+                    probe_results=probe_results,
+                    strategy_notes=[
+                        f"Failure appeared in {failed_block.id}, but localization selected "
+                        f"{root_block.id} as the root-cause block. Repair the root block, "
+                        "then replay and validate the invalidated suffix.",
+                    ],
+                )
             suggestions = self.repair_planner.suggest(
                 root_block,
                 last_result,

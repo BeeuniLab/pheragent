@@ -399,6 +399,55 @@ def test_openai_responses_repair_parser_filters_dangerous_commands() -> None:
     assert "unsafe token 'docker '" in planner.last_parse_diagnostics[0]
 
 
+def test_openai_responses_repair_parser_filters_pure_diagnostic_repairs() -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
+
+    repairs = planner._parse_repairs(
+        """
+        {
+          "repairs": [
+            {
+              "title": "Check python dev",
+              "command": "dpkg-query -W python3-dev build-essential",
+              "patch_script": "dpkg-query -W python3-dev build-essential"
+            },
+            {
+              "title": "Install python dev",
+              "command": "apt-get update && apt-get install -y --no-install-recommends python3-dev build-essential",
+              "patch_script": "apt-get update && apt-get install -y --no-install-recommends python3-dev build-essential"
+            }
+          ]
+        }
+        """
+    )
+
+    assert len(repairs) == 1
+    assert repairs[0].title == "Install python dev"
+    assert "pure diagnostic/probe command" in planner.last_parse_diagnostics[0]
+
+
+def test_openai_responses_repair_parser_allows_probe_plus_durable_repair() -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
+
+    repairs = planner._parse_repairs(
+        """
+        {
+          "repairs": [
+            {
+              "title": "Install missing python dev package",
+              "command": "dpkg-query -W python3-dev || apt-get update && apt-get install -y --no-install-recommends python3-dev build-essential && dpkg-query -W python3-dev build-essential",
+              "patch_script": "apt-get update && apt-get install -y --no-install-recommends python3-dev build-essential"
+            }
+          ]
+        }
+        """
+    )
+
+    assert len(repairs) == 1
+    assert repairs[0].title == "Install missing python dev package"
+    assert planner.last_parse_diagnostics == []
+
+
 def test_openai_responses_repair_parser_filters_transient_block_script_paths() -> None:
     planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
 
