@@ -84,7 +84,7 @@ def test_rule_based_planner_installs_node_compatible_pnpm(tmp_path: Path) -> Non
 
     assert "ensure_pnpm" in node_block.script
     assert "PNPM_PACKAGE=pnpm@9" in node_block.script
-    assert 'npm install -g "$PNPM_PACKAGE"' in node_block.script
+    assert '.pheragent-tools/bin/npm install -g "$PNPM_PACKAGE"' in node_block.script
 
 
 def test_rule_based_planner_splits_two_language_repo_but_caps_blocks(tmp_path: Path) -> None:
@@ -104,7 +104,21 @@ def test_rule_based_planner_splits_two_language_repo_but_caps_blocks(tmp_path: P
         "50-test-tooling",
     ]
     assert len(blocks) == 7
+    python_runtime = next(block for block in blocks if block.id == "20-python-runtime")
+    assert "ensuring python runtime" in python_runtime.script
+    assert "python3 python3-pip python3-venv" in python_runtime.script
+    assert "SYSTEM_PYTHON=python3" in python_runtime.script
+    assert '"$SYSTEM_PYTHON" -m venv .venv' in python_runtime.script
+    assert "./.venv/bin/python -m pip --version" in python_runtime.script
+    assert python_runtime.validation_command is not None
+    assert ".venv/bin/python" in python_runtime.validation_command
     node_runtime = next(block for block in blocks if block.id == "21-node-runtime")
     assert "ensuring node runtime" in node_runtime.script
     assert "apt-get install -y --no-install-recommends nodejs npm" in node_runtime.script
-    assert node_runtime.validation_command == "node --version && npm --version"
+    assert "resolve_runtime_bin" in node_runtime.script
+    assert 'ln -sf "$NODE_BIN" .pheragent-tools/bin/node' in node_runtime.script
+    assert ".pheragent-tools/bin/node --version" in node_runtime.script
+    assert node_runtime.validation_command == (
+        "test -x .pheragent-tools/bin/node && test -x .pheragent-tools/bin/npm && "
+        ".pheragent-tools/bin/node --version && .pheragent-tools/bin/npm --version"
+    )

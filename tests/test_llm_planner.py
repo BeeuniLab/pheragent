@@ -439,7 +439,7 @@ def test_openai_responses_planner_treats_python_language_deps_as_safe_dependency
     assert "rm -rf .venv" in blocks[0].script
     assert blocks[0].validation_command == (
         "cd /workspace/repo && test -x .venv/bin/python && "
-        '.venv/bin/python -c "import sys; print(sys.version)"'
+        '.venv/bin/python -c "import sys; print(sys.executable); print(sys.version)"'
     )
 
 
@@ -660,7 +660,45 @@ def test_openai_responses_planner_replaces_node_runtime_checks_with_safe_script(
 
     assert "ensuring node runtime" in blocks[0].script
     assert "apt-get install -y --no-install-recommends nodejs npm" in blocks[0].script
-    assert blocks[0].validation_command == "node --version && npm --version"
+    assert "resolve_runtime_bin" in blocks[0].script
+    assert 'ln -sf "$NODE_BIN" .pheragent-tools/bin/node' in blocks[0].script
+    assert ".pheragent-tools/bin/node --version" in blocks[0].script
+    assert blocks[0].validation_command == (
+        "test -x .pheragent-tools/bin/node && test -x .pheragent-tools/bin/npm && "
+        ".pheragent-tools/bin/node --version && .pheragent-tools/bin/npm --version"
+    )
+
+
+def test_openai_responses_planner_replaces_python_runtime_checks_with_safe_script() -> None:
+    planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
+
+    blocks = planner._parse_blocks(
+        json.dumps(
+            {
+                "blocks": [
+                    {
+                        "id": "20-python-runtime",
+                        "order": 20,
+                        "title": "Python Runtime",
+                        "goal": "verify python runtime",
+                        "script": 'python3 -c "import sys; print(sys.version)"',
+                        "validation_command": 'python3 -c "import sys; print(sys.version)"',
+                    }
+                ]
+            }
+        )
+    )
+
+    assert "ensuring python runtime" in blocks[0].script
+    assert "python3 python3-pip python3-venv" in blocks[0].script
+    assert "SYSTEM_PYTHON=python3" in blocks[0].script
+    assert '"$SYSTEM_PYTHON" -m venv .venv' in blocks[0].script
+    assert "./.venv/bin/python -m pip --version" in blocks[0].script
+    assert blocks[0].validation_command == (
+        "test -x .venv/bin/python && "
+        './.venv/bin/python -c "import sys; print(sys.executable); print(sys.version)" '
+        "&& ./.venv/bin/python -m pip --version"
+    )
 
 
 def test_openai_responses_planner_sanitizes_wagtail_module_cli() -> None:

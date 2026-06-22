@@ -8,7 +8,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from .models import CommandBlock, LLMApiMode, RepoContext, to_jsonable
-from .planner import BlockPlanner, RuleBasedBlockPlanner, _node_runtime_script, _preflight_script
+from .planner import (
+    BlockPlanner,
+    RuleBasedBlockPlanner,
+    _node_runtime_validation_command,
+    _node_runtime_script,
+    _preflight_script,
+    _python_runtime_script,
+)
 from .utils import shell_script, slugify
 
 
@@ -144,12 +151,19 @@ class OpenAIResponsesBlockPlanner:
                 _optional_str(item.get("validation_command"))
             )
             script_rejection = _repo_code_modification_rejection_reason(script)
-            if _is_python_dependency_block(block_id, title, script, validation_command):
+            if _is_python_runtime_block(block_id, title, script, validation_command):
+                script = _python_runtime_script()
+                validation_command = (
+                    "test -x .venv/bin/python && "
+                    './.venv/bin/python -c "import sys; print(sys.executable); print(sys.version)" '
+                    "&& ./.venv/bin/python -m pip --version"
+                )
+            elif _is_python_dependency_block(block_id, title, script, validation_command):
                 script = _safe_python_dependency_script()
                 validation_command = _safe_python_dependency_validation_command()
             elif _is_node_runtime_block(block_id, title, script, validation_command):
                 script = _node_runtime_script()
-                validation_command = "node --version && npm --version"
+                validation_command = _node_runtime_validation_command()
             elif not is_preflight and _is_go_dependency_block(
                 block_id,
                 title,
@@ -613,6 +627,29 @@ def _is_python_dependency_block(
     )
 
 
+def _is_python_runtime_block(
+    block_id: str,
+    title: str,
+    script: str = "",
+    validation_command: str | None = None,
+) -> bool:
+    haystack = f"{block_id} {title}".lower()
+    has_python_label = re.search(r"(?:^|[^a-z0-9])python(?:3)?(?:[^a-z0-9]|$)", haystack)
+    if has_python_label and ("runtime" in haystack or "toolchain" in haystack):
+        return True
+
+    command_haystack = f"{script}\n{validation_command or ''}".lower()
+    runtime_checks = (
+        "python3 --version" in command_haystack
+        or "python --version" in command_haystack
+        or "print(sys.version)" in command_haystack
+        or "python3 -m venv -h" in command_haystack
+        or "python -m venv -h" in command_haystack
+    )
+    installs_deps = _uses_python_dependency_tooling(script, validation_command)
+    return bool(has_python_label and runtime_checks and not installs_deps)
+
+
 def _is_build_test_prep_block(block_id: str, title: str) -> bool:
     haystack = f"{block_id} {title}".lower()
     return ("build" in haystack or "test" in haystack) and "prep" in haystack
@@ -677,12 +714,8 @@ def _safe_build_test_validation_command(
         return command
     return (
         "cd /workspace/repo && "
-        "if [ -x .venv/bin/python ]; then "
-        "PYTHON_BIN=./.venv/bin/python; "
-        "elif command -v python >/dev/null 2>&1; then "
-        "PYTHON_BIN=python; "
-        "else PYTHON_BIN=python3; fi; "
-        '"$PYTHON_BIN" -m pytest --collect-only -q; '
+        "test -x .venv/bin/python; "
+        "./.venv/bin/python -m pytest --collect-only -q; "
         "status=$?; "
         'if [ "$status" -eq 5 ]; then '
         'echo "[pheragent] no pytest tests collected"; exit 0; '
@@ -695,16 +728,16 @@ def _generic_build_test_validation_command() -> str:
     return """
 cd /workspace/repo
 if [ -f package.json ]; then
-  node --version >/dev/null 2>&1
+  test -x .pheragent-tools/bin/node
+  test -x .pheragent-tools/bin/npm
+  ./.pheragent-tools/bin/node --version >/dev/null 2>&1
+  ./.pheragent-tools/bin/npm --version >/dev/null 2>&1
   if command -v pnpm >/dev/null 2>&1; then pnpm --version >/dev/null 2>&1; fi
-  if command -v npm >/dev/null 2>&1; then npm --version >/dev/null 2>&1; fi
   if command -v yarn >/dev/null 2>&1; then yarn --version >/dev/null 2>&1; fi
 fi
 if [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ] || [ -f requirements.txt ]; then
-  if [ -x .venv/bin/python ]; then PYTHON_BIN=./.venv/bin/python;
-  elif command -v python >/dev/null 2>&1; then PYTHON_BIN=python;
-  else PYTHON_BIN=python3; fi
-  "$PYTHON_BIN" -m pip --version >/dev/null 2>&1 || true
+  test -x .venv/bin/python
+  ./.venv/bin/python -m pip --version >/dev/null 2>&1 || true
 fi
 """.strip()
 
@@ -779,23 +812,17 @@ cd /workspace/repo
 
 echo "[pheragent] build/test prep"
 if [ -f package.json ]; then
-  node --version >/dev/null 2>&1
+  test -x .pheragent-tools/bin/node
+  test -x .pheragent-tools/bin/npm
+  ./.pheragent-tools/bin/node --version >/dev/null 2>&1
+  ./.pheragent-tools/bin/npm --version >/dev/null 2>&1
   if command -v pnpm >/dev/null 2>&1; then pnpm --version >/dev/null 2>&1; fi
-  if command -v npm >/dev/null 2>&1; then npm --version >/dev/null 2>&1; fi
   if command -v yarn >/dev/null 2>&1; then yarn --version >/dev/null 2>&1; fi
 fi
 
 if [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ] || [ -f requirements.txt ]; then
-  if [ -x .venv/bin/python ]; then
-    PYTHON_BIN=./.venv/bin/python
-  elif command -v python >/dev/null 2>&1; then
-    PYTHON_BIN=python
-  elif command -v python3 >/dev/null 2>&1; then
-    PYTHON_BIN=python3
-  else
-    echo "python executable not found" >&2
-    exit 127
-  fi
+  test -x .venv/bin/python
+  PYTHON_BIN=./.venv/bin/python
 
   "$PYTHON_BIN" -m pip --version >/dev/null 2>&1 \
     || "$PYTHON_BIN" -m ensurepip --upgrade \
@@ -815,25 +842,27 @@ def _safe_python_dependency_script() -> str:
 cd /workspace/repo
 
 echo "[pheragent] python dependencies"
-if command -v python3 >/dev/null 2>&1; then
-  PYTHON_BIN=python3
-elif command -v python >/dev/null 2>&1; then
-  PYTHON_BIN=python
-elif command -v apt-get >/dev/null 2>&1; then
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update
-  apt-get install -y --no-install-recommends python3 python3-pip python3-venv
-  PYTHON_BIN=python3
-else
-  echo "python executable not found" >&2
-  exit 127
-fi
-
-if command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
-  if [ -w /usr/local/bin ] || [ "$(id -u)" = "0" ]; then
-    ln -sf "$(command -v python3)" /usr/local/bin/python
+ensure_python3() {
+  if command -v python3 >/dev/null 2>&1 && python3 -m venv -h >/dev/null 2>&1; then
+    return 0
   fi
-fi
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends python3 python3-pip python3-venv
+  elif command -v apk >/dev/null 2>&1; then
+    apk add --no-cache python3 py3-pip py3-virtualenv
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y python3 python3-pip python3-virtualenv
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y python3 python3-pip python3-virtualenv
+  else
+    echo "python3 with venv support not found and no supported package manager is available" >&2
+    exit 127
+  fi
+}
+
+ensure_python3
 
 mkdir -p .cache/uv .cache/pip
 export UV_CACHE_DIR=/workspace/repo/.cache/uv
@@ -949,7 +978,7 @@ if [ -f uv.lock ]; then
 else
   if [ ! -x .venv/bin/python ]; then
     rm -rf .venv
-    "$PYTHON_BIN" -m venv .venv
+    python3 -m venv .venv
   fi
   ./.venv/bin/python -m pip install --upgrade pip setuptools wheel
   if [ -f requirements.txt ]; then
@@ -1036,7 +1065,7 @@ def _safe_go_dependency_validation_command() -> str:
 def _safe_python_dependency_validation_command() -> str:
     return (
         "cd /workspace/repo && test -x .venv/bin/python && "
-        '.venv/bin/python -c "import sys; print(sys.version)"'
+        '.venv/bin/python -c "import sys; print(sys.executable); print(sys.version)"'
     )
 
 

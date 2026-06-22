@@ -206,7 +206,7 @@ def _runtime_validation_command(language: str) -> str:
     if language == "python":
         return _python_runtime_validation_command()
     if language == "node":
-        return "node --version && npm --version"
+        return _node_runtime_validation_command()
     if language == "go":
         return 'PATH="/usr/local/go/bin:$PATH" go version'
     if language == "rust":
@@ -220,7 +220,7 @@ def _dependency_validation_command(language: str) -> str:
     if language == "python":
         return _python_dependency_validation_command()
     if language == "node":
-        return "test -d node_modules || test ! -f package.json"
+        return _node_dependency_validation_command()
     if language == "go":
         return _safe_go_validation_command()
     if language == "rust":
@@ -260,10 +260,8 @@ def _safe_python_validation_command(context: RepoContext, fallback: str) -> str:
 
 def _pytest_collect_validation_command() -> str:
     return (
-        "if [ -x .venv/bin/python ]; then PYTHON_BIN=./.venv/bin/python; "
-        "elif command -v python >/dev/null 2>&1; then PYTHON_BIN=python; "
-        "else PYTHON_BIN=python3; fi; "
-        '"$PYTHON_BIN" -m pytest --collect-only -q; '
+        "test -x .venv/bin/python; "
+        "./.venv/bin/python -m pytest --collect-only -q; "
         "status=$?; "
         'if [ "$status" -eq 5 ]; then '
         'echo "[pheragent] no pytest tests collected"; exit 0; '
@@ -282,17 +280,30 @@ def _safe_go_validation_command() -> str:
 
 def _python_runtime_validation_command() -> str:
     return (
-        'python3 -c "import sys; print(sys.version)" '
-        '|| python -c "import sys; print(sys.version)"'
+        "test -x .venv/bin/python && "
+        './.venv/bin/python -c "import sys; print(sys.executable); print(sys.version)" '
+        "&& ./.venv/bin/python -m pip --version"
     )
 
 
 def _python_dependency_validation_command() -> str:
     return (
-        "if [ -x .venv/bin/python ]; then PYTHON_BIN=./.venv/bin/python; "
-        "elif command -v python3 >/dev/null 2>&1; then PYTHON_BIN=python3; "
-        "else PYTHON_BIN=python; fi; "
-        '"$PYTHON_BIN" -c "import sys; print(sys.version)"'
+        "test -x .venv/bin/python && "
+        './.venv/bin/python -c "import sys; print(sys.executable); print(sys.version)"'
+    )
+
+
+def _node_runtime_validation_command() -> str:
+    return (
+        "test -x .pheragent-tools/bin/node && test -x .pheragent-tools/bin/npm && "
+        ".pheragent-tools/bin/node --version && .pheragent-tools/bin/npm --version"
+    )
+
+
+def _node_dependency_validation_command() -> str:
+    return (
+        "test -x .pheragent-tools/bin/node && test -x .pheragent-tools/bin/npm && "
+        "( test -d node_modules || test ! -f package.json )"
     )
 
 
@@ -335,16 +346,55 @@ fi
 
 def _python_runtime_script() -> str:
     return """
-echo "[pheragent] checking python runtime"
+echo "[pheragent] ensuring python runtime"
+ensure_python_packages() {
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends python3 python3-pip python3-venv
+  elif command -v apk >/dev/null 2>&1; then
+    apk add --no-cache python3 py3-pip py3-virtualenv
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y python3 python3-pip python3-virtualenv
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y python3 python3-pip python3-virtualenv
+  else
+    echo "python runtime missing components and no supported package manager is available" >&2
+    exit 127
+  fi
+}
+
+if ! command -v python3 >/dev/null 2>&1; then
+  ensure_python_packages
+fi
+
 if command -v python3 >/dev/null 2>&1; then
-  PYTHON_BIN=python3
-elif command -v python >/dev/null 2>&1; then
-  PYTHON_BIN=python
+  SYSTEM_PYTHON=python3
 else
   echo "python executable not found" >&2
   exit 127
 fi
-"$PYTHON_BIN" -c "import sys; print(sys.version)"
+
+if ! "$SYSTEM_PYTHON" -m pip --version >/dev/null 2>&1 || ! "$SYSTEM_PYTHON" -m venv -h >/dev/null 2>&1; then
+  ensure_python_packages
+  SYSTEM_PYTHON=python3
+fi
+
+if [ ! -x .venv/bin/python ]; then
+  rm -rf .venv
+  "$SYSTEM_PYTHON" -m venv .venv
+fi
+./.venv/bin/python -m pip install --upgrade pip setuptools wheel
+VENV_PYTHON="$(pwd)/.venv/bin/python"
+VENV_PIP="$(pwd)/.venv/bin/pip"
+ln -sf "$VENV_PYTHON" /usr/local/bin/python || true
+ln -sf "$VENV_PYTHON" /usr/local/bin/python3 || true
+if [ -x .venv/bin/pip ]; then
+  ln -sf "$VENV_PIP" /usr/local/bin/pip || true
+  ln -sf "$VENV_PIP" /usr/local/bin/pip3 || true
+fi
+./.venv/bin/python -c "import sys; print(sys.executable); print(sys.version)"
+./.venv/bin/python -m pip --version
 """
 
 
@@ -367,8 +417,36 @@ if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
     exit 127
   fi
 fi
-node --version
-npm --version
+mkdir -p .pheragent-tools/bin
+resolve_runtime_bin() {
+  name="$1"
+  fixed="$(pwd)/.pheragent-tools/bin/$name"
+  for candidate in "/usr/bin/$name" "/usr/local/bin/$name" "$(command -v "$name" 2>/dev/null || true)"; do
+    if [ -z "$candidate" ] || [ ! -x "$candidate" ]; then
+      continue
+    fi
+    real="$(readlink -f "$candidate" 2>/dev/null || true)"
+    if [ -z "$real" ]; then
+      real="$candidate"
+    fi
+    case "$real" in
+      "$fixed"|"$fixed"/*) continue ;;
+    esac
+    if [ -x "$real" ] && "$real" --version >/dev/null 2>&1; then
+      printf '%s\\n' "$real"
+      return 0
+    fi
+  done
+  return 1
+}
+NODE_BIN="$(resolve_runtime_bin node)"
+NPM_BIN="$(resolve_runtime_bin npm)"
+ln -sf "$NODE_BIN" .pheragent-tools/bin/node
+ln -sf "$NPM_BIN" .pheragent-tools/bin/npm
+ln -sf "$(pwd)/.pheragent-tools/bin/node" /usr/local/bin/node || true
+ln -sf "$(pwd)/.pheragent-tools/bin/npm" /usr/local/bin/npm || true
+.pheragent-tools/bin/node --version
+.pheragent-tools/bin/npm --version
 """
 
 
@@ -417,30 +495,32 @@ def _python_script(*, use_uv: bool) -> str:
 if [ -f uv.lock ] && command -v uv >/dev/null 2>&1; then
   echo "[pheragent] uv.lock detected; running uv sync"
   uv sync --all-extras --dev || uv sync
+  test -x .venv/bin/python
   exit 0
 fi
 """
     return (
         """
 echo "[pheragent] installing python dependencies"
-if command -v python3 >/dev/null 2>&1; then
-  PYTHON_BIN=python3
-elif command -v python >/dev/null 2>&1; then
-  PYTHON_BIN=python
-else
-  echo "python executable not found" >&2
-  exit 127
+if [ ! -x .venv/bin/python ]; then
+  if command -v python3 >/dev/null 2>&1; then
+    rm -rf .venv
+    python3 -m venv .venv
+  else
+    echo ".venv/bin/python not found and python3 is unavailable" >&2
+    exit 127
+  fi
 fi
 """
         + uv_branch
         + """
-"$PYTHON_BIN" -m pip --version >/dev/null 2>&1 || "$PYTHON_BIN" -m ensurepip --upgrade || true
-"$PYTHON_BIN" -m pip install --upgrade pip setuptools wheel
+./.venv/bin/python -m pip --version >/dev/null 2>&1 || ./.venv/bin/python -m ensurepip --upgrade || true
+./.venv/bin/python -m pip install --upgrade pip setuptools wheel
 if [ -f requirements.txt ]; then
-  "$PYTHON_BIN" -m pip install -r requirements.txt
+  ./.venv/bin/python -m pip install -r requirements.txt
 fi
 if [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; then
-  "$PYTHON_BIN" -m pip install -e '.[dev]' || "$PYTHON_BIN" -m pip install -e .
+  ./.venv/bin/python -m pip install -e '.[dev]' || ./.venv/bin/python -m pip install -e .
 fi
 """
     )
@@ -451,14 +531,16 @@ def _node_script(package_managers: list[str]) -> str:
     prefers_yarn = "yarn" in package_managers
     return f"""
 echo "[pheragent] installing node dependencies"
-node --version
-npm --version
+test -x .pheragent-tools/bin/node
+test -x .pheragent-tools/bin/npm
+.pheragent-tools/bin/node --version
+.pheragent-tools/bin/npm --version
 ensure_pnpm() {{
   if command -v pnpm >/dev/null 2>&1 && pnpm --version >/dev/null 2>&1; then
     return 0
   fi
   PNPM_PACKAGE=pnpm@9
-  NODE_VERSION=$(node -p "process.versions.node" 2>/dev/null || echo 0.0.0)
+  NODE_VERSION=$(.pheragent-tools/bin/node -p "process.versions.node" 2>/dev/null || echo 0.0.0)
   NODE_MAJOR=${{NODE_VERSION%%.*}}
   NODE_REST=${{NODE_VERSION#*.}}
   NODE_MINOR=${{NODE_REST%%.*}}
@@ -466,7 +548,7 @@ ensure_pnpm() {{
      {{ [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -ge 13 ]; }}; then
     PNPM_PACKAGE=pnpm
   fi
-  npm install -g "$PNPM_PACKAGE"
+  .pheragent-tools/bin/npm install -g "$PNPM_PACKAGE"
   pnpm --version
 }}
 if command -v corepack >/dev/null 2>&1; then
@@ -479,13 +561,13 @@ elif [ -f yarn.lock ] && {"true" if prefers_yarn else "false"}; then
   if command -v yarn >/dev/null 2>&1; then
     yarn install --frozen-lockfile || yarn install
   else
-    npm install -g yarn
+    .pheragent-tools/bin/npm install -g yarn
     yarn install --frozen-lockfile || yarn install
   fi
 elif [ -f package-lock.json ]; then
-  npm ci || npm install
+  .pheragent-tools/bin/npm ci || .pheragent-tools/bin/npm install
 else
-  npm install
+  .pheragent-tools/bin/npm install
 fi
 """
 
@@ -552,7 +634,7 @@ def _test_tooling_validation_command(context: RepoContext) -> str:
             _safe_python_validation_command(context, _python_runtime_validation_command())
         )
     if "node" in context.languages:
-        commands.append("node --version && npm --version")
+        commands.append(_node_runtime_validation_command())
     if "go" in context.languages:
         commands.append(_safe_go_validation_command())
     if "rust" in context.languages:
@@ -568,25 +650,18 @@ def _test_tooling_validation_command(context: RepoContext) -> str:
 def _python_test_tooling_script() -> str:
     return """
 echo "[pheragent] preparing python test tooling"
-if [ -x .venv/bin/python ]; then
-  PYTHON_BIN=./.venv/bin/python
-elif command -v python3 >/dev/null 2>&1; then
-  PYTHON_BIN=python3
-elif command -v python >/dev/null 2>&1; then
-  PYTHON_BIN=python
-else
-  echo "python executable not found" >&2
-  exit 127
-fi
-"$PYTHON_BIN" -m pytest --version >/dev/null 2>&1 || "$PYTHON_BIN" -m pip install pytest
+test -x .venv/bin/python
+./.venv/bin/python -m pytest --version >/dev/null 2>&1 || ./.venv/bin/python -m pip install pytest
 """
 
 
 def _node_test_tooling_script() -> str:
     return """
 echo "[pheragent] preparing node test tooling"
-node --version
-npm --version
+test -x .pheragent-tools/bin/node
+test -x .pheragent-tools/bin/npm
+.pheragent-tools/bin/node --version
+.pheragent-tools/bin/npm --version
 if command -v pnpm >/dev/null 2>&1; then pnpm --version; fi
 if command -v yarn >/dev/null 2>&1; then yarn --version; fi
 """
