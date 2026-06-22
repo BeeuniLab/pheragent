@@ -57,6 +57,10 @@ def _should_continue_llm_repair_failure(error: str | None) -> bool:
     return any(marker in normalized for marker in transient_markers)
 
 
+def _first_failed_block(blocks: list[CommandBlock]) -> CommandBlock | None:
+    return next((block for block in blocks if block.status == "failed"), None)
+
+
 class EnvironmentBuilder:
     def __init__(
         self,
@@ -253,8 +257,11 @@ class EnvironmentBuilder:
                         executions=executions,
                     )
                     if not block_ok:
-                        self._emit(f"run {self.run_id}: block {block.id} failed")
-                        result.error = f"block failed: {block.id}"
+                        failed_result_block = _first_failed_block(blocks) or block
+                        self._emit(
+                            f"run {self.run_id}: block {failed_result_block.id} failed"
+                        )
+                        result.error = f"block failed: {failed_result_block.id}"
                         result.final_image = current_image
                         self._save_manifest(result)
                         return result
@@ -439,6 +446,7 @@ class EnvironmentBuilder:
         executions: list[BlockExecution],
         all_blocks: list[CommandBlock] | None = None,
         workspace_image: str | None = None,
+        allow_earlier_root_recovery: bool = True,
     ) -> tuple[bool, str]:
         attempt = 1
         last_result = self._execute_block(runtime, block, attempt, baseline_image, executions)
@@ -516,27 +524,28 @@ class EnvironmentBuilder:
                 last_result=last_result,
             )
 
-        earlier_root_block = self._localized_earlier_root_block(
-            failed_block=block,
-            failure_result=last_result,
-            repo_context=repo_context,
-            baseline_image=baseline_image,
-            completed_blocks=completed_blocks,
-            executions=executions,
-            all_blocks=all_blocks,
-        )
-        if earlier_root_block is not None and all_blocks is not None:
-            return self._run_earlier_block_recovery(
-                runtime=runtime,
+        if allow_earlier_root_recovery:
+            earlier_root_block = self._localized_earlier_root_block(
                 failed_block=block,
-                root_block=earlier_root_block,
-                all_blocks=all_blocks,
-                repo_context=repo_context,
-                completed_blocks=completed_blocks,
-                checkpoints=checkpoints,
-                executions=executions,
                 failure_result=last_result,
+                repo_context=repo_context,
+                baseline_image=baseline_image,
+                completed_blocks=completed_blocks,
+                executions=executions,
+                all_blocks=all_blocks,
             )
+            if earlier_root_block is not None and all_blocks is not None:
+                return self._run_earlier_block_recovery(
+                    runtime=runtime,
+                    failed_block=block,
+                    root_block=earlier_root_block,
+                    all_blocks=all_blocks,
+                    repo_context=repo_context,
+                    completed_blocks=completed_blocks,
+                    checkpoints=checkpoints,
+                    executions=executions,
+                    failure_result=last_result,
+                )
 
         probe_failures = 0
         max_probe_failures = max(0, self.request.max_probe_failures)
@@ -924,17 +933,37 @@ class EnvironmentBuilder:
                 root_block = self.repair_planner.patch_block(root_block, repair)
                 self.store.update_block(root_block)
 
-            replay_ok, replay_image, replay_failure = self._replay_block_suffix(
-                runtime=runtime,
-                blocks=suffix,
-                baseline_image=root_baseline,
-                repaired_root_id=root_block.id,
-                checkpoints=checkpoints,
-                executions=executions,
-                attempt=repair_attempt + 1,
+            replay_ok, replay_image, replay_failed_block, replay_failure = (
+                self._replay_block_suffix(
+                    runtime=runtime,
+                    blocks=suffix,
+                    baseline_image=root_baseline,
+                    repaired_root_id=root_block.id,
+                    checkpoints=checkpoints,
+                    executions=executions,
+                    attempt=repair_attempt + 1,
+                )
             )
             if replay_ok:
                 return True, replay_image
+            if (
+                replay_failed_block is not None
+                and replay_failed_block.id != root_block.id
+                and replay_failure is not None
+            ):
+                return self._repair_replayed_suffix_failure(
+                    runtime=runtime,
+                    root_block=root_block,
+                    failed_index=failed_index,
+                    failed_block=replay_failed_block,
+                    failure_result=replay_failure,
+                    failure_baseline_image=replay_image,
+                    all_blocks=all_blocks,
+                    repo_context=repo_context,
+                    checkpoints=checkpoints,
+                    executions=executions,
+                    attempt=repair_attempt + 1,
+                )
             if replay_failure is not None:
                 last_result = replay_failure
 
@@ -943,6 +972,80 @@ class EnvironmentBuilder:
         self.store.update_block(failed_block)
         self._recreate_from_checkpoint(runtime, root_baseline)
         return False, root_baseline
+
+    def _repair_replayed_suffix_failure(
+        self,
+        *,
+        runtime: DockerRuntime,
+        root_block: CommandBlock,
+        failed_index: int,
+        failed_block: CommandBlock,
+        failure_result: CommandResult,
+        failure_baseline_image: str,
+        all_blocks: list[CommandBlock],
+        repo_context: RepoContext,
+        checkpoints: list[Checkpoint],
+        executions: list[BlockExecution],
+        attempt: int,
+    ) -> tuple[bool, str]:
+        current_failed_block = failed_block
+        current_failure_result = failure_result
+        current_image = failure_baseline_image
+        replay_attempt = attempt
+
+        while True:
+            failed_suffix_index = all_blocks.index(current_failed_block)
+            if failed_suffix_index > failed_index:
+                current_failed_block.status = "failed"
+                current_failed_block.last_error = tail_text(
+                    current_failure_result.combined_output,
+                    max_chars=4000,
+                )
+                self.store.update_block(current_failed_block)
+                return False, current_image
+
+            self._emit(
+                f"run {self.run_id}: suffix replay failed at block "
+                f"{current_failed_block.id}; repair that block instead of "
+                f"root-cause block {root_block.id}"
+            )
+            block_ok, current_image = self._run_block_with_repair(
+                runtime=runtime,
+                block=current_failed_block,
+                baseline_image=current_image,
+                repo_context=repo_context,
+                completed_blocks=all_blocks[:failed_suffix_index],
+                checkpoints=checkpoints,
+                executions=executions,
+                all_blocks=all_blocks,
+                workspace_image=None,
+                allow_earlier_root_recovery=False,
+            )
+            if not block_ok:
+                return False, current_image
+
+            next_index = failed_suffix_index + 1
+            if next_index > failed_index:
+                return True, current_image
+
+            replay_attempt += 1
+            replay_ok, current_image, next_failed_block, next_failure_result = (
+                self._replay_block_suffix(
+                    runtime=runtime,
+                    blocks=all_blocks[next_index : failed_index + 1],
+                    baseline_image=current_image,
+                    repaired_root_id="",
+                    checkpoints=checkpoints,
+                    executions=executions,
+                    attempt=replay_attempt,
+                )
+            )
+            if replay_ok:
+                return True, current_image
+            if next_failed_block is None or next_failure_result is None:
+                return False, current_image
+            current_failed_block = next_failed_block
+            current_failure_result = next_failure_result
 
     def _replay_block_suffix(
         self,
@@ -954,7 +1057,7 @@ class EnvironmentBuilder:
         checkpoints: list[Checkpoint],
         executions: list[BlockExecution],
         attempt: int,
-    ) -> tuple[bool, str, CommandResult | None]:
+    ) -> tuple[bool, str, CommandBlock | None, CommandResult | None]:
         current_image = baseline_image
         self._recreate_from_checkpoint(runtime, current_image)
         for block in blocks:
@@ -981,7 +1084,7 @@ class EnvironmentBuilder:
                     block.last_error = tail_text(finalize_result.combined_output, max_chars=4000)
                     self.store.update_block(block)
                     self._recreate_from_checkpoint(runtime, current_image)
-                    return False, current_image, finalize_result
+                    return False, current_image, block, finalize_result
                 checkpoint = runtime.commit(
                     block_id=block.id,
                     parent_image_ref=current_image,
@@ -999,8 +1102,8 @@ class EnvironmentBuilder:
             block.last_error = tail_text(result.combined_output, max_chars=4000)
             self.store.update_block(block)
             self._recreate_from_checkpoint(runtime, current_image)
-            return False, current_image, result
-        return True, current_image, None
+            return False, current_image, block, result
+        return True, current_image, None, None
 
     def _run_whole_script_forward(
         self,
@@ -2037,7 +2140,9 @@ cd "$PHERAGENT_WORKDIR"
 mkdir -p "$PHERAGENT_WORKDIR/.cache/pip" "$PHERAGENT_WORKDIR/.cache/uv"
 export PIP_CACHE_DIR="$PHERAGENT_WORKDIR/.cache/pip"
 export UV_CACHE_DIR="$PHERAGENT_WORKDIR/.cache/uv"
-export PATH="$PHERAGENT_WORKDIR/.venv/bin:$PHERAGENT_WORKDIR/.pheragent-tools/bin:$PHERAGENT_WORKDIR/node_modules/.bin:/usr/local/bin:$PATH"
+PHERAGENT_PATH_PREFIX="$PHERAGENT_WORKDIR/.venv/bin:$PHERAGENT_WORKDIR/.pheragent-tools/bin"
+PHERAGENT_PATH_PREFIX="$PHERAGENT_PATH_PREFIX:$PHERAGENT_WORKDIR/node_modules/.bin"
+export PATH="$PHERAGENT_PATH_PREFIX:/usr/local/bin:$PATH"
 
 if [ -x "$PHERAGENT_WORKDIR/.venv/bin/python" ]; then
   ln -sf "$PHERAGENT_WORKDIR/.venv/bin/python" /usr/local/bin/python || true

@@ -11,8 +11,8 @@ from .models import CommandBlock, LLMApiMode, RepoContext, to_jsonable
 from .planner import (
     BlockPlanner,
     RuleBasedBlockPlanner,
-    _node_runtime_validation_command,
     _node_runtime_script,
+    _node_runtime_validation_command,
     _preflight_script,
     _python_runtime_script,
 )

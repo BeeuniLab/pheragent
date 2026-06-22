@@ -375,7 +375,8 @@ else
   exit 127
 fi
 
-if ! "$SYSTEM_PYTHON" -m pip --version >/dev/null 2>&1 || ! "$SYSTEM_PYTHON" -m venv -h >/dev/null 2>&1; then
+if ! "$SYSTEM_PYTHON" -m pip --version >/dev/null 2>&1 || \
+   ! "$SYSTEM_PYTHON" -m venv -h >/dev/null 2>&1; then
   ensure_python_packages
   SYSTEM_PYTHON=python3
 fi
@@ -421,7 +422,10 @@ mkdir -p .pheragent-tools/bin
 resolve_runtime_bin() {
   name="$1"
   fixed="$(pwd)/.pheragent-tools/bin/$name"
-  for candidate in "/usr/bin/$name" "/usr/local/bin/$name" "$(command -v "$name" 2>/dev/null || true)"; do
+  for candidate in \
+    "/usr/bin/$name" \
+    "/usr/local/bin/$name" \
+    "$(command -v "$name" 2>/dev/null || true)"; do
     if [ -z "$candidate" ] || [ ! -x "$candidate" ]; then
       continue
     fi
@@ -514,7 +518,8 @@ fi
 """
         + uv_branch
         + """
-./.venv/bin/python -m pip --version >/dev/null 2>&1 || ./.venv/bin/python -m ensurepip --upgrade || true
+./.venv/bin/python -m pip --version >/dev/null 2>&1 || \
+  ./.venv/bin/python -m ensurepip --upgrade || true
 ./.venv/bin/python -m pip install --upgrade pip setuptools wheel
 if [ -f requirements.txt ]; then
   ./.venv/bin/python -m pip install -r requirements.txt

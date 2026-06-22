@@ -683,11 +683,20 @@ def _heuristic_failure_localization(
     if context is None or not context.previous_blocks:
         return FailureLocalization(block.id, "no previous successful block context")
     output = result.combined_output.lower()
+    local_rationale = _failed_block_localization_rationale(block, output)
+    if local_rationale:
+        return FailureLocalization(block.id, local_rationale)
     candidates: list[tuple[tuple[str, ...], tuple[str, ...], str]] = [
         (
             ("python", "venv"),
-            ("python: not found", "python3: not found", "no module named", "pytest: not found"),
-            "python runtime/dependency evidence matched the failure output",
+            (
+                "python: not found",
+                "python3: not found",
+                "python executable not found",
+                "no module named pip",
+                "ensurepip is not available",
+            ),
+            "python runtime/venv evidence matched the failure output",
         ),
         (
             ("node", "npm", "pnpm", "yarn"),
@@ -711,7 +720,16 @@ def _heuristic_failure_localization(
         ),
         (
             ("system", "native", "build-config"),
-            ("gcc: not found", "cc: not found", "make: not found", "pkg-config: not found"),
+            (
+                "gcc: not found",
+                "cc: not found",
+                "make: not found",
+                "pkg-config: not found",
+                "cannot open shared object file",
+                "libgl.so.1",
+                "libegl.so.1",
+                "libglib-2.0.so.0",
+            ),
             "system/native build evidence matched the failure output",
         ),
     ]
@@ -722,6 +740,31 @@ def _heuristic_failure_localization(
         if localized is not None:
             return FailureLocalization(localized.id, rationale)
     return FailureLocalization(block.id, "failure appears local to the failed block")
+
+
+def _failed_block_localization_rationale(block: CommandBlock, output: str) -> str | None:
+    block_text = f"{block.id} {block.title} {block.goal}".lower()
+    test_tooling_block = any(
+        token in block_text for token in ("test", "tool", "validation", "prep")
+    )
+    if (
+        ("unrecognized arguments" in output and "--collect-only" in output)
+        or ("systemexit: 2" in output and "--collect-only" in output)
+    ):
+        return "pytest collection triggered project CLI argument parsing in the failed block"
+
+    local_test_modules = (
+        "no module named pytest",
+        "no module named 'pytest'",
+        "no module named pluggy",
+        "no module named 'pluggy'",
+        "no module named pytest_mock",
+        "no module named 'pytest_mock'",
+    )
+    if test_tooling_block and any(token in output for token in local_test_modules):
+        return "test tooling dependency is missing in the failed test/tooling block"
+
+    return None
 
 
 def _latest_previous_block_matching(
@@ -1171,11 +1214,26 @@ Return strict JSON only:
 Rules:
 - The failed block is where the symptom appeared. It may not be the block that
   introduced the faulty state.
+- Be conservative. Return an earlier block only when the logs strongly show
+  that earlier block introduced the faulty environment state. If evidence is
+  ambiguous, keep the failed block.
 - Use the failed block, stdout/stderr tails, previous successful blocks, recent
   execution evidence, probe results, and heuristic hints.
 - If an earlier runtime, system package, dependency, native-build, or tooling
   block should have produced the missing or inconsistent resource, return that
   earlier block id.
+- Missing GUI/OpenCV/Qt shared libraries such as libGL.so.1, libEGL.so.1, or
+  libglib-2.0.so.0 are OS/runtime-library issues, not Python-runtime issues.
+  Select an earlier system/native package block only if one clearly owns OS
+  packages; otherwise keep the failed validation/test-tooling block.
+- If pytest collection triggers the project CLI (for example SystemExit: 2 or
+  "unrecognized arguments: --collect-only"), keep the failed validation or
+  test-tooling block. This is a validation/tooling adjustment, not an earlier
+  dependency/runtime rollback.
+- Missing pytest, pluggy, pytest-mock, or similar test-tooling modules in a
+  validation/test-prep block should usually stay with that failed block unless
+  a previous block explicitly owned test-tool installation and the evidence is
+  unambiguous.
 - If the evidence is weak or the failure is local to the failed block, return
   the failed block id.
 - Never invent block ids. Choose only from repair_context.previous_blocks plus

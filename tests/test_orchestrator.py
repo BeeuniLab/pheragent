@@ -183,7 +183,8 @@ def test_environment_builder_inlines_inherited_prelude_in_planned_blocks(
 
     script = (result.scripts_dir / "01-custom.sh").read_text(encoding="utf-8")
     assert script.count("[pheragent] inherited environment prelude begin") == 1
-    assert 'export PATH="$PHERAGENT_WORKDIR/.venv/bin:' in script
+    assert 'PHERAGENT_PATH_PREFIX="$PHERAGENT_WORKDIR/.venv/bin:' in script
+    assert 'export PATH="$PHERAGENT_PATH_PREFIX:/usr/local/bin:$PATH"' in script
     assert 'ln -sf "$PHERAGENT_WORKDIR/.venv/bin/python" /usr/local/bin/python' in script
     assert script.index("[pheragent] inherited environment prelude begin") < script.index(
         "echo custom"
@@ -368,6 +369,168 @@ def test_environment_builder_repairs_earlier_localized_block_and_replays_suffix(
     assert "install-correct-runtime" in (
         result.scripts_dir / "20-runtime.sh"
     ).read_text(encoding="utf-8")
+
+
+def test_environment_builder_repairs_suffix_block_when_root_replay_moves_failure(
+    tmp_path: Path,
+) -> None:
+    class MovingFailureRuntime(FakeRuntime):
+        def __init__(self, request: BuildRequest, run_id: str):
+            super().__init__(request, run_id)
+            self.has_correct_runtime = False
+            self.has_test_libs = False
+            self.image_state: dict[str, tuple[bool, bool]] = {}
+
+        def commit(
+            self,
+            *,
+            block_id: str | None,
+            parent_image_ref: str | None,
+            kind: str,
+        ) -> Checkpoint:
+            checkpoint = super().commit(
+                block_id=block_id,
+                parent_image_ref=parent_image_ref,
+                kind=kind,
+            )
+            self.image_state[checkpoint.image_ref] = (
+                self.has_correct_runtime,
+                self.has_test_libs,
+            )
+            return checkpoint
+
+        def recreate_from(self, image_ref: str) -> str:
+            self.has_correct_runtime, self.has_test_libs = self.image_state.get(
+                image_ref,
+                (False, False),
+            )
+            return super().recreate_from(image_ref)
+
+        def execute_script(self, script_path: Path, *, timeout: float) -> CommandResult:
+            del timeout
+            self.block_runs += 1
+            script = script_path.read_text(encoding="utf-8")
+            if script_path.name == "20-runtime.sh":
+                if "install-correct-runtime" in script:
+                    self.has_correct_runtime = True
+                return CommandResult(exit_code=0, stdout="runtime ok")
+            if script_path.name == "50-validation.sh":
+                if "install-test-libs" in script:
+                    self.has_test_libs = True
+                if not self.has_correct_runtime:
+                    return CommandResult(exit_code=1, stderr="wrong runtime selected")
+                if not self.has_test_libs:
+                    return CommandResult(
+                        exit_code=1,
+                        stderr="ImportError: libGL.so.1: cannot open shared object file",
+                    )
+            return CommandResult(exit_code=0, stdout="ok")
+
+        def execute_command(self, command: str, *, timeout: float) -> CommandResult:
+            if "install-correct-runtime" in command:
+                self.has_correct_runtime = True
+                return CommandResult(exit_code=0, stdout="installed correct runtime")
+            if "install-test-libs" in command:
+                self.has_test_libs = True
+                return CommandResult(exit_code=0, stdout="installed test libs")
+            return super().execute_command(command, timeout=timeout)
+
+    class MovingFailureLLMRepairPlanner:
+        def __init__(self) -> None:
+            self.localized_blocks: list[str] = []
+            self.repaired_blocks: list[str] = []
+
+        def localize_failure(self, block, result, *, context=None, heuristic_hints=None):
+            del result, context, heuristic_hints
+            self.localized_blocks.append(block.id)
+            return FailureLocalization(
+                root_cause_block_id="20-runtime",
+                rationale="first validation failure came from runtime choice",
+            )
+
+        def suggest(self, block, result, *, context=None, heuristic_hints=None):
+            del result, context, heuristic_hints
+            self.repaired_blocks.append(block.id)
+            if block.id == "20-runtime":
+                return [
+                    RepairCommand(
+                        title="Install correct runtime",
+                        command="install-correct-runtime",
+                        patch_script="echo install-correct-runtime",
+                    )
+                ]
+            if block.id == "50-validation":
+                return [
+                    RepairCommand(
+                        title="Install validation runtime libs",
+                        command="install-test-libs",
+                        patch_script="echo install-test-libs",
+                    )
+                ]
+            return []
+
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    blocks = [
+        CommandBlock(
+            id="00-preflight",
+            title="Preflight",
+            goal="inspect",
+            script="#!/bin/sh\necho preflight\n",
+            order=0,
+        ),
+        CommandBlock(
+            id="20-runtime",
+            title="Runtime",
+            goal="install runtime",
+            script="#!/bin/sh\necho runtime\n",
+            order=20,
+        ),
+        CommandBlock(
+            id="30-deps",
+            title="Dependencies",
+            goal="install deps",
+            script="#!/bin/sh\necho deps\n",
+            order=30,
+        ),
+        CommandBlock(
+            id="50-validation",
+            title="Validation",
+            goal="validate runtime",
+            script="#!/bin/sh\necho validate\n",
+            order=50,
+        ),
+    ]
+    llm_planner = MovingFailureLLMRepairPlanner()
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="moving-suffix-failure",
+        max_probe_failures=0,
+        max_repair_attempts=2,
+        ablation_mode="without-final-clean-replay",
+    )
+
+    result = EnvironmentBuilder(
+        request,
+        planner=StaticPlanner(blocks),
+        repair_planner=RepairPlanner(llm_planner=llm_planner),
+        runtime_factory=MovingFailureRuntime,
+    ).build()
+
+    assert result.ok
+    assert llm_planner.localized_blocks == ["50-validation"]
+    assert llm_planner.repaired_blocks == ["20-runtime", "50-validation"]
+    assert "install-correct-runtime" in (
+        result.scripts_dir / "20-runtime.sh"
+    ).read_text(encoding="utf-8")
+    assert "install-test-libs" in (
+        result.scripts_dir / "50-validation.sh"
+    ).read_text(encoding="utf-8")
+    assert next(block for block in result.blocks if block.id == "50-validation").status == (
+        "succeeded"
+    )
 
 
 def test_environment_builder_full_ablation_runs_final_clean_replay(tmp_path: Path) -> None:

@@ -16,6 +16,7 @@ from pheragent.repair import (
     OpenAIResponsesRepairPlanner,
     RepairCommand,
     RepairPlanner,
+    _heuristic_failure_localization,
     _heuristic_repair_hints,
     make_repair_planner,
 )
@@ -182,6 +183,66 @@ def test_repair_hints_relax_dunder_version_validation() -> None:
     assert suggestions
     assert suggestions[0].command == "true"
     assert patched.validation_command == 'uv run python -c "import flask; print(flask)"'
+
+
+def test_failure_localization_keeps_test_tooling_module_failures_local() -> None:
+    previous = CommandBlock(
+        id="30-python-deps",
+        title="Python Dependencies",
+        goal="Install Python package requirements",
+        script="#!/bin/sh\n.venv/bin/python -m pip install -r requirements.txt\n",
+        status="succeeded",
+    )
+    block = CommandBlock(
+        id="50-test-tooling",
+        title="Test Tooling",
+        goal="Install test runner and validate collection",
+        script="#!/bin/sh\n.venv/bin/python -m pytest --collect-only -q\n",
+    )
+    result = CommandResult(
+        exit_code=1,
+        stderr="/workspace/repo/.venv/bin/python: No module named pytest_mock",
+    )
+    context = RepairContext(
+        repo_context=RepoContext(repo_path=Path("/repo")),
+        checkpoint_before="fake:30-python-deps-success",
+        previous_blocks=[previous],
+    )
+
+    localization = _heuristic_failure_localization(block, result, context)
+
+    assert localization is not None
+    assert localization.root_cause_block_id == "50-test-tooling"
+
+
+def test_failure_localization_keeps_pytest_argparse_failures_local() -> None:
+    previous = CommandBlock(
+        id="30-python-deps",
+        title="Python Dependencies",
+        goal="Install Python package requirements",
+        script="#!/bin/sh\n.venv/bin/python -m pip install -r requirements.txt\n",
+        status="succeeded",
+    )
+    block = CommandBlock(
+        id="50-test-tooling",
+        title="Test Tooling",
+        goal="Run pytest collection",
+        script="#!/bin/sh\n.venv/bin/python -m pytest --collect-only -q\n",
+    )
+    result = CommandResult(
+        exit_code=2,
+        stderr="__main__.py: error: unrecognized arguments: --collect-only -q",
+    )
+    context = RepairContext(
+        repo_context=RepoContext(repo_path=Path("/repo")),
+        checkpoint_before="fake:30-python-deps-success",
+        previous_blocks=[previous],
+    )
+
+    localization = _heuristic_failure_localization(block, result, context)
+
+    assert localization is not None
+    assert localization.root_cause_block_id == "50-test-tooling"
 
 
 def test_patch_block_applies_script_when_validation_is_replaced() -> None:
@@ -403,22 +464,28 @@ def test_openai_responses_repair_parser_filters_pure_diagnostic_repairs() -> Non
     planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
 
     repairs = planner._parse_repairs(
-        """
-        {
-          "repairs": [
+        json.dumps(
             {
-              "title": "Check python dev",
-              "command": "dpkg-query -W python3-dev build-essential",
-              "patch_script": "dpkg-query -W python3-dev build-essential"
-            },
-            {
-              "title": "Install python dev",
-              "command": "apt-get update && apt-get install -y --no-install-recommends python3-dev build-essential",
-              "patch_script": "apt-get update && apt-get install -y --no-install-recommends python3-dev build-essential"
+                "repairs": [
+                    {
+                        "title": "Check python dev",
+                        "command": "dpkg-query -W python3-dev build-essential",
+                        "patch_script": "dpkg-query -W python3-dev build-essential",
+                    },
+                    {
+                        "title": "Install python dev",
+                        "command": (
+                            "apt-get update && apt-get install -y "
+                            "--no-install-recommends python3-dev build-essential"
+                        ),
+                        "patch_script": (
+                            "apt-get update && apt-get install -y "
+                            "--no-install-recommends python3-dev build-essential"
+                        ),
+                    },
+                ]
             }
-          ]
-        }
-        """
+        )
     )
 
     assert len(repairs) == 1
@@ -430,17 +497,25 @@ def test_openai_responses_repair_parser_allows_probe_plus_durable_repair() -> No
     planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
 
     repairs = planner._parse_repairs(
-        """
-        {
-          "repairs": [
+        json.dumps(
             {
-              "title": "Install missing python dev package",
-              "command": "dpkg-query -W python3-dev || apt-get update && apt-get install -y --no-install-recommends python3-dev build-essential && dpkg-query -W python3-dev build-essential",
-              "patch_script": "apt-get update && apt-get install -y --no-install-recommends python3-dev build-essential"
+                "repairs": [
+                    {
+                        "title": "Install missing python dev package",
+                        "command": (
+                            "dpkg-query -W python3-dev || apt-get update && "
+                            "apt-get install -y --no-install-recommends "
+                            "python3-dev build-essential && dpkg-query -W "
+                            "python3-dev build-essential"
+                        ),
+                        "patch_script": (
+                            "apt-get update && apt-get install -y "
+                            "--no-install-recommends python3-dev build-essential"
+                        ),
+                    }
+                ]
             }
-          ]
-        }
-        """
+        )
     )
 
     assert len(repairs) == 1

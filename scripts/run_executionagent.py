@@ -194,7 +194,11 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         default="uv run python -m pheragent",
         help="Command prefix used to invoke pheragent.",
     )
-    parser.add_argument("--projects-file", type=Path, default=Path("tests/projects/executionAgent.txt"))
+    parser.add_argument(
+        "--projects-file",
+        type=Path,
+        default=Path("tests/projects/executionAgent.txt"),
+    )
     parser.add_argument(
         "--oracle-root",
         type=Path,
