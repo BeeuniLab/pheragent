@@ -328,6 +328,28 @@ def test_build_command_passes_task_description(tmp_path: Path) -> None:
     assert command[jobs_index + 1] == "1"
 
 
+def test_build_command_accepts_regenerate_ablation(tmp_path: Path) -> None:
+    run_setupbench = load_run_setupbench()
+    args = run_setupbench.parse_args(
+        ["--no-require-uv", "--ablation", "block-rollback-regenerate"]
+    )
+
+    command = run_setupbench.build_command(
+        args=args,
+        runner=["python", "-m", "pheragent"],
+        project_file=tmp_path / "project.txt",
+        project_slug="openai-whisper",
+        oracle_file=tmp_path / "oracle.json",
+        task_description=None,
+        projects_root=tmp_path / "projects",
+        state_root=tmp_path / "state",
+        base_dockerfile=tmp_path / "Dockerfile",
+    )
+
+    ablation_index = command.index("--ablation")
+    assert command[ablation_index + 1] == "block-rollback-regenerate"
+
+
 def test_run_project_retries_failed_project_and_returns_final_payload(
     tmp_path: Path,
     monkeypatch,

@@ -4,6 +4,7 @@ import re
 import shlex
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from .analyzer import RepoAnalyzer
@@ -25,9 +26,17 @@ from .models import (
 from .oracle import load_oracle_commands
 from .planner import BlockPlanner
 from .repair import RepairCommand, RepairPlanner, RepairProbeCommand, make_repair_planner
-from .utils import new_run_id, tail_text
+from .utils import new_run_id, shell_script, tail_text
 
 RuntimeFactory = Callable[[BuildRequest, str], DockerRuntime]
+
+
+@dataclass(slots=True)
+class _CommandExecutionOutcome:
+    result: CommandResult
+    commands: list[str]
+    failed_command_index: int | None
+    resume_image: str
 
 
 def _should_continue_llm_repair_failure(error: str | None) -> bool:
@@ -422,6 +431,17 @@ class EnvironmentBuilder:
         all_blocks: list[CommandBlock] | None = None,
         workspace_image: str | None = None,
     ) -> tuple[bool, str]:
+        if self.request.ablation_mode == "single-command-rollback-regenerate":
+            return self._run_block_command_regenerate(
+                runtime=runtime,
+                block=block,
+                baseline_image=baseline_image,
+                repo_context=repo_context,
+                completed_blocks=completed_blocks,
+                checkpoints=checkpoints,
+                executions=executions,
+            )
+
         attempt = 1
         last_result = self._execute_block(runtime, block, attempt, baseline_image, executions)
         validation_result = self._validate_block(
@@ -495,6 +515,18 @@ class EnvironmentBuilder:
                 completed_blocks=completed_blocks,
                 checkpoints=checkpoints,
                 executions=executions,
+                last_result=last_result,
+            )
+
+        if self.request.ablation_mode == "block-rollback-regenerate":
+            return self._run_block_regenerate_recovery(
+                runtime=runtime,
+                block=block,
+                baseline_image=baseline_image,
+                repo_context=repo_context,
+                completed_blocks=completed_blocks,
+                executions=executions,
+                checkpoints=checkpoints,
                 last_result=last_result,
             )
 
@@ -956,7 +988,7 @@ class EnvironmentBuilder:
         self._mark_whole_script_blocks_failed(all_blocks, last_result)
         return False, workspace_image
 
-    def _run_block_command_recovery(
+    def _run_block_regenerate_recovery(
         self,
         *,
         runtime: DockerRuntime,
@@ -972,13 +1004,460 @@ class EnvironmentBuilder:
         max_probe_failures = max(0, self.request.max_probe_failures)
         probe_disabled = max_probe_failures == 0
         strategy_notes = [
-            "single-command-recovery mode: the failed block already ran in the "
-            "current live container.",
-            "Return a local recovery command for this live container state. "
-            "The orchestrator will not roll back to the block checkpoint, will "
-            "not patch the block script, and will not replay the block before "
-            "validation.",
+            "block-rollback-regenerate mode: do not return a one-off local repair.",
+            "Return a complete replacement script for the failed block only. "
+            "The orchestrator will replace the failed block script, roll back "
+            "to the block checkpoint, and rerun the whole block from there.",
         ]
+        for repair_attempt in range(1, self.request.max_repair_attempts + 1):
+            repair_context = self._repair_context(
+                repo_context=repo_context,
+                baseline_image=baseline_image,
+                completed_blocks=completed_blocks,
+                executions=executions,
+                strategy_notes=strategy_notes,
+            )
+            probes: list[RepairProbeCommand] = []
+            if not probe_disabled and probe_failures < max_probe_failures:
+                probes = self.repair_planner.propose_probes(
+                    block,
+                    last_result,
+                    context=repair_context,
+                )
+                self._record_llm_probe_status(
+                    block=block,
+                    attempt=repair_attempt,
+                    baseline_image=baseline_image,
+                    executions=executions,
+                )
+                probe_error = getattr(self.repair_planner, "last_probe_error", None)
+                if probe_error:
+                    probe_failures += 1
+                    self._emit(
+                        f"run {self.run_id}: block {block.id} LLM probe attempt "
+                        f"{repair_attempt} failed ({probe_failures}/{max_probe_failures}): "
+                        f"{tail_text(probe_error, max_chars=500)}"
+                    )
+                    if (
+                        probe_failures < max_probe_failures
+                        and repair_attempt < self.request.max_repair_attempts
+                    ):
+                        continue
+                    self._emit(
+                        f"run {self.run_id}: block {block.id} continue regeneration "
+                        "without probes"
+                    )
+                    probes = []
+                elif (
+                    not probes
+                    and getattr(self.repair_planner, "last_probe_raw_response", None)
+                    is not None
+                ):
+                    probe_disabled = True
+                    self._emit(
+                        f"run {self.run_id}: block {block.id} LLM requested no probes; "
+                        "skip future probes"
+                    )
+            probe_results = self._run_repair_probes(
+                runtime=runtime,
+                block=block,
+                baseline_image=baseline_image,
+                attempt=repair_attempt,
+                probes=probes,
+                executions=executions,
+            )
+            if probe_results:
+                repair_context = self._repair_context(
+                    repo_context=repo_context,
+                    baseline_image=baseline_image,
+                    completed_blocks=completed_blocks,
+                    executions=executions,
+                    probe_results=probe_results,
+                    strategy_notes=strategy_notes,
+                )
+            suggestions = self.repair_planner.suggest(
+                block,
+                last_result,
+                context=repair_context,
+            )
+            self._record_llm_repair_status(
+                block=block,
+                attempt=repair_attempt,
+                baseline_image=baseline_image,
+                executions=executions,
+                ok=bool(suggestions),
+            )
+            if not suggestions:
+                error = getattr(self.repair_planner, "last_llm_error", None)
+                if error:
+                    self._emit(
+                        f"run {self.run_id}: block {block.id} LLM repair attempt "
+                        f"{repair_attempt} failed: {tail_text(error, max_chars=500)}"
+                    )
+                if _should_continue_llm_repair_failure(error):
+                    continue
+                break
+
+            repair = suggestions[min(repair_attempt - 1, len(suggestions) - 1)]
+            self._emit(
+                f"run {self.run_id}: block {block.id} regenerate attempt {repair_attempt}"
+            )
+            block = self._replace_block_script(
+                block,
+                replacement_script=repair.patch_script,
+                validation_command=repair.patch_validation_command,
+            )
+            self.store.update_block(block)
+            self._recreate_from_checkpoint(runtime, baseline_image)
+            execute_attempt = repair_attempt + 1
+            last_result = self._execute_block(
+                runtime,
+                block,
+                execute_attempt,
+                baseline_image,
+                executions,
+            )
+            validation_result = self._validate_block(
+                runtime,
+                block,
+                execute_attempt,
+                baseline_image,
+                executions,
+            )
+            if last_result.ok and (validation_result is None or validation_result.ok):
+                finalize_result = self._finalize_checkpoint_tools(
+                    runtime=runtime,
+                    block=block,
+                    attempt=execute_attempt,
+                    baseline_image=baseline_image,
+                    executions=executions,
+                )
+                if not finalize_result.ok:
+                    block.status = "failed"
+                    block.last_error = tail_text(finalize_result.combined_output, max_chars=4000)
+                    self.store.update_block(block)
+                    self._recreate_from_checkpoint(runtime, baseline_image)
+                    return False, baseline_image
+                checkpoint = runtime.commit(
+                    block_id=block.id,
+                    parent_image_ref=baseline_image,
+                    kind="repaired",
+                )
+                checkpoints.append(checkpoint)
+                block.success_checkpoint = checkpoint.image_ref
+                block.status = "succeeded"
+                self.store.update_block(block)
+                self._emit(
+                    f"run {self.run_id}: block {block.id} regenerated checkpoint "
+                    f"{checkpoint.image_ref}"
+                )
+                return True, checkpoint.image_ref
+            if last_result.ok and validation_result is not None:
+                last_result = validation_result
+
+        block.status = "failed"
+        block.last_error = tail_text(last_result.combined_output, max_chars=4000)
+        self.store.update_block(block)
+        self._recreate_from_checkpoint(runtime, baseline_image)
+        return False, baseline_image
+
+    def _run_block_command_regenerate(
+        self,
+        *,
+        runtime: DockerRuntime,
+        block: CommandBlock,
+        baseline_image: str,
+        repo_context: RepoContext,
+        completed_blocks: list[CommandBlock],
+        checkpoints: list[Checkpoint],
+        executions: list[BlockExecution],
+    ) -> tuple[bool, str]:
+        block.status = "running"
+        self.store.update_block(block)
+        execution = self._execute_block_command_range(
+            runtime=runtime,
+            block=block,
+            attempt=1,
+            start_index=0,
+            checkpoint_image=baseline_image,
+            checkpoints=checkpoints,
+            executions=executions,
+            checkpoint_each_command=True,
+        )
+        if execution.result.ok:
+            validation_result = self._validate_block(
+                runtime,
+                block,
+                1,
+                baseline_image,
+                executions,
+            )
+            if validation_result is None or validation_result.ok:
+                finalize_result = self._finalize_checkpoint_tools(
+                    runtime=runtime,
+                    block=block,
+                    attempt=1,
+                    baseline_image=baseline_image,
+                    executions=executions,
+                )
+                if not finalize_result.ok:
+                    block.status = "failed"
+                    block.last_error = tail_text(finalize_result.combined_output, max_chars=4000)
+                    self.store.update_block(block)
+                    self._recreate_from_checkpoint(runtime, baseline_image)
+                    return False, baseline_image
+                checkpoint = runtime.commit(
+                    block_id=block.id,
+                    parent_image_ref=baseline_image,
+                    kind="success",
+                )
+                checkpoints.append(checkpoint)
+                block.success_checkpoint = checkpoint.image_ref
+                block.status = "succeeded"
+                self.store.update_block(block)
+                self._emit(
+                    f"run {self.run_id}: block {block.id} checkpoint {checkpoint.image_ref}"
+                )
+                return True, checkpoint.image_ref
+            return self._run_block_regenerate_recovery(
+                runtime=runtime,
+                block=block,
+                baseline_image=baseline_image,
+                repo_context=repo_context,
+                completed_blocks=completed_blocks,
+                checkpoints=checkpoints,
+                executions=executions,
+                last_result=validation_result,
+            )
+
+        failed_command_index = execution.failed_command_index
+        if failed_command_index is None:
+            block.status = "failed"
+            block.last_error = tail_text(execution.result.combined_output, max_chars=4000)
+            self.store.update_block(block)
+            self._recreate_from_checkpoint(runtime, baseline_image)
+            return False, baseline_image
+
+        last_result = execution.result
+        probe_failures = 0
+        max_probe_failures = max(0, self.request.max_probe_failures)
+        probe_disabled = max_probe_failures == 0
+        for repair_attempt in range(1, self.request.max_repair_attempts + 1):
+            failed_command = _split_shell_script_commands(block.script)[failed_command_index]
+            strategy_notes = [
+                "single-command-rollback-regenerate mode: treat each shell "
+                "command as a durable unit.",
+                "Return a replacement command or shell chunk for the failed "
+                "command only. The orchestrator will replace the failed command "
+                "inside the block script, roll back to the previous command "
+                "checkpoint, and resume replay from that command.",
+                f"Failed command {failed_command_index + 1}: {failed_command}",
+            ]
+            repair_context = self._repair_context(
+                repo_context=repo_context,
+                baseline_image=execution.resume_image,
+                completed_blocks=completed_blocks,
+                executions=executions,
+                strategy_notes=strategy_notes,
+            )
+            probes: list[RepairProbeCommand] = []
+            if not probe_disabled and probe_failures < max_probe_failures:
+                probes = self.repair_planner.propose_probes(
+                    block,
+                    last_result,
+                    context=repair_context,
+                )
+                self._record_llm_probe_status(
+                    block=block,
+                    attempt=repair_attempt,
+                    baseline_image=execution.resume_image,
+                    executions=executions,
+                )
+                probe_error = getattr(self.repair_planner, "last_probe_error", None)
+                if probe_error:
+                    probe_failures += 1
+                    self._emit(
+                        f"run {self.run_id}: block {block.id} LLM probe attempt "
+                        f"{repair_attempt} failed ({probe_failures}/{max_probe_failures}): "
+                        f"{tail_text(probe_error, max_chars=500)}"
+                    )
+                    if (
+                        probe_failures < max_probe_failures
+                        and repair_attempt < self.request.max_repair_attempts
+                    ):
+                        continue
+                    self._emit(
+                        f"run {self.run_id}: block {block.id} continue regeneration "
+                        "without probes"
+                    )
+                    probes = []
+                elif (
+                    not probes
+                    and getattr(self.repair_planner, "last_probe_raw_response", None)
+                    is not None
+                ):
+                    probe_disabled = True
+                    self._emit(
+                        f"run {self.run_id}: block {block.id} LLM requested no probes; "
+                        "skip future probes"
+                    )
+            probe_results = self._run_repair_probes(
+                runtime=runtime,
+                block=block,
+                baseline_image=execution.resume_image,
+                attempt=repair_attempt,
+                probes=probes,
+                executions=executions,
+            )
+            if probe_results:
+                repair_context = self._repair_context(
+                    repo_context=repo_context,
+                    baseline_image=execution.resume_image,
+                    completed_blocks=completed_blocks,
+                    executions=executions,
+                    probe_results=probe_results,
+                    strategy_notes=strategy_notes,
+                )
+            suggestions = self.repair_planner.suggest(
+                block,
+                last_result,
+                context=repair_context,
+            )
+            self._record_llm_repair_status(
+                block=block,
+                attempt=repair_attempt,
+                baseline_image=execution.resume_image,
+                executions=executions,
+                ok=bool(suggestions),
+            )
+            if not suggestions:
+                error = getattr(self.repair_planner, "last_llm_error", None)
+                if error:
+                    self._emit(
+                        f"run {self.run_id}: block {block.id} LLM repair attempt "
+                        f"{repair_attempt} failed: {tail_text(error, max_chars=500)}"
+                    )
+                if _should_continue_llm_repair_failure(error):
+                    continue
+                break
+
+            repair = suggestions[min(repair_attempt - 1, len(suggestions) - 1)]
+            self._emit(
+                f"run {self.run_id}: block {block.id} command regenerate attempt "
+                f"{repair_attempt}"
+            )
+            block = self._replace_block_command(
+                block,
+                command_index=failed_command_index,
+                replacement_command=repair.patch_script,
+                validation_command=repair.patch_validation_command,
+            )
+            self.store.update_block(block)
+            runtime.recreate_from(execution.resume_image)
+            replay = self._execute_block_command_range(
+                runtime=runtime,
+                block=block,
+                attempt=repair_attempt + 1,
+                start_index=failed_command_index,
+                checkpoint_image=execution.resume_image,
+                checkpoints=checkpoints,
+                executions=executions,
+                checkpoint_each_command=True,
+            )
+            last_result = replay.result
+            if not replay.result.ok:
+                execution = replay
+                if replay.failed_command_index is not None:
+                    failed_command_index = replay.failed_command_index
+                continue
+
+            validation_result = self._validate_block(
+                runtime,
+                block,
+                repair_attempt + 1,
+                baseline_image,
+                executions,
+            )
+            if validation_result is not None and not validation_result.ok:
+                return self._run_block_regenerate_recovery(
+                    runtime=runtime,
+                    block=block,
+                    baseline_image=baseline_image,
+                    repo_context=repo_context,
+                    completed_blocks=completed_blocks,
+                    checkpoints=checkpoints,
+                    executions=executions,
+                    last_result=validation_result,
+                )
+
+            finalize_result = self._finalize_checkpoint_tools(
+                runtime=runtime,
+                block=block,
+                attempt=repair_attempt + 1,
+                baseline_image=baseline_image,
+                executions=executions,
+            )
+            if not finalize_result.ok:
+                block.status = "failed"
+                block.last_error = tail_text(finalize_result.combined_output, max_chars=4000)
+                self.store.update_block(block)
+                self._recreate_from_checkpoint(runtime, baseline_image)
+                return False, baseline_image
+
+            checkpoint = runtime.commit(
+                block_id=block.id,
+                parent_image_ref=baseline_image,
+                kind="repaired",
+            )
+            checkpoints.append(checkpoint)
+            block.success_checkpoint = checkpoint.image_ref
+            block.status = "succeeded"
+            self.store.update_block(block)
+            self._emit(
+                f"run {self.run_id}: block {block.id} command-regenerated checkpoint "
+                f"{checkpoint.image_ref}"
+            )
+            return True, checkpoint.image_ref
+
+        block.status = "failed"
+        block.last_error = tail_text(last_result.combined_output, max_chars=4000)
+        self.store.update_block(block)
+        self._recreate_from_checkpoint(runtime, baseline_image)
+        return False, baseline_image
+
+    def _run_block_command_recovery(
+        self,
+        *,
+        runtime: DockerRuntime,
+        block: CommandBlock,
+        baseline_image: str,
+        repo_context: RepoContext,
+        completed_blocks: list[CommandBlock],
+        checkpoints: list[Checkpoint],
+        executions: list[BlockExecution],
+        last_result: CommandResult,
+    ) -> tuple[bool, str]:
+        probe_failures = 0
+        max_probe_failures = max(0, self.request.max_probe_failures)
+        probe_disabled = max_probe_failures == 0
+        if self.request.ablation_mode == "block-live-repair-no-patch":
+            strategy_notes = [
+                "block-live-repair-no-patch mode: the failed block already ran "
+                "in the current live container.",
+                "Return a local repair command for this live container state. "
+                "The orchestrator will not roll back to the block checkpoint, "
+                "will not patch the block script, and will keep the repaired "
+                "container state as the next block baseline.",
+            ]
+        else:
+            strategy_notes = [
+                "single-command-recovery mode: the failed block already ran in "
+                "the current live container.",
+                "Return a local recovery command for this live container state. "
+                "The orchestrator will not roll back to the block checkpoint, "
+                "will not patch the block script, and will not replay the block "
+                "before validation.",
+            ]
         for repair_attempt in range(1, self.request.max_repair_attempts + 1):
             repair_context = self._repair_context(
                 repo_context=repo_context,
@@ -1436,19 +1915,49 @@ class EnvironmentBuilder:
         baseline_image: str,
         executions: list[BlockExecution],
     ) -> CommandResult:
+        return self._execute_block_command_range(
+            runtime=runtime,
+            block=block,
+            attempt=attempt,
+            start_index=0,
+            checkpoint_image=baseline_image,
+            checkpoints=None,
+            executions=executions,
+            checkpoint_each_command=False,
+        ).result
+
+    def _execute_block_command_range(
+        self,
+        *,
+        runtime: DockerRuntime,
+        block: CommandBlock,
+        attempt: int,
+        start_index: int,
+        checkpoint_image: str,
+        checkpoints: list[Checkpoint] | None,
+        executions: list[BlockExecution],
+        checkpoint_each_command: bool,
+    ) -> _CommandExecutionOutcome:
         script_path = self.store.script_path(block.id)
         commands = _split_shell_script_commands(script_path.read_text(encoding="utf-8"))
         if not commands:
-            return CommandResult(
-                exit_code=0,
-                stdout="[pheragent] command forward: no commands\n",
-                command=["pheragent-command-forward", block.id],
+            return _CommandExecutionOutcome(
+                result=CommandResult(
+                    exit_code=0,
+                    stdout="[pheragent] command forward: no commands\n",
+                    command=["pheragent-command-forward", block.id],
+                ),
+                commands=commands,
+                failed_command_index=None,
+                resume_image=checkpoint_image,
             )
         stdout_parts: list[str] = []
-        context_commands: list[str] = []
-        for index, command in enumerate(commands, start=1):
+        context_commands = _shell_context_commands_before(commands, start_index)
+        current_image = checkpoint_image
+        for index in range(start_index, len(commands)):
+            command = commands[index]
             self._emit(
-                f"run {self.run_id}: block {block.id} command {index}/{len(commands)}"
+                f"run {self.run_id}: block {block.id} command {index + 1}/{len(commands)}"
             )
             command_to_run = "\n".join(["set -eu", *context_commands, command])
             result = runtime.execute_command(command_to_run, timeout=self.request.command_timeout)
@@ -1457,22 +1966,74 @@ class EnvironmentBuilder:
             execution = self._execution_from_result(
                 block_id=block.id,
                 phase="command_forward",
-                attempt=(attempt * 1000) + index,
+                attempt=(attempt * 1000) + index + 1,
                 command_result=result,
-                checkpoint_before=baseline_image,
+                checkpoint_before=current_image,
             )
             executions.append(execution)
             self.store.append_execution(execution)
-            stdout_parts.append(f"[{index}/{len(commands)}] {command_to_run}\n{result.stdout}")
+            stdout_parts.append(f"[{index + 1}/{len(commands)}] {command_to_run}\n{result.stdout}")
             if not result.ok:
-                return result
+                return _CommandExecutionOutcome(
+                    result=result,
+                    commands=commands,
+                    failed_command_index=index,
+                    resume_image=current_image,
+                )
             if _is_shell_context_command(command):
                 context_commands.append(command)
-        return CommandResult(
-            exit_code=0,
-            stdout="\n".join(stdout_parts),
-            command=["pheragent-command-forward", block.id],
+            if checkpoint_each_command:
+                checkpoint = runtime.commit(
+                    block_id=f"{block.id}-command-{index + 1}",
+                    parent_image_ref=current_image,
+                    kind="command",
+                )
+                if checkpoints is not None:
+                    checkpoints.append(checkpoint)
+                current_image = checkpoint.image_ref
+        return _CommandExecutionOutcome(
+            result=CommandResult(
+                exit_code=0,
+                stdout="\n".join(stdout_parts),
+                command=["pheragent-command-forward", block.id],
+            ),
+            commands=commands,
+            failed_command_index=None,
+            resume_image=current_image,
         )
+
+    def _replace_block_script(
+        self,
+        block: CommandBlock,
+        *,
+        replacement_script: str,
+        validation_command: str | None,
+    ) -> CommandBlock:
+        block.script = shell_script(replacement_script)
+        if validation_command:
+            block.validation_command = validation_command
+        block.repair_attempts += 1
+        block.status = "repaired"
+        return block
+
+    def _replace_block_command(
+        self,
+        block: CommandBlock,
+        *,
+        command_index: int,
+        replacement_command: str,
+        validation_command: str | None,
+    ) -> CommandBlock:
+        commands = _split_shell_script_commands(block.script)
+        if command_index < 0 or command_index >= len(commands):
+            raise ValueError(f"command index out of range for block {block.id}: {command_index}")
+        commands[command_index] = replacement_command.strip()
+        block.script = shell_script("\n\n".join(command for command in commands if command.strip()))
+        if validation_command:
+            block.validation_command = validation_command
+        block.repair_attempts += 1
+        block.status = "repaired"
+        return block
 
     def _finalize_checkpoint_tools(
         self,
@@ -1806,6 +2367,14 @@ def _is_shell_source(command: str) -> bool:
     return bool(tokens) and tokens[0] in {".", "source"} and all(
         operator not in command for operator in ("&&", "||", "|", ";")
     )
+
+
+def _shell_context_commands_before(commands: list[str], end_index: int) -> list[str]:
+    return [
+        command
+        for command in commands[:end_index]
+        if _is_shell_context_command(command)
+    ]
 
 
 def _llm_repair_debug_output(raw_response: object, diagnostics: object) -> str:

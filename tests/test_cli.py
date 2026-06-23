@@ -104,6 +104,63 @@ def test_build_accepts_single_command_recovery_ablation(tmp_path: Path) -> None:
     assert request.ablation_mode == "single-command-recovery"
 
 
+def test_build_accepts_single_command_rollback_regenerate_ablation(tmp_path: Path) -> None:
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "build",
+            "--repo",
+            str(tmp_path),
+            "--base-dockerfile",
+            str(tmp_path / "Dockerfile"),
+            "--ablation",
+            "single-command-rollback-regenerate",
+        ]
+    )
+
+    request = _request_from_args(args, require_dockerfile=True)
+
+    assert request.ablation_mode == "single-command-rollback-regenerate"
+
+
+def test_build_accepts_block_rollback_regenerate_ablation(tmp_path: Path) -> None:
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "build",
+            "--repo",
+            str(tmp_path),
+            "--base-dockerfile",
+            str(tmp_path / "Dockerfile"),
+            "--ablation",
+            "block-rollback-regenerate",
+        ]
+    )
+
+    request = _request_from_args(args, require_dockerfile=True)
+
+    assert request.ablation_mode == "block-rollback-regenerate"
+
+
+def test_build_accepts_block_live_repair_no_patch_ablation(tmp_path: Path) -> None:
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "build",
+            "--repo",
+            str(tmp_path),
+            "--base-dockerfile",
+            str(tmp_path / "Dockerfile"),
+            "--ablation",
+            "block-live-repair-no-patch",
+        ]
+    )
+
+    request = _request_from_args(args, require_dockerfile=True)
+
+    assert request.ablation_mode == "block-live-repair-no-patch"
+
+
 def test_build_accepts_whole_script_forward_ablation(tmp_path: Path) -> None:
     parser = _build_parser()
     args = parser.parse_args(
@@ -226,6 +283,27 @@ def test_build_projects_accepts_ablation_mode(tmp_path: Path) -> None:
     request = _batch_base_request_from_args(args)
 
     assert request.ablation_mode == "without-checkpoint-rollback"
+
+
+def test_build_projects_accepts_block_rollback_regenerate_ablation(tmp_path: Path) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text("owner/repo abc123\n", encoding="utf-8")
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "build-projects",
+            "--projects-file",
+            str(projects_file),
+            "--base-dockerfile",
+            str(tmp_path / "Dockerfile"),
+            "--ablation",
+            "block-rollback-regenerate",
+        ]
+    )
+
+    request = _batch_base_request_from_args(args)
+
+    assert request.ablation_mode == "block-rollback-regenerate"
 
 
 def test_build_projects_rejects_zero_jobs(tmp_path: Path) -> None:

@@ -28,6 +28,9 @@ ABLATION_MODES = (
     "without-final-clean-replay",
     "single-command-forward",
     "single-command-recovery",
+    "single-command-rollback-regenerate",
+    "block-rollback-regenerate",
+    "block-live-repair-no-patch",
     "whole-script-forward",
     "whole-script-recovery",
 )

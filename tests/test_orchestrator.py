@@ -395,6 +395,299 @@ def test_environment_builder_single_command_recovery_repairs_live_container(
     assert result.final_clean_replay_ok is True
 
 
+def test_environment_builder_single_command_rollback_regenerate_resumes_failed_command(
+    tmp_path: Path,
+) -> None:
+    class CommandRollbackRuntime(FakeRuntime):
+        def __init__(self, request: BuildRequest, run_id: str):
+            super().__init__(request, run_id)
+            self.commands: list[str] = []
+
+        def execute_command(self, command: str, *, timeout: float) -> CommandResult:
+            self.commands.append(command)
+            if "container preflight" in command:
+                return CommandResult(exit_code=0, stdout="tool:python3=/usr/bin/python3\n")
+            if "bad-step" in command:
+                return CommandResult(exit_code=1, stderr="bad-step: not found")
+            return CommandResult(exit_code=0, stdout="ok")
+
+    class CommandRegeneratePlanner:
+        def __init__(self) -> None:
+            self.contexts: list[RepairContext | None] = []
+
+        def suggest(self, block, result, *, context=None, heuristic_hints=None):
+            del block, result, heuristic_hints
+            self.contexts.append(context)
+            return [
+                RepairCommand(
+                    title="Replace bad command",
+                    command="fixed-step",
+                    patch_script="fixed-step",
+                )
+            ]
+
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="single-command-rollback-regenerate",
+        ablation_mode="single-command-rollback-regenerate",
+        max_repair_attempts=1,
+    )
+    planner = StaticPlanner(
+        [
+            CommandBlock(
+                id="01-tooling",
+                title="Tooling",
+                goal="install",
+                script=(
+                    "#!/bin/sh\n"
+                    "export DEMO_FLAG=1\n"
+                    "echo first\n"
+                    "bad-step\n"
+                    "echo after\n"
+                ),
+                order=1,
+            ),
+        ]
+    )
+    repair_llm = CommandRegeneratePlanner()
+
+    result = EnvironmentBuilder(
+        request,
+        planner=planner,
+        repair_planner=RepairPlanner(llm_planner=repair_llm),
+        runtime_factory=CommandRollbackRuntime,
+    ).build()
+
+    runtime = FakeRuntime.instances[-1]
+    script = (result.scripts_dir / "01-tooling.sh").read_text(encoding="utf-8")
+    command_forward = [
+        execution for execution in result.executions if execution.phase == "command_forward"
+    ]
+    command_texts = [execution.command[-1] for execution in command_forward if execution.command]
+
+    assert result.ok
+    assert result.progress_control is not None
+    assert result.progress_control.forward_granularity == "command"
+    assert result.progress_control.checkpoint_rollback is True
+    assert "bad-step" not in script
+    assert "fixed-step" in script
+    assert "fake:01-tooling-command-2-command" in runtime.recreated
+    assert "set -eu\nexport DEMO_FLAG=1\nfixed-step" in command_texts
+    assert "set -eu\nexport DEMO_FLAG=1\necho after" in command_texts
+    assert command_texts.count("set -eu\nexport DEMO_FLAG=1\necho first") == 1
+    assert any(commit == "fake:01-tooling-command-1-command" for commit in runtime.commits)
+    assert any(commit == "fake:01-tooling-command-2-command" for commit in runtime.commits)
+    assert any(commit == "fake:01-tooling-repaired" for commit in runtime.commits)
+    assert repair_llm.contexts
+    assert repair_llm.contexts[0] is not None
+    assert any(
+        "Failed command 3" in note
+        for note in repair_llm.contexts[0].strategy_notes
+    )
+
+
+def test_environment_builder_block_rollback_regenerate_replaces_failed_block(
+    tmp_path: Path,
+) -> None:
+    class BlockRegenerateRuntime(FakeRuntime):
+        def __init__(self, request: BuildRequest, run_id: str):
+            super().__init__(request, run_id)
+            self.script_bodies: list[str] = []
+
+        def execute_script(self, script_path: Path, *, timeout: float) -> CommandResult:
+            del timeout
+            script = script_path.read_text(encoding="utf-8")
+            self.script_bodies.append(script)
+            if "bad-block" in script:
+                return CommandResult(exit_code=1, stderr="bad-block: not found")
+            return CommandResult(exit_code=0, stdout="script ok")
+
+        def execute_command(self, command: str, *, timeout: float) -> CommandResult:
+            del timeout
+            if "container preflight" in command:
+                return CommandResult(exit_code=0, stdout="tool:python3=/usr/bin/python3\n")
+            return CommandResult(exit_code=0, stdout="ok")
+
+    class BlockRegeneratePlanner:
+        def __init__(self) -> None:
+            self.contexts: list[RepairContext | None] = []
+
+        def suggest(self, block, result, *, context=None, heuristic_hints=None):
+            del block, result, heuristic_hints
+            self.contexts.append(context)
+            return [
+                RepairCommand(
+                    title="Regenerate block",
+                    command="fixed-block",
+                    patch_script="fixed-block",
+                )
+            ]
+
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="block-rollback-regenerate",
+        ablation_mode="block-rollback-regenerate",
+        max_repair_attempts=1,
+    )
+    planner = StaticPlanner(
+        [
+            CommandBlock(
+                id="00-preflight",
+                title="Preflight",
+                goal="inspect",
+                script="#!/bin/sh\necho preflight\n",
+                order=0,
+            ),
+            CommandBlock(
+                id="01-tooling",
+                title="Tooling",
+                goal="install",
+                script="#!/bin/sh\nbad-block\n",
+                order=1,
+            ),
+        ]
+    )
+    repair_llm = BlockRegeneratePlanner()
+
+    result = EnvironmentBuilder(
+        request,
+        planner=planner,
+        repair_planner=RepairPlanner(llm_planner=repair_llm),
+        runtime_factory=BlockRegenerateRuntime,
+    ).build()
+
+    runtime = FakeRuntime.instances[-1]
+    script = (result.scripts_dir / "01-tooling.sh").read_text(encoding="utf-8")
+    phases = [execution.phase for execution in result.executions]
+
+    assert result.ok
+    assert result.ablation_mode == "block-rollback-regenerate"
+    assert result.progress_control is not None
+    assert result.progress_control.forward_granularity == "block"
+    assert result.progress_control.checkpoint_rollback is True
+    assert "bad-block" not in script
+    assert "fixed-block" in script
+    assert "fake:00-preflight-success" in runtime.recreated
+    assert phases.count("block") == 3
+    assert "repair" not in phases
+    assert "fake:01-tooling-repaired" in runtime.commits
+    assert any("bad-block" in body for body in runtime.script_bodies)
+    assert any("fixed-block" in body for body in runtime.script_bodies)
+    assert repair_llm.contexts
+    assert repair_llm.contexts[0] is not None
+    assert any(
+        "complete replacement script" in note
+        for note in repair_llm.contexts[0].strategy_notes
+    )
+
+
+def test_environment_builder_block_live_repair_no_patch_keeps_hidden_state(
+    tmp_path: Path,
+) -> None:
+    class LiveNoPatchRuntime(FakeRuntime):
+        def __init__(self, request: BuildRequest, run_id: str):
+            super().__init__(request, run_id)
+            self.repaired = False
+
+        def recreate_from(self, image_ref: str) -> str:
+            self.repaired = False
+            return super().recreate_from(image_ref)
+
+        def execute_script(self, script_path: Path, *, timeout: float) -> CommandResult:
+            del script_path, timeout
+            return CommandResult(exit_code=1, stderr="missing local state")
+
+        def execute_command(self, command: str, *, timeout: float) -> CommandResult:
+            del timeout
+            if "container preflight" in command:
+                return CommandResult(exit_code=0, stdout="tool:python3=/usr/bin/python3\n")
+            if command == "repair-live-state":
+                self.repaired = True
+                return CommandResult(exit_code=0, stdout="repaired")
+            if command == "validate-live-state":
+                if self.repaired:
+                    return CommandResult(exit_code=0, stdout="validation ok")
+                return CommandResult(exit_code=1, stderr="not repaired")
+            return CommandResult(exit_code=0, stdout="ok")
+
+    class LiveNoPatchPlanner:
+        def __init__(self) -> None:
+            self.contexts: list[RepairContext | None] = []
+
+        def suggest(self, block, result, *, context=None, heuristic_hints=None):
+            del block, result, heuristic_hints
+            self.contexts.append(context)
+            return [
+                RepairCommand(
+                    title="Repair live state",
+                    command="repair-live-state",
+                    patch_script="echo should-not-be-patched",
+                )
+            ]
+
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="block-live-repair-no-patch",
+        ablation_mode="block-live-repair-no-patch",
+        max_repair_attempts=1,
+    )
+    planner = StaticPlanner(
+        [
+            CommandBlock(
+                id="01-tooling",
+                title="Tooling",
+                goal="install",
+                script="#!/bin/sh\nneeds-hidden-state\n",
+                validation_command="validate-live-state",
+                order=1,
+            ),
+        ]
+    )
+    repair_llm = LiveNoPatchPlanner()
+
+    result = EnvironmentBuilder(
+        request,
+        planner=planner,
+        repair_planner=RepairPlanner(llm_planner=repair_llm),
+        runtime_factory=LiveNoPatchRuntime,
+    ).build()
+
+    runtime = FakeRuntime.instances[-1]
+    script = (result.scripts_dir / "01-tooling.sh").read_text(encoding="utf-8")
+    phases = [execution.phase for execution in result.executions]
+
+    assert result.ok
+    assert result.ablation_mode == "block-live-repair-no-patch"
+    assert result.progress_control is not None
+    assert result.progress_control.patch_back is False
+    assert result.progress_control.checkpoint_rollback is False
+    assert result.progress_control.final_clean_replay is False
+    assert "should-not-be-patched" not in script
+    assert "command_recovery" in phases
+    assert "repair" not in phases
+    assert runtime.recreated == []
+    assert "fake:01-tooling-repaired" in runtime.commits
+    assert result.final_image == "fake:01-tooling-repaired"
+    assert repair_llm.contexts
+    assert repair_llm.contexts[0] is not None
+    assert any(
+        "block-live-repair-no-patch mode" in note
+        for note in repair_llm.contexts[0].strategy_notes
+    )
+
+
 def test_environment_builder_whole_script_forward_executes_one_artifact(
     tmp_path: Path,
 ) -> None:
@@ -1151,7 +1444,8 @@ def test_environment_builder_plans_with_container_preflight_context(tmp_path: Pa
     )
     assert "tool:python3=/usr/bin/python3" in planner.contexts[0].runtime_notes
     runtime = FakeRuntime.instances[-1]
-    assert runtime.recreated == []
+    assert runtime.recreated == ["fake:None-workspace"]
+    assert result.final_clean_replay_ok is True
     assert any(execution.phase == "container_preflight" for execution in result.executions)
     assert "python.version=3.12.0" in (result.state_dir / "context.json").read_text(
         encoding="utf-8"
@@ -1445,6 +1739,7 @@ def test_environment_builder_resumes_from_checkpoint_without_replanning(
         state_dir=state_dir,
         run_id="resume-run",
         resume_from=resume_image,
+        ablation_mode="without-final-clean-replay",
     )
 
     result = EnvironmentBuilder(
@@ -1529,6 +1824,7 @@ def test_environment_builder_start_at_block_overrides_resume_tag(tmp_path: Path)
         run_id="resume-explicit",
         resume_from="custom:image",
         start_at_block="01-tooling",
+        ablation_mode="without-final-clean-replay",
     )
 
     result = EnvironmentBuilder(

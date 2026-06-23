@@ -83,8 +83,9 @@ uv run pheragent build \
 ```
 
 Available ablation modes are `full`, `single-command-forward`,
-`single-command-recovery`, `without-local-repair`,
-`whole-script-forward`, `whole-script-recovery`,
+`single-command-recovery`, `single-command-rollback-regenerate`,
+`block-rollback-regenerate`, `block-live-repair-no-patch`,
+`without-local-repair`, `whole-script-forward`, `whole-script-recovery`,
 `without-checkpoint-rollback`, and `without-final-clean-replay`. The default is
 `full`, the paper-style setting that replays the final block scripts from a
 clean workspace checkpoint before reporting success.

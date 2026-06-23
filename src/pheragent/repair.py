@@ -940,7 +940,7 @@ Return strict JSON only:
     {
       "title": "short title",
       "command": "shell command to test the repair from the block baseline",
-      "patch_script": "shell snippet to prepend to the failed block script",
+      "patch_script": "persistent shell snippet or requested replacement content",
       "validation_command": "optional replacement validation command"
     }
   ]
@@ -958,6 +958,8 @@ Rules:
   If command installs a package, exports an environment variable, changes pip
   flags, or replaces validation assumptions, patch_script must include the same
   durable setup needed when the whole block is rerun from the baseline.
+- If strategy_notes ask for regeneration of a command, block, or whole script,
+  patch_script must be the full replacement content for that target unit.
 - Prefer package-manager fixes, missing tool installs, compatibility pins, and validation fixes.
 - If repair_context.repo_context.task_description is present, repair toward that
   task/setup goal without editing project source code or turning validation into

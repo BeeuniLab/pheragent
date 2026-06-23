@@ -41,6 +41,9 @@ without-checkpoint-rollback
 without-final-clean-replay
 single-command-forward
 single-command-recovery
+single-command-rollback-regenerate
+block-rollback-regenerate
+block-live-repair-no-patch
 whole-script-forward
 whole-script-recovery
 ```
@@ -48,14 +51,14 @@ whole-script-recovery
 The current default remains:
 
 ```text
-without-final-clean-replay
+full
 ```
 
-This keeps existing experiments compatible. The paper-style full progress-control
-setting should be requested explicitly with:
+This is the paper-style full progress-control setting. The previous runtime
+behavior without a final clean replay can still be requested explicitly with:
 
 ```sh
---ablation full
+--ablation without-final-clean-replay
 ```
 
 ## Control Dimensions
@@ -155,6 +158,48 @@ Main implementation tasks:
 3. Done locally: block scripts are not patched in this mode.
 4. Done locally: recovery attempts are recorded with phase `command_recovery`
    instead of the normal `repair` phase.
+
+### `single-command-rollback-regenerate`
+
+Goal: make each command the checkpoint and recovery unit.
+
+Status: implemented locally.
+
+Expected behavior:
+
+- Execute block scripts one shell command chunk at a time.
+- Commit a checkpoint after each successful command.
+- If a command fails, roll back to the previous command checkpoint.
+- Regenerate only the failed command chunk, then resume execution from that
+  command.
+
+## Phase 2b: Block Regeneration And Live Repair Ablations
+
+Status: implemented locally.
+
+### `block-rollback-regenerate`
+
+Goal: preserve block forward, but replace failed-block local repair with full
+block regeneration.
+
+Expected behavior:
+
+- Execute blocks normally.
+- If a block fails, roll back to that block's baseline checkpoint.
+- Replace the failed block script with a regenerated full block script.
+- Rerun the regenerated block and commit it as the repaired block checkpoint.
+
+### `block-live-repair-no-patch`
+
+Goal: preserve block forward but keep only live-container repair state.
+
+Expected behavior:
+
+- Execute blocks normally.
+- If a block fails, do not roll back to the block checkpoint.
+- Run a local repair command in the current live container.
+- Do not patch the repair back into the block script.
+- Disable final clean replay so the final image preserves the live repair state.
 
 ## Phase 3: Whole-script Ablations
 

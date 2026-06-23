@@ -14,6 +14,9 @@ AblationMode = Literal[
     "without-final-clean-replay",
     "single-command-forward",
     "single-command-recovery",
+    "single-command-rollback-regenerate",
+    "block-rollback-regenerate",
+    "block-live-repair-no-patch",
     "whole-script-forward",
     "whole-script-recovery",
 ]
@@ -52,6 +55,21 @@ def progress_control_for_ablation(mode: AblationMode) -> ProgressControl:
             patch_back=False,
             checkpoint_rollback=False,
             final_clean_replay=True,
+        )
+    if mode == "single-command-rollback-regenerate":
+        return ProgressControl(
+            forward_granularity="command",
+            recovery_granularity="command",
+            final_clean_replay=True,
+        )
+    if mode == "block-rollback-regenerate":
+        return ProgressControl(final_clean_replay=True)
+    if mode == "block-live-repair-no-patch":
+        return ProgressControl(
+            recovery_granularity="command",
+            patch_back=False,
+            checkpoint_rollback=False,
+            final_clean_replay=False,
         )
     if mode == "whole-script-forward":
         return ProgressControl(
