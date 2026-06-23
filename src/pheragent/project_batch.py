@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
+import os
 import shutil
 import sys
 from collections import Counter
@@ -86,6 +89,25 @@ class PreparedProject:
     checkout_ref: str
     actual_commit: str | None = None
     version_mismatch: bool = False
+
+
+@contextlib.contextmanager
+def _project_dir_lock(projects_dir: Path):
+    projects_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = projects_dir / ".pheragent-build.lock"
+    with lock_path.open("w", encoding="utf-8") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError(
+                f"another pheragent build-projects process is already using {projects_dir}"
+            ) from exc
+        handle.write(f"pid={os.getpid()}\n")
+        handle.flush()
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def parse_projects_file(path: Path) -> list[ProjectSpec]:
@@ -346,43 +368,44 @@ class ProjectBatchBuilder:
         self.builder_factory = builder_factory
 
     def build_all(self) -> BatchBuildResult:
-        specs = parse_projects_file(self.projects_file)
-        if self.limit is not None:
-            specs = specs[: self.limit]
+        with _project_dir_lock(self.projects_dir):
+            specs = parse_projects_file(self.projects_file)
+            if self.limit is not None:
+                specs = specs[: self.limit]
 
-        failures_log_path = self.projects_dir / "failed-projects.log"
-        if failures_log_path.exists():
-            failures_log_path.unlink()
-        llm_usage_log_path = self.projects_dir / "llm-usage-projects.jsonl"
-        if llm_usage_log_path.exists():
-            llm_usage_log_path.unlink()
-        no_repo_log_path = self.projects_dir / "no-repo-projects.log"
-        known_no_repo_keys = _read_no_repo_log_keys(no_repo_log_path)
-        version_mismatch_log_path = self.projects_dir / "version-mismatch-projects.log"
+            failures_log_path = self.projects_dir / "failed-projects.log"
+            if failures_log_path.exists():
+                failures_log_path.unlink()
+            llm_usage_log_path = self.projects_dir / "llm-usage-projects.jsonl"
+            if llm_usage_log_path.exists():
+                llm_usage_log_path.unlink()
+            no_repo_log_path = self.projects_dir / "no-repo-projects.log"
+            known_no_repo_keys = _read_no_repo_log_keys(no_repo_log_path)
+            version_mismatch_log_path = self.projects_dir / "version-mismatch-projects.log"
 
-        results = self._build_specs(
-            specs,
-            known_no_repo_keys=known_no_repo_keys,
-            failures_log_path=failures_log_path,
-            no_repo_log_path=no_repo_log_path,
-            version_mismatch_log_path=version_mismatch_log_path,
-            llm_usage_log_path=llm_usage_log_path,
-        )
+            results = self._build_specs(
+                specs,
+                known_no_repo_keys=known_no_repo_keys,
+                failures_log_path=failures_log_path,
+                no_repo_log_path=no_repo_log_path,
+                version_mismatch_log_path=version_mismatch_log_path,
+                llm_usage_log_path=llm_usage_log_path,
+            )
 
-        return BatchBuildResult(
-            ok=all(result.ok or result.skipped for result in results),
-            projects_dir=self.projects_dir,
-            oracles_dir=self.oracles_dir,
-            results=results,
-            failures_log_path=failures_log_path if failures_log_path.exists() else None,
-            no_repo_log_path=no_repo_log_path if no_repo_log_path.exists() else None,
-            version_mismatch_log_path=(
-                version_mismatch_log_path if version_mismatch_log_path.exists() else None
-            ),
-            llm_usage_log_path=llm_usage_log_path if llm_usage_log_path.exists() else None,
-            ablation_mode=self.base_request.ablation_mode,
-            progress_control=_progress_control_json(self.base_request.ablation_mode),
-        )
+            return BatchBuildResult(
+                ok=all(result.ok or result.skipped for result in results),
+                projects_dir=self.projects_dir,
+                oracles_dir=self.oracles_dir,
+                results=results,
+                failures_log_path=failures_log_path if failures_log_path.exists() else None,
+                no_repo_log_path=no_repo_log_path if no_repo_log_path.exists() else None,
+                version_mismatch_log_path=(
+                    version_mismatch_log_path if version_mismatch_log_path.exists() else None
+                ),
+                llm_usage_log_path=llm_usage_log_path if llm_usage_log_path.exists() else None,
+                ablation_mode=self.base_request.ablation_mode,
+                progress_control=_progress_control_json(self.base_request.ablation_mode),
+            )
 
     def _build_specs(
         self,

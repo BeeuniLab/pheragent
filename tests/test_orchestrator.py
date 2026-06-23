@@ -588,6 +588,61 @@ def test_environment_builder_full_ablation_runs_final_clean_replay(tmp_path: Pat
     assert runtime.recreated[-1] == "fake:None-workspace"
 
 
+def test_environment_builder_rewrites_missing_scripts_before_final_clean_replay(
+    tmp_path: Path,
+) -> None:
+    class MissingScriptRuntime(FakeRuntime):
+        def __init__(self, request: BuildRequest, run_id: str):
+            super().__init__(request, run_id)
+            self.deleted_script = False
+
+        def execute_script(self, script_path: Path, *, timeout: float) -> CommandResult:
+            result = super().execute_script(script_path, timeout=timeout)
+            if script_path.name == "01-tooling.sh" and not self.deleted_script:
+                (script_path.parent / "00-preflight.sh").unlink()
+                self.deleted_script = True
+            return result
+
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="final-replay-scripts",
+        ablation_mode="full",
+    )
+    planner = StaticPlanner(
+        [
+            CommandBlock(
+                id="00-preflight",
+                title="Preflight",
+                goal="inspect",
+                script="#!/bin/sh\necho preflight\n",
+                order=0,
+            ),
+            CommandBlock(
+                id="01-tooling",
+                title="Tooling",
+                goal="install",
+                script="#!/bin/sh\necho tooling\n",
+                order=1,
+            ),
+        ]
+    )
+
+    result = EnvironmentBuilder(
+        request,
+        planner=planner,
+        repair_planner=RepairPlanner(),
+        runtime_factory=MissingScriptRuntime,
+    ).build()
+
+    assert result.ok
+    assert (result.scripts_dir / "00-preflight.sh").is_file()
+    assert result.final_clean_replay_ok is True
+
+
 def test_split_shell_script_commands_preserves_structured_chunks() -> None:
     script = """#!/bin/sh
 set -eu

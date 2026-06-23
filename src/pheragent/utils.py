@@ -25,3 +25,7 @@ def shell_script(body: str) -> str:
     if normalized.startswith("#!"):
         return normalized
     return "#!/bin/sh\nset -eu\n\n" + normalized
+
+
+def normalize_posix_source(script: str) -> str:
+    return re.sub(r"(?m)^(\s*)source(\s+)", r"\1.\2", script)

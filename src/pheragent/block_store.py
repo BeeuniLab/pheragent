@@ -12,6 +12,7 @@ from .models import (
     RepoContext,
     to_jsonable,
 )
+from .utils import normalize_posix_source
 
 
 class BlockStore:
@@ -41,6 +42,7 @@ class BlockStore:
         return written
 
     def write_block(self, block: CommandBlock) -> CommandBlock:
+        block.script = normalize_posix_source(block.script)
         script_path = self.script_path(block.id)
         script_path.write_text(block.script, encoding="utf-8")
         script_path.chmod(0o755)

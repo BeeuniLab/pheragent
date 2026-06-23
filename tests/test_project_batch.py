@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import threading
 import time
 from pathlib import Path
+
+import pytest
 
 from pheragent.models import BuildRequest, BuildResult, CommandResult
 from pheragent.project_batch import (
@@ -1428,3 +1431,27 @@ def test_project_batch_builder_writes_llm_usage_jsonl(tmp_path: Path) -> None:
             },
         }
     ]
+
+
+def test_project_batch_builder_rejects_second_process_for_same_projects_dir(
+    tmp_path: Path,
+) -> None:
+    projects_dir = tmp_path / "projects"
+    projects_dir.mkdir()
+    lock_path = projects_dir / ".pheragent-build.lock"
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text("pallets/flask 2579ce9\n", encoding="utf-8")
+
+    with lock_path.open("w", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(RuntimeError, match="already using"):
+            ProjectBatchBuilder(
+                projects_file=projects_file,
+                projects_dir=projects_dir,
+                base_request=BuildRequest(
+                    repo_path=tmp_path,
+                    base_dockerfile=tmp_path / "Dockerfile",
+                    run_id=None,
+                ),
+            ).build_all()
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)

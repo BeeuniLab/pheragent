@@ -24,7 +24,7 @@ from .llm_planner import (
     merge_usage_summaries,
 )
 from .models import CommandBlock, CommandResult, LLMApiMode, RepairContext, to_jsonable
-from .utils import shell_script, tail_text
+from .utils import normalize_posix_source, shell_script, tail_text
 
 
 @dataclass(slots=True)
@@ -535,13 +535,14 @@ class RepairPlanner:
         if repair.patch_validation_command:
             block.validation_command = repair.patch_validation_command
 
-        original = block.script
-        if repair.patch_script:
+        original = normalize_posix_source(block.script)
+        patch_script = normalize_posix_source(repair.patch_script)
+        if patch_script:
             repair_header = f'echo "[pheragent] repair: {repair.title}"'
-            patch_chunk = f"{repair_header}\n{repair.patch_script}".strip()
+            patch_chunk = f"{repair_header}\n{patch_script}".strip()
         else:
             patch_chunk = ""
-        if repair.patch_script and not _repair_patch_is_leading(original, patch_chunk):
+        if patch_script and not _repair_patch_is_leading(original, patch_chunk):
             if original.startswith("#!/"):
                 lines = original.splitlines()
                 shebang = lines[0]
@@ -553,6 +554,8 @@ class RepairPlanner:
                 )
             else:
                 block.script = shell_script(f"{patch_chunk}\n\n{original}")
+        else:
+            block.script = original
         block.repair_attempts += 1
         block.status = "repaired"
         return block
@@ -658,8 +661,39 @@ def _heuristic_repair_hints(block: CommandBlock, result: CommandResult) -> list[
                 patch_script=_node_compatible_pnpm_command(),
             )
         )
+    if "source: not found" in output:
+        suggestions.append(
+            RepairCommand(
+                title="Use POSIX dot activation instead of source",
+                command="true",
+                patch_script="",
+            )
+        )
+    if "no module named 'distutils'" in output or "no module named distutils" in output:
+        suggestions.append(_setuptools_distutils_repair())
+    if "pkgutil" in output and "impimporter" in output and "numpy" in output:
+        suggestions.append(_python312_numpy_repair())
+    if "no module named 'pkg_resources'" in output or "no module named pkg_resources" in output:
+        suggestions.append(_setuptools_pkg_resources_repair())
+    if (
+        "opentelemetry.instrumentation.openai" in output
+        or (
+            "no module named 'openai'" in output
+            and "opentelemetry.instrumentation.openai" in output
+        )
+    ):
+        suggestions.append(_opentelemetry_openai_repair())
     if "double requirement given" in output and "requirements.txt" in output:
         suggestions.append(_dedupe_requirements_repair())
+    if block.validation_command and _pytest_collection_is_application_behavior(output):
+        suggestions.append(
+            RepairCommand(
+                title="Relax pytest collection validation",
+                command=_pytest_tooling_validation_command(),
+                patch_script="",
+                patch_validation_command=_pytest_tooling_validation_command(),
+            )
+        )
     if "attributeerror" in output and "__version__" in output and block.validation_command:
         patched_validation = _strip_dunder_version_probe(block.validation_command)
         if patched_validation != block.validation_command:
@@ -936,6 +970,81 @@ def _project_venv_pip_command() -> str:
         "./.venv/bin/python -m pip install --upgrade pip setuptools wheel pytest && "
         "./.venv/bin/python -m pytest --version"
     )
+
+
+def _setuptools_pkg_resources_repair() -> RepairCommand:
+    command = (
+        "cd /workspace/repo && "
+        "./.venv/bin/python -m pip install --upgrade 'setuptools<82' wheel && "
+        "./.venv/bin/python -c \"import pkg_resources; print(pkg_resources.__name__)\""
+    )
+    return RepairCommand(
+        title="Install setuptools pkg_resources",
+        command=command,
+        patch_script=command,
+    )
+
+
+def _setuptools_distutils_repair() -> RepairCommand:
+    command = (
+        "cd /workspace/repo && "
+        "export SETUPTOOLS_USE_DISTUTILS=local && "
+        "./.venv/bin/python -m pip install --upgrade 'setuptools<82' wheel && "
+        "./.venv/bin/python -c \"import setuptools, distutils.filelist; "
+        "print(setuptools.__version__)\""
+    )
+    patch_script = (
+        "export SETUPTOOLS_USE_DISTUTILS=local\n"
+        "./.venv/bin/python -m pip install --upgrade 'setuptools<82' wheel"
+    )
+    return RepairCommand(
+        title="Use setuptools vendored distutils",
+        command=command,
+        patch_script=patch_script,
+    )
+
+
+def _python312_numpy_repair() -> RepairCommand:
+    command = (
+        "cd /workspace/repo && "
+        "./.venv/bin/python -m pip install --upgrade 'setuptools<82' wheel && "
+        "./.venv/bin/python -m pip install 'numpy>=1.26,<2' && "
+        "./.venv/bin/python -c \"import numpy; print(numpy.__version__)\""
+    )
+    return RepairCommand(
+        title="Install Python 3.12 compatible numpy",
+        command=command,
+        patch_script=command,
+    )
+
+
+def _opentelemetry_openai_repair() -> RepairCommand:
+    command = (
+        "cd /workspace/repo && "
+        "./.venv/bin/python -m pip install openai opentelemetry-instrumentation-openai && "
+        "./.venv/bin/python -c \"import openai; "
+        "from opentelemetry.instrumentation.openai import OpenAIInstrumentor; "
+        "print(OpenAIInstrumentor)\""
+    )
+    return RepairCommand(
+        title="Install OpenTelemetry OpenAI extras",
+        command=command,
+        patch_script=command,
+    )
+
+
+def _pytest_tooling_validation_command() -> str:
+    return "./.venv/bin/python -m pytest --version"
+
+
+def _pytest_collection_is_application_behavior(output: str) -> bool:
+    markers = (
+        "importerror while loading conftest",
+        "unrecognized arguments: --collect-only",
+        "systemexit: 2",
+        "is not a fixture",
+    )
+    return any(marker in output for marker in markers)
 
 
 def _node_compatible_pnpm_command() -> str:
@@ -1283,6 +1392,14 @@ Rules:
 - For Python projects with `.venv/bin/python`, use `.venv/bin/python -m pip`
   and `.venv/bin/python -m pytest`. Do not use system `python3 -m pip install`
   when PEP 668 or externally-managed-environment is present.
+- The block is executed by POSIX sh. Use `. .venv/bin/activate` or direct
+  `.venv/bin/python -m pip`; do not try to repair `source: not found` by
+  calling transient block scripts, catting scripts into themselves, or rewriting
+  the repo.
+- For Python 3.12 failures involving old `pkg_resources`, `distutils`, numpy
+  build metadata, or `pkgutil.ImpImporter`, prefer compatibility pins and
+  environment variables such as `SETUPTOOLS_USE_DISTUTILS=local` inside the
+  block script. Do not edit setup.py, pyproject.toml, or package source.
 - For pip "Double requirement given" or duplicated requirement entries, do not
   edit requirements.txt and do not rely on the legacy resolver as the primary
   fix. Generate a temporary sanitized requirements file under /tmp and install
@@ -1291,6 +1408,10 @@ Rules:
   tests pass. If validation is running the full test suite and failures are
   application behavior, replace validation with a tool/import/pytest collect-only
   check instead.
+- If pytest collection imports application conftest code that requires external
+  services, credentials, or custom fixture decorators, validation may be relaxed
+  to confirming the test runner/tooling is installed. Do not patch tests or
+  conftest.py.
 - Keep each repair small enough to belong to the failed block.
 - Analyze the failed block and failure stdout/stderr first; repair_context and
   heuristic_hints are supporting evidence, not a substitute for the error.

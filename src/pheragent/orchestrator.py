@@ -25,7 +25,7 @@ from .models import (
 from .oracle import load_oracle_commands
 from .planner import BlockPlanner
 from .repair import RepairCommand, RepairPlanner, RepairProbeCommand, make_repair_planner
-from .utils import new_run_id, tail_text
+from .utils import new_run_id, normalize_posix_source, tail_text
 
 RuntimeFactory = Callable[[BuildRequest, str], DockerRuntime]
 
@@ -1577,6 +1577,7 @@ class EnvironmentBuilder:
         checkpoints: list[Checkpoint],
         executions: list[BlockExecution],
     ) -> tuple[bool, str | None, str | None]:
+        blocks = self.store.write_blocks(blocks)
         runtime.recreate_from(workspace_image)
         if (
             self.progress_control.forward_granularity == "whole-script"
@@ -2119,6 +2120,7 @@ def _ensure_inherited_block_prelude(
     context: RepoContext,
 ) -> CommandBlock:
     del context
+    block.script = normalize_posix_source(block.script)
     if _INHERITED_PRELUDE_BEGIN in block.script:
         return block
     block.script = _prepend_inherited_prelude(block.script, workdir=workdir)

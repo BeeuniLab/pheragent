@@ -185,6 +185,114 @@ def test_repair_hints_relax_dunder_version_validation() -> None:
     assert patched.validation_command == 'uv run python -c "import flask; print(flask)"'
 
 
+def test_patch_block_normalizes_source_to_posix_dot() -> None:
+    block = CommandBlock(
+        id="30-python-deps",
+        title="Python Dependencies",
+        goal="Install deps",
+        script="#!/bin/sh\nset -eu\nsource .venv/bin/activate\npython -m pip install -e .\n",
+    )
+    repair = RepairCommand(
+        title="No-op normalized source",
+        command="./.venv/bin/python -m pip --version",
+        patch_script="",
+    )
+
+    patched = RepairPlanner().patch_block(block, repair)
+
+    assert "source .venv/bin/activate" not in patched.script
+    assert ". .venv/bin/activate" in patched.script
+
+
+def test_repair_hints_do_not_relax_plain_pytest_collect_dependency_failure() -> None:
+    block = CommandBlock(
+        id="50-test-tooling",
+        title="Test Tooling",
+        goal="Validate test tooling",
+        script="#!/bin/sh\n./.venv/bin/python -m pytest --collect-only -q\n",
+        validation_command="./.venv/bin/python -m pytest --collect-only -q",
+    )
+    result = CommandResult(
+        exit_code=1,
+        stderr=(
+            "/workspace/repo/.venv/bin/python: No module named pytest_mock\n"
+            "command was: ./.venv/bin/python -m pytest --collect-only -q"
+        ),
+    )
+
+    suggestions = _heuristic_repair_hints(block, result)
+
+    assert all(
+        suggestion.title != "Relax pytest collection validation" for suggestion in suggestions
+    )
+
+
+def test_repair_hints_relax_pytest_conftest_application_behavior() -> None:
+    block = CommandBlock(
+        id="50-test-tooling",
+        title="Test Tooling",
+        goal="Validate test tooling",
+        script="#!/bin/sh\n./.venv/bin/python -m pytest --collect-only -q\n",
+        validation_command="./.venv/bin/python -m pytest --collect-only -q",
+    )
+    result = CommandResult(
+        exit_code=4,
+        stderr=(
+            "ImportError while loading conftest '/workspace/repo/tests/conftest.py'.\n"
+            "E   ValueError: function azure_gpt35_turbo_16k_llm_config is not a fixture"
+        ),
+    )
+
+    suggestions = _heuristic_repair_hints(block, result)
+
+    hint = next(
+        suggestion
+        for suggestion in suggestions
+        if suggestion.title == "Relax pytest collection validation"
+    )
+    assert hint.patch_validation_command == "./.venv/bin/python -m pytest --version"
+
+
+def test_repair_hints_cover_python312_setuptools_and_opentelemetry_failures() -> None:
+    block = CommandBlock(
+        id="30-python-deps",
+        title="Python Dependencies",
+        goal="Install deps",
+        script="#!/bin/sh\n./.venv/bin/python -m pip install -r requirements.txt\n",
+    )
+
+    pkg_resources_hints = _heuristic_repair_hints(
+        block,
+        CommandResult(exit_code=1, stderr="ModuleNotFoundError: No module named pkg_resources"),
+    )
+    distutils_hints = _heuristic_repair_hints(
+        block,
+        CommandResult(exit_code=1, stderr="ModuleNotFoundError: No module named 'distutils'"),
+    )
+    numpy_hints = _heuristic_repair_hints(
+        block,
+        CommandResult(
+            exit_code=1,
+            stderr=(
+                "AttributeError: module 'pkgutil' has no attribute 'ImpImporter' "
+                "while building numpy"
+            ),
+        ),
+    )
+    otel_hints = _heuristic_repair_hints(
+        block,
+        CommandResult(
+            exit_code=1,
+            stderr="ModuleNotFoundError: No module named 'opentelemetry.instrumentation.openai'",
+        ),
+    )
+
+    assert any("setuptools<82" in hint.command for hint in pkg_resources_hints)
+    assert any("SETUPTOOLS_USE_DISTUTILS=local" in hint.patch_script for hint in distutils_hints)
+    assert any("'numpy>=1.26,<2'" in hint.command for hint in numpy_hints)
+    assert any("opentelemetry-instrumentation-openai" in hint.command for hint in otel_hints)
+
+
 def test_failure_localization_keeps_test_tooling_module_failures_local() -> None:
     previous = CommandBlock(
         id="30-python-deps",
