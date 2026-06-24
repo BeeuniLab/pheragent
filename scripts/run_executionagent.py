@@ -209,9 +209,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         type=Path,
         default=Path("tests/dockerfile/Dockerfile.heragent-thin"),
     )
-    parser.add_argument("--run-root", type=Path, default=Path("executionagent-runs"))
-    parser.add_argument("--run-id-prefix", default="executionagent")
-    parser.add_argument("--image-prefix", default="pheragent-executionagent")
+    parser.add_argument("--run-root", type=Path, default=Path("executionagent-runs-gpt4o"))
+    parser.add_argument("--run-id-prefix", default="executionagent-gpt4o")
+    parser.add_argument("--image-prefix", default="pheragent-executionagent-gpt4o")
     parser.add_argument("--container-workdir", default="/workspace/repo")
     parser.add_argument("--planner", choices=("auto", "rules", "llm"), default="auto")
     parser.add_argument("--llm-api", choices=("responses", "chat-completions"), default="responses")
