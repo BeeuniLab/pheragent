@@ -1,0 +1,10 @@
+{
+  "fixed_test_commands": [
+    {
+      "command": "python -m pytest --collect-only -q",
+      "oracle_id": "repo2run-pytest-collect-only",
+      "source": "generic_pytest_collect_only",
+      "oracle_priority": 1
+    }
+  ]
+}

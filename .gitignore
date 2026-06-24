@@ -36,8 +36,11 @@ projects/
 oracles/
 setupbench-runs/
 setupbench-runs*/
-executionagent-runs/
+executionagent-runs*/
 gpt54-setupbench-runs/
+repo2run-runs*/
+tests/projects/cicdfiles/*
+projects-repo2run/
 
 # Large local benchmark fixtures/results
 tests/projects/ExecutionAgent_success_output_multi-oracles/
