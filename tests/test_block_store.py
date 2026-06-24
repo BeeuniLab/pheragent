@@ -42,3 +42,29 @@ def test_block_store_normalizes_source_for_posix_sh(tmp_path: Path) -> None:
     assert "source .venv/bin/activate" not in script
     assert ". .venv/bin/activate" in script
     assert written.script == script
+
+
+def test_block_store_does_not_rewrite_python_source_assignment_in_heredoc(tmp_path: Path) -> None:
+    store = BlockStore(tmp_path / "run")
+    block = CommandBlock(
+        id="30-python-deps",
+        title="Python Dependencies",
+        goal="Sanitize requirements",
+        script=(
+            "#!/bin/sh\n"
+            "set -eu\n"
+            ".venv/bin/python - requirements.txt <<'PY'\n"
+            "from pathlib import Path\n"
+            "source = Path('requirements.txt')\n"
+            "print(source)\n"
+            "PY\n"
+        ),
+        order=30,
+    )
+
+    written = store.write_block(block)
+
+    script = store.script_path("30-python-deps").read_text(encoding="utf-8")
+    assert "source = Path('requirements.txt')" in script
+    assert ". = Path('requirements.txt')" not in script
+    assert written.script == script

@@ -259,6 +259,33 @@ def test_patch_block_normalizes_source_to_posix_dot() -> None:
     assert ". .venv/bin/activate" in patched.script
 
 
+def test_patch_block_preserves_python_source_assignment_inside_heredoc() -> None:
+    block = CommandBlock(
+        id="30-python-deps",
+        title="Python Dependencies",
+        goal="Install deps",
+        script=(
+            "#!/bin/sh\n"
+            "set -eu\n"
+            ".venv/bin/python - requirements.txt <<'PY'\n"
+            "from pathlib import Path\n"
+            "source = Path(sys.argv[1])\n"
+            "print(source)\n"
+            "PY\n"
+        ),
+    )
+    repair = RepairCommand(
+        title="No-op repair",
+        command="true",
+        patch_script="",
+    )
+
+    patched = RepairPlanner().patch_block(block, repair)
+
+    assert "source = Path(sys.argv[1])" in patched.script
+    assert ". = Path(sys.argv[1])" not in patched.script
+
+
 def test_repair_hints_do_not_relax_plain_pytest_collect_dependency_failure() -> None:
     block = CommandBlock(
         id="50-test-tooling",

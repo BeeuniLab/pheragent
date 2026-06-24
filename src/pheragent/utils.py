@@ -28,4 +28,4 @@ def shell_script(body: str) -> str:
 
 
 def normalize_posix_source(script: str) -> str:
-    return re.sub(r"(?m)^(\s*)source(\s+)", r"\1.\2", script)
+    return re.sub(r"(?m)^(\s*)source(?=\s+[^=\s])(\s+)", r"\1.\2", script)
