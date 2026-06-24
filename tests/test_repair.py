@@ -931,6 +931,80 @@ def test_openai_responses_repair_parser_rejects_args_after_python_heredoc_termin
     assert "arguments after Python heredoc terminator" in planner.last_parse_diagnostics[0]
 
 
+def test_openai_responses_repair_parser_rejects_invalid_python_heredoc_syntax() -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
+
+    repairs = planner._parse_repairs(
+        json.dumps(
+            {
+                "repairs": [
+                    {
+                        "title": "Broken sanitizer heredoc",
+                        "command": (
+                            ".venv/bin/python - requirements.txt <<'PY'\n"
+                            "from pathlib import Path\n"
+                            ". = Path(sys.argv[1])\n"
+                            "PY"
+                        ),
+                        "patch_script": (
+                            ".venv/bin/python - requirements.txt <<'PY'\n"
+                            "from pathlib import Path\n"
+                            ". = Path(sys.argv[1])\n"
+                            "PY"
+                        ),
+                    },
+                    {
+                        "title": "Install pytest",
+                        "command": "python -m pip install pytest && python -m pytest --version",
+                        "patch_script": "python -m pip install pytest",
+                    },
+                ]
+            }
+        )
+    )
+
+    assert len(repairs) == 1
+    assert repairs[0].title == "Install pytest"
+    assert "invalid Python heredoc syntax" in planner.last_parse_diagnostics[0]
+
+
+def test_openai_responses_repair_parser_allows_valid_python_heredoc_with_install() -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
+
+    repairs = planner._parse_repairs(
+        json.dumps(
+            {
+                "repairs": [
+                    {
+                        "title": "Sanitize and install requirements",
+                        "command": (
+                            "cd /workspace/repo\n"
+                            ".venv/bin/python - requirements.txt > /tmp/req.txt <<'PY'\n"
+                            "from pathlib import Path\n"
+                            "import sys\n"
+                            "print(Path(sys.argv[1]).read_text())\n"
+                            "PY\n"
+                            ".venv/bin/python -m pip install -r /tmp/req.txt"
+                        ),
+                        "patch_script": (
+                            "cd /workspace/repo\n"
+                            ".venv/bin/python - requirements.txt > /tmp/req.txt <<'PY'\n"
+                            "from pathlib import Path\n"
+                            "import sys\n"
+                            "print(Path(sys.argv[1]).read_text())\n"
+                            "PY\n"
+                            ".venv/bin/python -m pip install -r /tmp/req.txt"
+                        ),
+                    }
+                ]
+            }
+        )
+    )
+
+    assert len(repairs) == 1
+    assert repairs[0].title == "Sanitize and install requirements"
+
+
 def test_openai_responses_repair_parser_rejects_tmp_requirements_file_without_generator() -> None:
     planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
 

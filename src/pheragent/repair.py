@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -1444,6 +1445,9 @@ def _repair_command_rejection_reason(command: str) -> str | None:
     python_heredoc_rejection = _python_heredoc_rejection_reason(command)
     if python_heredoc_rejection:
         return python_heredoc_rejection
+    python_heredoc_syntax_rejection = _python_heredoc_syntax_rejection_reason(command)
+    if python_heredoc_syntax_rejection:
+        return python_heredoc_syntax_rejection
     setuptools_rejection = _setuptools_pin_rejection_reason(normalized)
     if setuptools_rejection:
         return setuptools_rejection
@@ -1487,8 +1491,27 @@ def _python_heredoc_rejection_reason(command: str) -> str | None:
         return None
     if "<<'PY'" not in stripped and '<<"PY"' not in stripped and "<<PY" not in stripped:
         return None
-    if re.search(r"(?m)^PY\s+\S+", stripped):
+    if re.search(r"(?m)^PY[ \t]+\S+", stripped):
         return "arguments after Python heredoc terminator"
+    return None
+
+
+def _python_heredoc_syntax_rejection_reason(command: str) -> str | None:
+    if not _uses_python_heredoc(command):
+        return None
+    marker_match = re.search(r"<<(?:(?:'PY')|(?:\"PY\")|PY)\n", command)
+    if marker_match is None:
+        return None
+    terminator_match = re.search(r"(?m)^PY\s*$", command[marker_match.end() :])
+    if terminator_match is None:
+        return "unterminated Python heredoc"
+    snippet = command[
+        marker_match.end() : marker_match.end() + terminator_match.start()
+    ]
+    try:
+        ast.parse(snippet, filename="<repair-python-heredoc>", mode="exec")
+    except SyntaxError as exc:
+        return f"invalid Python heredoc syntax: {exc.msg}"
     return None
 
 
