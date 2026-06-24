@@ -404,8 +404,9 @@ def test_openai_responses_planner_uses_safe_python_dependency_script() -> None:
         0
     ].script
     assert "ln -sf /workspace/repo/.venv/bin/pytest /usr/local/bin/pytest" in blocks[0].script
-    assert blocks[0].validation_command is not None
-    assert ".venv/bin/python" in blocks[0].validation_command
+    assert blocks[0].validation_command == (
+        "cd /workspace/repo && test -x .venv/bin/python && .venv/bin/python -m pip check"
+    )
 
 
 def test_openai_responses_planner_treats_python_language_deps_as_safe_dependency_block() -> None:
@@ -440,8 +441,7 @@ def test_openai_responses_planner_treats_python_language_deps_as_safe_dependency
     assert "if [ ! -x .venv/bin/python ]; then" in blocks[0].script
     assert "rm -rf .venv" in blocks[0].script
     assert blocks[0].validation_command == (
-        "cd /workspace/repo && test -x .venv/bin/python && "
-        '.venv/bin/python -c "import sys; print(sys.executable); print(sys.version)"'
+        "cd /workspace/repo && test -x .venv/bin/python && .venv/bin/python -m pip check"
     )
 
 

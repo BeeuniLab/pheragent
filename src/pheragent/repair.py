@@ -533,7 +533,7 @@ class RepairPlanner:
         return usage_summary()
 
     def patch_block(self, block: CommandBlock, repair: RepairCommand) -> CommandBlock:
-        if repair.patch_validation_command:
+        if repair.patch_validation_command and _allow_validation_patch(block, repair):
             block.validation_command = repair.patch_validation_command
 
         original = normalize_posix_source(block.script)
@@ -1441,12 +1441,18 @@ def _repair_command_rejection_reason(command: str) -> str | None:
     python_inline_rejection = _python_inline_rejection_reason(command)
     if python_inline_rejection:
         return python_inline_rejection
+    python_heredoc_rejection = _python_heredoc_rejection_reason(command)
+    if python_heredoc_rejection:
+        return python_heredoc_rejection
     setuptools_rejection = _setuptools_pin_rejection_reason(normalized)
     if setuptools_rejection:
         return setuptools_rejection
     rm_rf_rejection = _rm_rf_rejection_reason(normalized)
     if rm_rf_rejection:
         return rm_rf_rejection
+    tmp_requirements_rejection = _tmp_requirements_artifact_rejection_reason(command)
+    if tmp_requirements_rejection:
+        return tmp_requirements_rejection
     for token in transient_runtime_paths:
         if token in normalized:
             return f"transient runtime path {token!r}"
@@ -1472,6 +1478,17 @@ def _python_inline_rejection_reason(command: str) -> str | None:
     )
     if re.search(starts_with_compound, lower):
         return "compound Python statement in python -c one-liner"
+    return None
+
+
+def _python_heredoc_rejection_reason(command: str) -> str | None:
+    stripped = command.strip()
+    if not re.search(r"(?:^|\s)(?:\.?/?[\w./-]*python3?|python3?)\s+-", stripped):
+        return None
+    if "<<'PY'" not in stripped and '<<"PY"' not in stripped and "<<PY" not in stripped:
+        return None
+    if re.search(r"(?m)^PY\s+\S+", stripped):
+        return "arguments after Python heredoc terminator"
     return None
 
 
@@ -1526,6 +1543,8 @@ def _repair_command_effect_rejection_reason(command: str) -> str | None:
     )
     if any(token in normalized for token in repair_tokens):
         return None
+    if _uses_python_heredoc(command):
+        return "python heredoc repair command does not include a durable state-changing action"
 
     diagnostic_patterns = (
         r"^(?:sudo\s+)?dpkg-query\b",
@@ -1548,6 +1567,53 @@ def _repair_command_effect_rejection_reason(command: str) -> str | None:
     if any(re.search(pattern, normalized) for pattern in diagnostic_patterns):
         return "repair command is a pure diagnostic/probe command"
     return None
+
+
+def _uses_python_heredoc(command: str) -> bool:
+    return bool(
+        re.search(
+            r"(?:^|\s)(?:\.?/?[\w./-]*python3?|python3?)\s+-[^\n]*<<(?:(?:'PY')|(?:\"PY\")|PY)",
+            command,
+        )
+    )
+
+
+def _tmp_requirements_artifact_rejection_reason(command: str) -> str | None:
+    match = re.search(
+        r"(?:\S+\s+-m\s+)?pip(?:3)?\s+install(?:\s+[^;\n]*)?\s+-r\s+"
+        r"(/tmp/[^\s;&|]+(?:requirements|sanitized)[^\s;&|]*)",
+        command,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    target = match.group(1)
+    if _tmp_artifact_created_in_command(command, target):
+        return None
+    return f"transient requirements artifact {target!r} is not created in the same command"
+
+
+def _tmp_artifact_created_in_command(command: str, target: str) -> bool:
+    escaped = re.escape(target)
+    creator_patterns = (
+        rf">\s*(?:['\"]?{escaped}['\"]?|\$[A-Za-z_][A-Za-z0-9_]*)",
+        rf"\b(?:tee|cp|mv)\b[^\n]*\s{escaped}(?:\s|$)",
+        rf"\b(?:cat|printf|echo)\b[^\n]*>\s*['\"]?{escaped}['\"]?",
+        rf"\b(?:rm\s+-rf|mkdir\s+-p)\b[^\n]*{escaped}",
+    )
+    return any(re.search(pattern, command) for pattern in creator_patterns)
+
+
+def _allow_validation_patch(block: CommandBlock, repair: RepairCommand) -> bool:
+    if repair.patch_validation_command is None:
+        return False
+    block_text = f"{block.id} {block.title} {block.goal}".lower()
+    python_dependency_block = (
+        "python" in block_text and "dep" in block_text
+    ) or ("language" in block_text and "dep" in block_text)
+    if not python_dependency_block:
+        return True
+    return repair.command.strip() == "true" and not repair.patch_script.strip()
 
 
 def _repo_code_modification_rejection_reason(normalized_command: str) -> str | None:

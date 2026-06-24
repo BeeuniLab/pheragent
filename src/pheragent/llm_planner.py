@@ -1077,7 +1077,7 @@ def _safe_go_dependency_validation_command() -> str:
 def _safe_python_dependency_validation_command() -> str:
     return (
         "cd /workspace/repo && test -x .venv/bin/python && "
-        '.venv/bin/python -c "import sys; print(sys.executable); print(sys.version)"'
+        ".venv/bin/python -m pip check"
     )
 
 

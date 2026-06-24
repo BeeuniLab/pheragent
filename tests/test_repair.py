@@ -436,9 +436,9 @@ def test_failure_localization_keeps_pytest_argparse_failures_local() -> None:
 
 def test_patch_block_applies_script_when_validation_is_replaced() -> None:
     block = CommandBlock(
-        id="02-python-deps",
-        title="Python Dependencies",
-        goal="Install deps",
+        id="20-python-runtime",
+        title="Python Runtime",
+        goal="Prepare interpreter tooling",
         script="#!/bin/sh\nset -eu\npython3 -m venv .venv\n",
         validation_command="python3 --version",
     )
@@ -455,6 +455,32 @@ def test_patch_block_applies_script_when_validation_is_replaced() -> None:
     assert patched.script.index("apt-get install") < patched.script.index("python3 -m venv")
     assert patched.validation_command == ".venv/bin/python -m pip --version"
     assert patched.repair_attempts == 1
+
+
+def test_patch_block_keeps_stable_validation_for_python_dependency_repairs() -> None:
+    block = CommandBlock(
+        id="30-python-deps",
+        title="Python Dependencies",
+        goal="Install deps",
+        script="#!/bin/sh\nset -eu\n./.venv/bin/python -m pip install -r requirements.txt\n",
+        validation_command=(
+            "cd /workspace/repo && test -x .venv/bin/python && .venv/bin/python -m pip check"
+        ),
+    )
+    repair = RepairCommand(
+        title="Pin setuptools",
+        command="./.venv/bin/python -m pip install --upgrade 'setuptools>=68.2,<82'",
+        patch_script="./.venv/bin/python -m pip install --upgrade 'setuptools>=68.2,<82'",
+        patch_validation_command=(
+            ".venv/bin/python -m pip show setuptools | grep -q 'Version: 81.0.0'"
+        ),
+    )
+
+    patched = RepairPlanner().patch_block(block, repair)
+
+    assert patched.validation_command == (
+        "cd /workspace/repo && test -x .venv/bin/python && .venv/bin/python -m pip check"
+    )
 
 
 def test_patch_block_prepends_patch_even_when_same_snippet_exists_later() -> None:
@@ -829,6 +855,111 @@ def test_openai_responses_repair_parser_rejects_compound_python_c_oneliners() ->
     assert len(repairs) == 1
     assert repairs[0].title == "Install pytest"
     assert "compound Python statement" in planner.last_parse_diagnostics[0]
+
+
+def test_openai_responses_repair_parser_rejects_python_heredoc_without_state_change() -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
+
+    repairs = planner._parse_repairs(
+        json.dumps(
+            {
+                "repairs": [
+                    {
+                        "title": "Print sanitized requirements only",
+                        "command": (
+                            ".venv/bin/python - requirements.txt <<'PY'\n"
+                            "import sys\n"
+                            "print(sys.argv[1])\n"
+                            "PY"
+                        ),
+                        "patch_script": (
+                            ".venv/bin/python - requirements.txt <<'PY'\n"
+                            "import sys\n"
+                            "print(sys.argv[1])\n"
+                            "PY"
+                        ),
+                    },
+                    {
+                        "title": "Install pytest",
+                        "command": "python -m pip install pytest && python -m pytest --version",
+                        "patch_script": "python -m pip install pytest",
+                    },
+                ]
+            }
+        )
+    )
+
+    assert len(repairs) == 1
+    assert repairs[0].title == "Install pytest"
+    assert "durable state-changing action" in planner.last_parse_diagnostics[0]
+
+
+def test_openai_responses_repair_parser_rejects_args_after_python_heredoc_terminator() -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
+
+    repairs = planner._parse_repairs(
+        json.dumps(
+            {
+                "repairs": [
+                    {
+                        "title": "Invalid heredoc args",
+                        "command": (
+                            ".venv/bin/python - <<'PY'\n"
+                            "import sys\n"
+                            "print(sys.argv)\n"
+                            "PY requirements.txt"
+                        ),
+                        "patch_script": (
+                            ".venv/bin/python - <<'PY'\n"
+                            "import sys\n"
+                            "print(sys.argv)\n"
+                            "PY requirements.txt"
+                        ),
+                    },
+                    {
+                        "title": "Install pytest",
+                        "command": "python -m pip install pytest && python -m pytest --version",
+                        "patch_script": "python -m pip install pytest",
+                    },
+                ]
+            }
+        )
+    )
+
+    assert len(repairs) == 1
+    assert repairs[0].title == "Install pytest"
+    assert "arguments after Python heredoc terminator" in planner.last_parse_diagnostics[0]
+
+
+def test_openai_responses_repair_parser_rejects_tmp_requirements_file_without_generator() -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
+
+    repairs = planner._parse_repairs(
+        json.dumps(
+            {
+                "repairs": [
+                    {
+                        "title": "Install transient sanitized requirements",
+                        "command": (
+                            ".venv/bin/python -m pip install -r /tmp/sanitized-requirements.txt"
+                        ),
+                        "patch_script": (
+                            ".venv/bin/python -m pip install -r /tmp/sanitized-requirements.txt"
+                        ),
+                    },
+                    {
+                        "title": "Install pytest",
+                        "command": "python -m pip install pytest && python -m pytest --version",
+                        "patch_script": "python -m pip install pytest",
+                    },
+                ]
+            }
+        )
+    )
+
+    assert len(repairs) == 1
+    assert repairs[0].title == "Install pytest"
+    assert "transient requirements artifact" in planner.last_parse_diagnostics[0]
 
 
 def test_openai_responses_repair_parser_rejects_old_setuptools_pins() -> None:
