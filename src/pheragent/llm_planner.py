@@ -921,6 +921,18 @@ from pathlib import Path
 source = Path(sys.argv[1])
 target = Path(sys.argv[2])
 skip_cuda_deps = os.environ.get("PHERAGENT_SKIP_CUDA_DEPS") == "1"
+cuda_source_packages = {
+    "apex",
+    "bitsandbytes",
+    "causal-conv1d",
+    "deepspeed",
+    "flash-attn",
+    "flash-attention",
+    "flashattention",
+    "mamba-ssm",
+    "vllm",
+    "xformers",
+}
 changed = False
 lines: list[str] = []
 for raw in source.read_text(encoding="utf-8").splitlines():
@@ -934,10 +946,10 @@ for raw in source.read_text(encoding="utf-8").splitlines():
         continue
     name = re.split(r"\\s*(?:===|==|~=|!=|<=|>=|<|>|;)", stripped, 1)[0]
     name = name.split("[", 1)[0].strip().lower().replace("_", "-")
-    if skip_cuda_deps and name == "vllm":
+    if skip_cuda_deps and name in cuda_source_packages:
         changed = True
         print(
-            "[pheragent] skipped vllm requirement because CUDA/nvcc is unavailable",
+            f"[pheragent] skipped {name} requirement because CUDA/nvcc is unavailable",
             file=sys.stderr,
         )
         continue

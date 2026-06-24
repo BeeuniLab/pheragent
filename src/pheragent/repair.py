@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 from dataclasses import dataclass
 from typing import Any
 
@@ -594,6 +595,8 @@ def _heuristic_repair_hints(block: CommandBlock, result: CommandResult) -> list[
         suggestions.append(_apt_repair("Install libffi headers", "libffi-dev"))
     if _needs_qt_opencv_runtime_hint(output):
         suggestions.append(_qt_opencv_runtime_repair())
+    if _needs_headless_gui_hint(output):
+        suggestions.append(_headless_gui_runtime_repair())
     if "cargo: not found" in output and block.id.endswith("rust-deps"):
         suggestions.append(_apt_repair("Install Rust toolchain", "cargo rustc"))
     if "certificate verify failed" in output or "ca certificates" in output:
@@ -683,8 +686,13 @@ def _heuristic_repair_hints(block: CommandBlock, result: CommandResult) -> list[
         )
     ):
         suggestions.append(_opentelemetry_openai_repair())
+    if _looks_like_requirements_sanitizer_syntax_failure(output):
+        suggestions.append(_requirements_sanitizer_repair())
     if "double requirement given" in output and "requirements.txt" in output:
         suggestions.append(_dedupe_requirements_repair())
+    missing_module_repair = _missing_python_module_repair(output)
+    if missing_module_repair is not None:
+        suggestions.append(missing_module_repair)
     if block.validation_command and _pytest_collection_is_application_behavior(output):
         suggestions.append(
             RepairCommand(
@@ -884,6 +892,44 @@ def _qt_opencv_runtime_repair() -> RepairCommand:
     )
 
 
+def _headless_gui_runtime_repair() -> RepairCommand:
+    command = """if command -v apt-get >/dev/null 2>&1; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y --no-install-recommends xvfb xauth libx11-6 libxcb1 libxext6 libxrender1
+else
+  echo 'apt-get not available for repair' >&2
+  exit 127
+fi
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
+export MPLBACKEND="${MPLBACKEND:-Agg}"
+export XAUTHORITY="${XAUTHORITY:-/tmp/pheragent-empty-xauthority}"
+touch "$XAUTHORITY"
+if [ -z "${DISPLAY:-}" ]; then
+  export DISPLAY=:99
+fi
+if command -v Xvfb >/dev/null 2>&1; then
+  Xvfb "$DISPLAY" -screen 0 1280x1024x24 >/tmp/pheragent-xvfb.log 2>&1 &
+  sleep 1
+fi
+if [ -x ./.venv/bin/python ]; then
+  ./.venv/bin/python - <<'PY'
+import os
+print(os.environ.get("DISPLAY", ""))
+PY
+else
+  python3 - <<'PY'
+import os
+print(os.environ.get("DISPLAY", ""))
+PY
+fi"""
+    return RepairCommand(
+        title="Install headless GUI runtime",
+        command=command,
+        patch_script=command,
+    )
+
+
 def _python_venv_repair_command(output: str) -> tuple[str, str]:
     package_match = re.search(r"apt\s+install\s+([a-z0-9.+-]+-venv)", output)
     package = package_match.group(1) if package_match else "python3-venv"
@@ -943,6 +989,20 @@ def _needs_qt_opencv_runtime_hint(output: str) -> bool:
         "cannot open shared object file" in output
         and any(token in output for token in package_tokens)
     )
+
+
+def _needs_headless_gui_hint(output: str) -> bool:
+    markers = (
+        ".xauthority",
+        "xauthority",
+        "could not connect to display",
+        "couldn't connect to display",
+        "cannot connect to x server",
+        "no display name and no $display",
+        "xlib.error.displayconnectionerror",
+        "qt.qpa.xcb",
+    )
+    return any(marker in output for marker in markers)
 
 
 def _uv_tool_venv_command() -> str:
@@ -1033,6 +1093,196 @@ def _opentelemetry_openai_repair() -> RepairCommand:
     )
 
 
+_IMPORT_TO_PIP_PACKAGE = {
+    "bs4": "beautifulsoup4",
+    "cv2": "opencv-python-headless",
+    "crypto": "pycryptodome",
+    "dateutil": "python-dateutil",
+    "dotenv": "python-dotenv",
+    "google.protobuf": "protobuf",
+    "grpc": "grpcio",
+    "jwt": "PyJWT",
+    "langfuse.decorators": "langfuse",
+    "opentelemetry.instrumentation.openai": "opentelemetry-instrumentation-openai",
+    "pil": "Pillow",
+    "sklearn": "scikit-learn",
+    "yaml": "PyYAML",
+}
+
+_SAME_NAME_PYPI_IMPORTS = {
+    "aiohttp",
+    "click",
+    "fastapi",
+    "httpx",
+    "jinja2",
+    "langfuse",
+    "msgpack",
+    "numpy",
+    "pandas",
+    "pluggy",
+    "psutil",
+    "pydantic",
+    "pytest",
+    "pytest_asyncio",
+    "pytest_mock",
+    "requests",
+    "rich",
+    "tenacity",
+    "torch",
+    "transformers",
+    "typer",
+    "uvicorn",
+}
+
+
+def _missing_python_module_repair(output: str) -> RepairCommand | None:
+    modules = _missing_python_modules(output)
+    if not modules:
+        return None
+    packages: list[str] = []
+    imports_to_check: list[str] = []
+    for module in modules:
+        package = _pip_package_for_import(module)
+        if package is None:
+            continue
+        packages.append(package)
+        imports_to_check.append(module)
+    if not packages:
+        return None
+    packages = _dedupe_text(packages)
+    imports_to_check = _dedupe_text(imports_to_check)
+    install_args = " ".join(shlex.quote(package) for package in packages)
+    import_json = json.dumps(imports_to_check)
+    command = f"""cd /workspace/repo
+test -x ./.venv/bin/python
+./.venv/bin/python -m pip install --upgrade {install_args}
+./.venv/bin/python - <<'PY'
+import importlib
+
+for module in {import_json}:
+    importlib.import_module(module)
+    print(module)
+PY"""
+    return RepairCommand(
+        title="Install missing Python modules",
+        command=command,
+        patch_script=command,
+    )
+
+
+def _missing_python_modules(output: str) -> list[str]:
+    modules: list[str] = []
+    patterns = (
+        r"(?:modulenotfounderror|importerror):\s+no module named ['\"]?([a-z0-9_.-]+)",
+        r"(?:^|\n)[^\n]*python[^\n:]*:\s+no module named ['\"]?([a-z0-9_.-]+)",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, output):
+            module = match.group(1).strip(" .'\"")
+            if _safe_import_name(module):
+                modules.append(module)
+    return _dedupe_text(modules)
+
+
+def _pip_package_for_import(module: str) -> str | None:
+    normalized = module.lower().replace("-", "_")
+    if normalized in _IMPORT_TO_PIP_PACKAGE:
+        return _IMPORT_TO_PIP_PACKAGE[normalized]
+    top_level = normalized.split(".", 1)[0]
+    if top_level in _IMPORT_TO_PIP_PACKAGE:
+        return _IMPORT_TO_PIP_PACKAGE[top_level]
+    if normalized in _SAME_NAME_PYPI_IMPORTS:
+        return normalized.replace("_", "-")
+    if top_level in _SAME_NAME_PYPI_IMPORTS:
+        return top_level.replace("_", "-")
+    return None
+
+
+def _safe_import_name(module: str) -> bool:
+    return bool(re.fullmatch(r"[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)*", module))
+
+
+def _dedupe_text(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+    return deduped
+
+
+def _requirements_sanitizer_repair() -> RepairCommand:
+    command = _requirements_sanitizer_repair_script()
+    return RepairCommand(
+        title="Install sanitized requirements with heredoc script",
+        command=command,
+        patch_script=command,
+    )
+
+
+def _requirements_sanitizer_repair_script() -> str:
+    return """cd /workspace/repo
+test -x .venv/bin/python
+if [ -f requirements.txt ]; then
+  sanitized_file=/tmp/pheragent-requirements-sanitized.txt
+  PHERAGENT_SKIP_CUDA_DEPS=0
+  if [ -z "${CUDA_HOME:-}" ] && ! command -v nvcc >/dev/null 2>&1; then
+    PHERAGENT_SKIP_CUDA_DEPS=1
+  fi
+  export PHERAGENT_SKIP_CUDA_DEPS
+  ./.venv/bin/python - requirements.txt > "$sanitized_file" <<'PY'
+import os
+import re
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+skip_cuda_deps = os.environ.get("PHERAGENT_SKIP_CUDA_DEPS") == "1"
+cuda_source_packages = {
+    "apex",
+    "bitsandbytes",
+    "causal-conv1d",
+    "deepspeed",
+    "flash-attn",
+    "flash-attention",
+    "flashattention",
+    "mamba-ssm",
+    "vllm",
+    "xformers",
+}
+for raw in source.read_text(encoding="utf-8").splitlines():
+    stripped = raw.strip()
+    if not stripped or stripped.startswith("#"):
+        print(raw)
+        continue
+    passthrough = ("-r ", "--requirement", "-c ", "--constraint", "-e ", "--editable")
+    if stripped.startswith(passthrough):
+        print(raw)
+        continue
+    name = re.split(r"\\s*(?:===|==|~=|!=|<=|>=|<|>|;)", stripped, 1)[0]
+    name = name.split("[", 1)[0].strip().lower().replace("_", "-")
+    if skip_cuda_deps and name in cuda_source_packages:
+        print(f"[pheragent] skipped {name} because CUDA/nvcc is unavailable", file=sys.stderr)
+        continue
+    if (
+        sys.version_info >= (3, 12)
+        and name == "numpy"
+        and re.search(r"(?:<|<=)\\s*1\\.2[0-3](?:\\.|$)", stripped)
+    ):
+        print("numpy>=1.26,<2")
+        print("[pheragent] relaxed numpy<1.24 requirement for Python 3.12", file=sys.stderr)
+        continue
+    print(raw)
+PY
+  ./.venv/bin/python -m pip install -r "$sanitized_file"
+else
+  echo "requirements.txt not found" >&2
+  exit 1
+fi"""
+
+
 def _pytest_tooling_validation_command() -> str:
     return "./.venv/bin/python -m pytest --version"
 
@@ -1043,6 +1293,20 @@ def _pytest_collection_is_application_behavior(output: str) -> bool:
         "unrecognized arguments: --collect-only",
         "systemexit: 2",
         "is not a fixture",
+    )
+    return any(marker in output for marker in markers)
+
+
+def _looks_like_requirements_sanitizer_syntax_failure(output: str) -> bool:
+    if "syntaxerror" not in output:
+        return False
+    markers = (
+        "requirements sanit",
+        "sanitize_requirements",
+        "requirements_sanit",
+        "pheragent-requirements-sanitized",
+        "invalid syntax in python requirements",
+        ". = path",
     )
     return any(marker in output for marker in markers)
 
@@ -1174,6 +1438,12 @@ def _repair_command_rejection_reason(command: str) -> str | None:
     for token in dangerous_tokens:
         if token in normalized:
             return f"unsafe token {token!r}"
+    python_inline_rejection = _python_inline_rejection_reason(command)
+    if python_inline_rejection:
+        return python_inline_rejection
+    setuptools_rejection = _setuptools_pin_rejection_reason(normalized)
+    if setuptools_rejection:
+        return setuptools_rejection
     rm_rf_rejection = _rm_rf_rejection_reason(normalized)
     if rm_rf_rejection:
         return rm_rf_rejection
@@ -1183,6 +1453,35 @@ def _repair_command_rejection_reason(command: str) -> str | None:
     repo_modification = _repo_code_modification_rejection_reason(normalized)
     if repo_modification:
         return repo_modification
+    return None
+
+
+def _python_inline_rejection_reason(command: str) -> str | None:
+    normalized = re.sub(r"\s+", " ", command.strip())
+    lower = normalized.lower()
+    if not re.search(r"(?:^|\s)(?:\.?/?[\w./-]*python3?|python3?)\s+-c\s+", lower):
+        return None
+    compound_after_semicolon = (
+        r";\s*(?:async\s+)?(?:for|while|if|with|try|except|finally|def|class)\b"
+    )
+    if re.search(compound_after_semicolon, normalized):
+        return "compound Python statement in python -c one-liner"
+    starts_with_compound = (
+        r"(?:python3?|\.?/?[\w./-]*python3?)\s+-c\s+[\"']\s*"
+        r"(?:async\s+)?(?:for|while|if|with|try|def|class)\b"
+    )
+    if re.search(starts_with_compound, lower):
+        return "compound Python statement in python -c one-liner"
+    return None
+
+
+def _setuptools_pin_rejection_reason(normalized_command: str) -> str | None:
+    too_old_exact = re.search(r"setuptools\s*={2,3}\s*(\d+)(?:[.\s'\"]|$)", normalized_command)
+    if too_old_exact and int(too_old_exact.group(1)) < 68:
+        return "setuptools pin is too old for Python 3.12"
+    too_old_upper = re.search(r"setuptools\s*<\s*(\d+)(?:[.\s'\"]|$)", normalized_command)
+    if too_old_upper and int(too_old_upper.group(1)) <= 68:
+        return "setuptools upper bound is too old for Python 3.12"
     return None
 
 
@@ -1241,6 +1540,7 @@ def _repair_command_effect_rejection_reason(command: str) -> str | None:
         r"^(?:sudo\s+)?cat\b",
         r"^(?:sudo\s+)?echo\b",
         r"^(?:sudo\s+)?python(?:3)?\s+--version\b",
+        r"^(?:sudo\s+)?(?:\.?/?[\w./-]*python3?|python3?)\s+-c\b",
         r"^(?:sudo\s+)?node\s+--version\b",
         r"^(?:sudo\s+)?npm\s+--version\b",
         r"^(?:sudo\s+)?pip(?:3)?\s+--version\b",
@@ -1259,12 +1559,26 @@ def _repo_code_modification_rejection_reason(normalized_command: str) -> str | N
             return f"python file write token {token!r}"
     if re.search(r"\b(?:sed\s+-i|perl\s+-pi)\b", normalized_command):
         return "in-place source edit command"
+    if re.search(r"(?:^|[;&|]\s*)patch\b", normalized_command):
+        return "source patch command"
     if re.search(
-        r"(?:^|[;&|]\s*)(?:cat|tee)\b[^;&|>]*>\s*(?:/workspace/repo/)?"
+        r"(?:^|[;&|]\s*)touch\s+(?:/workspace/repo/)?"
+        r"[^;&|\s]+\.(?:py|pyi|js|jsx|ts|tsx|java|go|rs|c|cc|cpp|h|hpp|rb|php|sh)",
+        normalized_command,
+    ):
+        return "touch source-like file"
+    if re.search(
+        r"(?:^|[;&|]\s*)(?:cat|tee|echo|printf)\b[^;&|>]*>\s*(?:/workspace/repo/)?"
         r"[^;&|\s]+\.(?:py|pyi|js|jsx|ts|tsx|java|go|rs|c|cc|cpp|h|hpp|rb|php|sh)",
         normalized_command,
     ):
         return "redirect writes to source-like file"
+    if re.search(
+        r"(?:^|[;&|]\s*)(?:cp|mv)\b[^;&|]*\s+(?:/workspace/repo/)?"
+        r"[^;&|\s]+\.(?:py|pyi|js|jsx|ts|tsx|java|go|rs|c|cc|cpp|h|hpp|rb|php|sh)",
+        normalized_command,
+    ):
+        return "copy or move to source-like file"
     return None
 
 
@@ -1399,7 +1713,16 @@ Rules:
 - For Python 3.12 failures involving old `pkg_resources`, `distutils`, numpy
   build metadata, or `pkgutil.ImpImporter`, prefer compatibility pins and
   environment variables such as `SETUPTOOLS_USE_DISTUTILS=local` inside the
-  block script. Do not edit setup.py, pyproject.toml, or package source.
+  block script. Use `setuptools>=68.2,<82` or a similar Python-3.12-compatible
+  range; do not pin setuptools to 65/66 or below 68. Do not edit setup.py,
+  pyproject.toml, or package source.
+- Do not put Python compound statements (`for`, `if`, `with`, `try`, `def`,
+  `class`) inside `python -c` one-liners. Use a heredoc such as
+  `.venv/bin/python - <<'PY' ... PY` for multi-line Python repair logic.
+- If a requirements sanitizer script failed, do not patch fake files such as
+  failed_script.py and do not use sed/perl in-place edits. Replace the setup
+  step with a temporary sanitized requirements file under /tmp generated by a
+  heredoc, then install from that temporary file.
 - For pip "Double requirement given" or duplicated requirement entries, do not
   edit requirements.txt and do not rely on the legacy resolver as the primary
   fix. Generate a temporary sanitized requirements file under /tmp and install

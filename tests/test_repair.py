@@ -134,6 +134,61 @@ def test_repair_hints_include_qt_opencv_runtime_bundle() -> None:
     assert "libglib2.0-0t64" in qt_hint.command
 
 
+def test_repair_hints_include_headless_gui_runtime() -> None:
+    block = CommandBlock(
+        id="50-test-tooling",
+        title="Test Tooling",
+        goal="Validate GUI imports",
+        script="#!/bin/sh\n.venv/bin/python -m pytest --collect-only\n",
+    )
+    result = CommandResult(
+        exit_code=1,
+        stderr="Xlib.error.DisplayConnectionError: Can't connect to display .Xauthority",
+    )
+
+    suggestions = _heuristic_repair_hints(block, result)
+
+    hint = next(
+        suggestion
+        for suggestion in suggestions
+        if suggestion.title == "Install headless GUI runtime"
+    )
+    assert "xvfb" in hint.command
+    assert "xauth" in hint.command
+    assert "QT_QPA_PLATFORM" in hint.patch_script
+    assert "DISPLAY=:99" in hint.patch_script
+
+
+def test_repair_hints_install_known_missing_python_modules() -> None:
+    block = CommandBlock(
+        id="50-test-tooling",
+        title="Test Tooling",
+        goal="Validate test tooling imports",
+        script="#!/bin/sh\n.venv/bin/python -m pytest --collect-only\n",
+    )
+    result = CommandResult(
+        exit_code=1,
+        stderr=(
+            "ModuleNotFoundError: No module named 'pytest_mock'\n"
+            "ModuleNotFoundError: No module named 'psutil'\n"
+            "ModuleNotFoundError: No module named 'project_internal_module'\n"
+        ),
+    )
+
+    suggestions = _heuristic_repair_hints(block, result)
+
+    hint = next(
+        suggestion
+        for suggestion in suggestions
+        if suggestion.title == "Install missing Python modules"
+    )
+    assert "pytest-mock" in hint.command
+    assert "psutil" in hint.command
+    assert "project_internal_module" not in hint.command
+    assert "./.venv/bin/python -m pip install --upgrade" in hint.command
+    assert "<<'PY'" in hint.command
+
+
 def test_repair_hints_dedupe_duplicate_requirements_without_repo_edit() -> None:
     block = CommandBlock(
         id="02-python-deps",
@@ -291,6 +346,32 @@ def test_repair_hints_cover_python312_setuptools_and_opentelemetry_failures() ->
     assert any("SETUPTOOLS_USE_DISTUTILS=local" in hint.patch_script for hint in distutils_hints)
     assert any("'numpy>=1.26,<2'" in hint.command for hint in numpy_hints)
     assert any("opentelemetry-instrumentation-openai" in hint.command for hint in otel_hints)
+
+
+def test_repair_hints_use_heredoc_for_requirements_sanitizer_syntax_errors() -> None:
+    block = CommandBlock(
+        id="30-python-deps",
+        title="Python Dependencies",
+        goal="Install deps",
+        script="#!/bin/sh\n./.venv/bin/python -m pip install -r requirements.txt\n",
+    )
+    result = CommandResult(
+        exit_code=1,
+        stderr="SyntaxError: invalid syntax in Python requirements sanitization script",
+    )
+
+    suggestions = _heuristic_repair_hints(block, result)
+
+    hint = next(
+        suggestion
+        for suggestion in suggestions
+        if suggestion.title == "Install sanitized requirements with heredoc script"
+    )
+    assert ".venv/bin/python - requirements.txt" in hint.command
+    assert "<<'PY'" in hint.command
+    assert "python -c" not in hint.command
+    assert ".write_text(" not in hint.command
+    assert "flash-attn" in hint.command
 
 
 def test_failure_localization_keeps_test_tooling_module_failures_local() -> None:
@@ -718,6 +799,109 @@ def test_openai_responses_repair_parser_filters_python_source_writes() -> None:
     assert len(repairs) == 1
     assert repairs[0].title == "Collect tests"
     assert "python file write token" in planner.last_parse_diagnostics[0]
+
+
+def test_openai_responses_repair_parser_rejects_compound_python_c_oneliners() -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
+
+    repairs = planner._parse_repairs(
+        json.dumps(
+            {
+                "repairs": [
+                    {
+                        "title": "Bad sanitizer one-liner",
+                        "command": (
+                            ".venv/bin/python -c \"import sys; lines = []; "
+                            "for raw in open('requirements.txt'): lines.append(raw)\""
+                        ),
+                        "patch_script": ".venv/bin/python -m pip install -r requirements.txt",
+                    },
+                    {
+                        "title": "Install pytest",
+                        "command": "python -m pip install pytest && python -m pytest --version",
+                        "patch_script": "python -m pip install pytest",
+                    },
+                ]
+            }
+        )
+    )
+
+    assert len(repairs) == 1
+    assert repairs[0].title == "Install pytest"
+    assert "compound Python statement" in planner.last_parse_diagnostics[0]
+
+
+def test_openai_responses_repair_parser_rejects_old_setuptools_pins() -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
+
+    repairs = planner._parse_repairs(
+        json.dumps(
+            {
+                "repairs": [
+                    {
+                        "title": "Old setuptools",
+                        "command": ".venv/bin/python -m pip install setuptools==65.5.0",
+                        "patch_script": ".venv/bin/python -m pip install setuptools==65.5.0",
+                    },
+                    {
+                        "title": "Compatible setuptools",
+                        "command": ".venv/bin/python -m pip install 'setuptools>=68.2,<82'",
+                        "patch_script": ".venv/bin/python -m pip install 'setuptools>=68.2,<82'",
+                    },
+                ]
+            }
+        )
+    )
+
+    assert len(repairs) == 1
+    assert repairs[0].title == "Compatible setuptools"
+    assert "too old for Python 3.12" in planner.last_parse_diagnostics[0]
+
+
+def test_openai_responses_repair_parser_rejects_source_like_file_mutations() -> None:
+    planner = OpenAIResponsesRepairPlanner(OpenAIResponsesRepairConfig())
+
+    repairs = planner._parse_repairs(
+        json.dumps(
+            {
+                "repairs": [
+                    {
+                        "title": "Touch fake script",
+                        "command": "touch /workspace/repo/failed_script.py",
+                        "patch_script": "touch /workspace/repo/failed_script.py",
+                    },
+                    {
+                        "title": "Patch fake script",
+                        "command": "patch --batch -p0 < /tmp/fix.patch",
+                        "patch_script": "patch --batch -p0 < /tmp/fix.patch",
+                    },
+                    {
+                        "title": "Echo fake script",
+                        "command": "echo 'print(1)' > /workspace/repo/failed_script.py",
+                        "patch_script": "echo 'print(1)' > /workspace/repo/failed_script.py",
+                    },
+                    {
+                        "title": "Move fake script",
+                        "command": "mv /tmp/fixed.py /workspace/repo/failed_script.py",
+                        "patch_script": "mv /tmp/fixed.py /workspace/repo/failed_script.py",
+                    },
+                    {
+                        "title": "Install pytest",
+                        "command": "python -m pip install pytest && python -m pytest --version",
+                        "patch_script": "python -m pip install pytest",
+                    },
+                ]
+            }
+        )
+    )
+
+    assert len(repairs) == 1
+    assert repairs[0].title == "Install pytest"
+    diagnostics = "\n".join(planner.last_parse_diagnostics)
+    assert "touch source-like file" in diagnostics
+    assert "source patch command" in diagnostics
+    assert "redirect writes to source-like file" in diagnostics
+    assert "copy or move to source-like file" in diagnostics
 
 
 def test_openai_responses_repair_parser_allows_apt_cache_cleanup() -> None:

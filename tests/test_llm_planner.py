@@ -391,7 +391,9 @@ def test_openai_responses_planner_uses_safe_python_dependency_script() -> None:
     sanitizer_start = blocks[0].script.index("<<'PY'\n") + len("<<'PY'\n")
     sanitizer_end = blocks[0].script.index("\nPY\n", sanitizer_start)
     compile(blocks[0].script[sanitizer_start:sanitizer_end], "<sanitizer>", "exec")
-    assert "skipped vllm requirement because CUDA/nvcc is unavailable" in blocks[0].script
+    assert "skipped {name} requirement because CUDA/nvcc is unavailable" in blocks[0].script
+    assert '"flash-attn"' in blocks[0].script
+    assert '"deepspeed"' in blocks[0].script
     assert "numpy>=1.26,<2" in blocks[0].script
     assert "editable install failed; continuing with dependency-only environment" in blocks[
         0
