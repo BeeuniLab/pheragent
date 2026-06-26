@@ -41,6 +41,7 @@ without-checkpoint-rollback
 without-final-clean-replay
 single-command-forward
 single-command-recovery
+single-command-forward-recovery
 single-command-rollback-regenerate
 block-rollback-regenerate
 block-live-repair-no-patch
@@ -158,6 +159,24 @@ Main implementation tasks:
 3. Done locally: block scripts are not patched in this mode.
 4. Done locally: recovery attempts are recorded with phase `command_recovery`
    instead of the normal `repair` phase.
+
+### `single-command-forward-recovery`
+
+Goal: combine command-level forward execution with live-container command
+recovery.
+
+Status: implemented locally.
+
+Expected behavior:
+
+- Execute block scripts one shell command chunk at a time.
+- If a command fails, do not roll back to the block checkpoint and do not patch
+  the block script.
+- Run a local `command_recovery` command in the current dirty container.
+- After successful recovery, resume the block from the command chunk after the
+  failed command.
+- Keep final clean replay enabled, matching the existing single-command
+  ablation defaults.
 
 ### `single-command-rollback-regenerate`
 

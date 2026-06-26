@@ -441,6 +441,16 @@ class EnvironmentBuilder:
                 checkpoints=checkpoints,
                 executions=executions,
             )
+        if self.request.ablation_mode == "single-command-forward-recovery":
+            return self._run_block_command_forward_recovery(
+                runtime=runtime,
+                block=block,
+                baseline_image=baseline_image,
+                repo_context=repo_context,
+                completed_blocks=completed_blocks,
+                checkpoints=checkpoints,
+                executions=executions,
+            )
 
         attempt = 1
         last_result = self._execute_block(runtime, block, attempt, baseline_image, executions)
@@ -1161,6 +1171,88 @@ class EnvironmentBuilder:
         self._recreate_from_checkpoint(runtime, baseline_image)
         return False, baseline_image
 
+    def _run_block_command_forward_recovery(
+        self,
+        *,
+        runtime: DockerRuntime,
+        block: CommandBlock,
+        baseline_image: str,
+        repo_context: RepoContext,
+        completed_blocks: list[CommandBlock],
+        checkpoints: list[Checkpoint],
+        executions: list[BlockExecution],
+    ) -> tuple[bool, str]:
+        block.status = "running"
+        self.store.update_block(block)
+        execution = self._execute_block_command_range(
+            runtime=runtime,
+            block=block,
+            attempt=1,
+            start_index=0,
+            checkpoint_image=baseline_image,
+            checkpoints=None,
+            executions=executions,
+            checkpoint_each_command=False,
+        )
+        if execution.result.ok:
+            validation_result = self._validate_block(
+                runtime,
+                block,
+                1,
+                baseline_image,
+                executions,
+            )
+            if validation_result is None or validation_result.ok:
+                finalize_result = self._finalize_checkpoint_tools(
+                    runtime=runtime,
+                    block=block,
+                    attempt=1,
+                    baseline_image=baseline_image,
+                    executions=executions,
+                )
+                if not finalize_result.ok:
+                    block.status = "failed"
+                    block.last_error = tail_text(finalize_result.combined_output, max_chars=4000)
+                    self.store.update_block(block)
+                    return False, baseline_image
+                checkpoint = runtime.commit(
+                    block_id=block.id,
+                    parent_image_ref=baseline_image,
+                    kind="success",
+                )
+                checkpoints.append(checkpoint)
+                block.success_checkpoint = checkpoint.image_ref
+                block.status = "succeeded"
+                self.store.update_block(block)
+                self._emit(f"run {self.run_id}: block {block.id} checkpoint {checkpoint.image_ref}")
+                return True, checkpoint.image_ref
+            return self._run_block_command_recovery(
+                runtime=runtime,
+                block=block,
+                baseline_image=baseline_image,
+                repo_context=repo_context,
+                completed_blocks=completed_blocks,
+                checkpoints=checkpoints,
+                executions=executions,
+                last_result=validation_result,
+            )
+
+        resume_command_index = None
+        if execution.failed_command_index is not None:
+            resume_command_index = execution.failed_command_index + 1
+        return self._run_block_command_recovery(
+            runtime=runtime,
+            block=block,
+            baseline_image=baseline_image,
+            repo_context=repo_context,
+            completed_blocks=completed_blocks,
+            checkpoints=checkpoints,
+            executions=executions,
+            last_result=execution.result,
+            failed_command_index=execution.failed_command_index,
+            resume_command_index=resume_command_index,
+        )
+
     def _run_block_command_regenerate(
         self,
         *,
@@ -1436,6 +1528,8 @@ class EnvironmentBuilder:
         checkpoints: list[Checkpoint],
         executions: list[BlockExecution],
         last_result: CommandResult,
+        failed_command_index: int | None = None,
+        resume_command_index: int | None = None,
     ) -> tuple[bool, str]:
         probe_failures = 0
         max_probe_failures = max(0, self.request.max_probe_failures)
@@ -1449,6 +1543,26 @@ class EnvironmentBuilder:
                 "will not patch the block script, and will keep the repaired "
                 "container state as the next block baseline.",
             ]
+        elif self.request.ablation_mode == "single-command-forward-recovery":
+            strategy_notes = [
+                "single-command-forward-recovery mode: the failed block has been "
+                "running one shell command at a time in the current live container.",
+                "Return a local recovery command for this dirty container state. "
+                "The orchestrator will not roll back to a checkpoint and will not "
+                "patch the block script.",
+            ]
+            commands = _split_shell_script_commands(block.script)
+            if failed_command_index is not None and 0 <= failed_command_index < len(commands):
+                strategy_notes.extend(
+                    [
+                        f"Failed command {failed_command_index + 1}: "
+                        f"{commands[failed_command_index]}",
+                        "After the recovery command succeeds, the orchestrator "
+                        "will resume with the next shell command chunk in this "
+                        "block, so the recovery command must complete the failed "
+                        "command's intended effect.",
+                    ]
+                )
         else:
             strategy_notes = [
                 "single-command-recovery mode: the failed block already ran in "
@@ -1572,6 +1686,28 @@ class EnvironmentBuilder:
             block.repair_attempts += 1
             block.status = "repaired"
             self.store.update_block(block)
+            if resume_command_index is not None:
+                replay = self._execute_block_command_range(
+                    runtime=runtime,
+                    block=block,
+                    attempt=repair_attempt + 1,
+                    start_index=resume_command_index,
+                    checkpoint_image=baseline_image,
+                    checkpoints=None,
+                    executions=executions,
+                    checkpoint_each_command=False,
+                )
+                last_result = replay.result
+                if not replay.result.ok:
+                    if replay.failed_command_index is not None:
+                        failed_command_index = replay.failed_command_index
+                        resume_command_index = replay.failed_command_index + 1
+                    else:
+                        failed_command_index = None
+                        resume_command_index = None
+                    continue
+                failed_command_index = None
+                resume_command_index = None
             validation_result = self._validate_block(
                 runtime,
                 block,

@@ -395,6 +395,120 @@ def test_environment_builder_single_command_recovery_repairs_live_container(
     assert result.final_clean_replay_ok is True
 
 
+def test_environment_builder_single_command_forward_recovery_repairs_and_resumes(
+    tmp_path: Path,
+) -> None:
+    class CommandForwardRecoveryRuntime(FakeRuntime):
+        def __init__(self, request: BuildRequest, run_id: str):
+            super().__init__(request, run_id)
+            self.repaired = False
+            self.after_ran = False
+
+        def execute_command(self, command: str, *, timeout: float) -> CommandResult:
+            del timeout
+            if "container preflight" in command:
+                return CommandResult(exit_code=0, stdout="tool:python3=/usr/bin/python3\n")
+            if command == "repair-live-command":
+                self.repaired = True
+                return CommandResult(exit_code=0, stdout="repaired")
+            if command == "validate-live":
+                if self.repaired and self.after_ran:
+                    return CommandResult(exit_code=0, stdout="validation ok")
+                return CommandResult(exit_code=1, stderr="missing resumed command")
+            if "needs-fix" in command and not self.repaired:
+                return CommandResult(exit_code=1, stderr="needs-fix failed")
+            if "echo after" in command:
+                if self.repaired:
+                    self.after_ran = True
+                    return CommandResult(exit_code=0, stdout="after")
+                return CommandResult(exit_code=1, stderr="after ran before repair")
+            return CommandResult(exit_code=0, stdout="ok")
+
+    class CommandForwardRecoveryPlanner:
+        def __init__(self) -> None:
+            self.contexts: list[RepairContext | None] = []
+
+        def suggest(self, block, result, *, context=None, heuristic_hints=None):
+            del block, result, heuristic_hints
+            self.contexts.append(context)
+            return [
+                RepairCommand(
+                    title="Repair live command",
+                    command="repair-live-command",
+                    patch_script="echo should-not-be-patched",
+                )
+            ]
+
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="single-command-forward-recovery",
+        ablation_mode="single-command-forward-recovery",
+        max_repair_attempts=1,
+    )
+    planner = StaticPlanner(
+        [
+            CommandBlock(
+                id="01-tooling",
+                title="Tooling",
+                goal="install",
+                script=(
+                    "#!/bin/sh\n"
+                    "export DEMO_FLAG=1\n"
+                    "echo first\n"
+                    "needs-fix\n"
+                    "echo after\n"
+                ),
+                validation_command="validate-live",
+                order=1,
+            ),
+        ]
+    )
+    repair_llm = CommandForwardRecoveryPlanner()
+
+    result = EnvironmentBuilder(
+        request,
+        planner=planner,
+        repair_planner=RepairPlanner(llm_planner=repair_llm),
+        runtime_factory=CommandForwardRecoveryRuntime,
+    ).build()
+
+    runtime = FakeRuntime.instances[-1]
+    script = (result.scripts_dir / "01-tooling.sh").read_text(encoding="utf-8")
+    phases = [execution.phase for execution in result.executions]
+    command_forward = [
+        execution for execution in result.executions if execution.phase == "command_forward"
+    ]
+    command_texts = [execution.command[-1] for execution in command_forward if execution.command]
+
+    assert result.ok
+    assert result.progress_control is not None
+    assert result.progress_control.forward_granularity == "command"
+    assert result.progress_control.recovery_granularity == "command"
+    assert result.progress_control.patch_back is False
+    assert result.progress_control.checkpoint_rollback is False
+    assert result.progress_control.final_clean_replay is True
+    assert "should-not-be-patched" not in script
+    assert phases.count("command_recovery") == 1
+    assert "repair" not in phases
+    assert "block" not in phases
+    assert any("needs-fix" in command for command in command_texts)
+    assert any("echo after" in command for command in command_texts)
+    assert runtime.recreated == ["fake:None-workspace"]
+    assert "fake:01-tooling-repaired" in runtime.commits
+    assert result.final_clean_replay_ok is True
+    assert repair_llm.contexts
+    assert repair_llm.contexts[0] is not None
+    assert any(
+        "single-command-forward-recovery mode" in note
+        for note in repair_llm.contexts[0].strategy_notes
+    )
+    assert any("Failed command 3" in note for note in repair_llm.contexts[0].strategy_notes)
+
+
 def test_environment_builder_single_command_rollback_regenerate_resumes_failed_command(
     tmp_path: Path,
 ) -> None:

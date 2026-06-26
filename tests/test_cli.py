@@ -104,6 +104,25 @@ def test_build_accepts_single_command_recovery_ablation(tmp_path: Path) -> None:
     assert request.ablation_mode == "single-command-recovery"
 
 
+def test_build_accepts_single_command_forward_recovery_ablation(tmp_path: Path) -> None:
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "build",
+            "--repo",
+            str(tmp_path),
+            "--base-dockerfile",
+            str(tmp_path / "Dockerfile"),
+            "--ablation",
+            "single-command-forward-recovery",
+        ]
+    )
+
+    request = _request_from_args(args, require_dockerfile=True)
+
+    assert request.ablation_mode == "single-command-forward-recovery"
+
+
 def test_build_accepts_single_command_rollback_regenerate_ablation(tmp_path: Path) -> None:
     parser = _build_parser()
     args = parser.parse_args(
@@ -304,6 +323,29 @@ def test_build_projects_accepts_block_rollback_regenerate_ablation(tmp_path: Pat
     request = _batch_base_request_from_args(args)
 
     assert request.ablation_mode == "block-rollback-regenerate"
+
+
+def test_build_projects_accepts_single_command_forward_recovery_ablation(
+    tmp_path: Path,
+) -> None:
+    projects_file = tmp_path / "projects.txt"
+    projects_file.write_text("owner/repo abc123\n", encoding="utf-8")
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "build-projects",
+            "--projects-file",
+            str(projects_file),
+            "--base-dockerfile",
+            str(tmp_path / "Dockerfile"),
+            "--ablation",
+            "single-command-forward-recovery",
+        ]
+    )
+
+    request = _batch_base_request_from_args(args)
+
+    assert request.ablation_mode == "single-command-forward-recovery"
 
 
 def test_build_projects_rejects_zero_jobs(tmp_path: Path) -> None:
