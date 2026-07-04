@@ -5,6 +5,7 @@ import argparse
 import json
 import shlex
 import shutil
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"oracle commands: {oracle_command_count}")
     print(f"model: {args.model}")
     print(f"max repair attempts: {args.max_repair_attempts}")
+    print(f"repo2run jobs: {args.jobs}")
     print(
         "project retries: "
         f"{args.project_retries} extra, {args.project_retries + 1} total attempts"
@@ -118,31 +120,18 @@ def main(argv: list[str] | None = None) -> int:
             print("  " + " ".join(shlex.quote(part) for part in command))
         return 0
 
-    results: list[dict[str, Any]] = []
-    failure_count = 0
-    for index, item in enumerate(runnable, start=1):
-        payload = run_project(
-            args=args,
-            index=index,
-            total=len(runnable),
-            item=item,
-            runner=runner,
-            projects_root=projects_root,
-            state_root=state_root,
-            project_files_root=project_files_root,
-            logs_root=logs_root,
-            base_dockerfile=base_dockerfile,
-        )
-        batch.append_jsonl(jsonl_path, payload)
-        results.append(payload)
-        if payload["ok"]:
-            print(f"[repo2run] ok: {payload['owner_repo']}", flush=True)
-            continue
-        failure_count += 1
-        batch.append_failure(failures_path, payload)
-        print(f"[repo2run] failed: {payload['owner_repo']} rc={payload['returncode']}")
-        if args.stop_on_failure:
-            break
+    results, failure_count = run_projects(
+        args=args,
+        runnable=runnable,
+        runner=runner,
+        projects_root=projects_root,
+        state_root=state_root,
+        project_files_root=project_files_root,
+        logs_root=logs_root,
+        base_dockerfile=base_dockerfile,
+        jsonl_path=jsonl_path,
+        failures_path=failures_path,
+    )
 
     summary = {
         "ok": failure_count == 0,
@@ -159,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
         "skipped_existing_success": len(skipped_existing_success),
         "existing_result_skips": skipped_existing_results,
         "existing_success_skips": skipped_existing_success,
-        "results": results,
+        "results": sorted(results, key=lambda payload: payload["index"]),
     }
     summary_path.write_text(
         json.dumps(summary, indent=2, ensure_ascii=True) + "\n",
@@ -175,6 +164,127 @@ def main(argv: list[str] | None = None) -> int:
         print(f"failures: {failures_path}")
         return 1
     return 0
+
+
+def run_projects(
+    *,
+    args: argparse.Namespace,
+    runnable: list[dict[str, Any]],
+    runner: list[str],
+    projects_root: Path,
+    state_root: Path,
+    project_files_root: Path,
+    logs_root: Path,
+    base_dockerfile: Path,
+    jsonl_path: Path,
+    failures_path: Path,
+) -> tuple[list[dict[str, Any]], int]:
+    results: list[dict[str, Any]] = []
+    failure_count = 0
+    if args.jobs == 1:
+        for index, item in enumerate(runnable, start=1):
+            payload = run_project(
+                args=args,
+                index=index,
+                total=len(runnable),
+                item=item,
+                runner=runner,
+                projects_root=projects_root,
+                state_root=state_root,
+                project_files_root=project_files_root,
+                logs_root=logs_root,
+                base_dockerfile=base_dockerfile,
+            )
+            failed = record_project_result(
+                payload,
+                jsonl_path=jsonl_path,
+                failures_path=failures_path,
+                results=results,
+            )
+            if failed:
+                failure_count += 1
+                if args.stop_on_failure:
+                    break
+        return results, failure_count
+
+    indexed_items = list(enumerate(runnable, start=1))
+    next_item = 0
+    stop_submitting = False
+    stop_notice_printed = False
+    futures: dict[Future[dict[str, Any]], tuple[int, dict[str, Any]]] = {}
+
+    def submit_until_full(executor: ThreadPoolExecutor) -> None:
+        nonlocal next_item
+        while (
+            not stop_submitting
+            and next_item < len(indexed_items)
+            and len(futures) < args.jobs
+        ):
+            index, item = indexed_items[next_item]
+            next_item += 1
+            future = executor.submit(
+                run_project,
+                args=args,
+                index=index,
+                total=len(runnable),
+                item=item,
+                runner=runner,
+                projects_root=projects_root,
+                state_root=state_root,
+                project_files_root=project_files_root,
+                logs_root=logs_root,
+                base_dockerfile=base_dockerfile,
+            )
+            futures[future] = (index, item)
+
+    with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+        submit_until_full(executor)
+        while futures:
+            completed, _ = wait(futures, return_when=FIRST_COMPLETED)
+            for future in completed:
+                futures.pop(future)
+                payload = future.result()
+                failed = record_project_result(
+                    payload,
+                    jsonl_path=jsonl_path,
+                    failures_path=failures_path,
+                    results=results,
+                )
+                if not failed:
+                    continue
+                failure_count += 1
+                if args.stop_on_failure:
+                    stop_submitting = True
+                    if not stop_notice_printed and futures:
+                        print(
+                            "[repo2run] stop-on-failure: waiting for running jobs, "
+                            "no new projects will be submitted",
+                            flush=True,
+                        )
+                        stop_notice_printed = True
+            submit_until_full(executor)
+    return results, failure_count
+
+
+def record_project_result(
+    payload: dict[str, Any],
+    *,
+    jsonl_path: Path,
+    failures_path: Path,
+    results: list[dict[str, Any]],
+) -> bool:
+    batch.append_jsonl(jsonl_path, payload)
+    results.append(payload)
+    if payload["ok"]:
+        print(f"[repo2run] ok: {payload['owner_repo']}", flush=True)
+        return False
+
+    batch.append_failure(failures_path, payload)
+    print(
+        f"[repo2run] failed: {payload['owner_repo']} rc={payload['returncode']}",
+        flush=True,
+    )
+    return True
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -229,7 +339,12 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--oracle-timeout", type=float, default=1800.0)
     parser.add_argument("--docker-build-timeout", type=float, default=7200.0)
     parser.add_argument("--clone-timeout", type=float, default=1800.0)
-    parser.add_argument("--jobs", type=int, default=1)
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        help="Number of repo2run projects to run concurrently.",
+    )
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--only", default=None, help="Regex matched against owner/repo.")
@@ -424,7 +539,7 @@ def build_command(
         "--max-probe-failures",
         str(args.max_probe_failures),
         "--jobs",
-        str(args.jobs),
+        "1",
     ]
     if args.model:
         command.extend(["--model", args.model])
