@@ -42,8 +42,10 @@ def test_rule_based_planner_writes_preflight_and_python_blocks(tmp_path: Path) -
     deps_block = next(block for block in blocks if block.id == "30-python-deps")
     test_block = next(block for block in blocks if block.id == "50-test-tooling")
     assert "pip install" in deps_block.script
-    assert "pip install pytest" not in deps_block.script
-    assert "pip install pytest" in test_block.script
+    assert "pytest pluggy iniconfig packaging" in deps_block.script
+    assert "pytest pluggy iniconfig packaging" in test_block.script
+    assert deps_block.validation_command is not None
+    assert "--collect-only" in deps_block.validation_command
     assert deps_block.script.startswith("#!/bin/sh")
 
 

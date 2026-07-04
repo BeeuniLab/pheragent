@@ -599,6 +599,8 @@ def _sanitize_validation_command(command: str | None) -> str | None:
     if command is None:
         return command
     command = _sanitize_script_command(command)
+    if "pip check" in command.lower():
+        return _python_collect_only_validation_command()
     if "__version__" not in command:
         return command
     patched = re.sub(r"print\(([A-Za-z_][A-Za-z0-9_]*)\.__version__\)", r"print(\1)", command)
@@ -764,6 +766,12 @@ def _uses_task_or_service_validation(script: str, validation_command: str | None
             "sleep 20",
             "wagtail start",
             "django-admin startproject",
+            "your_openai_api_key",
+            "your-openai-api-key",
+            "openai_api_key_here",
+            "api key here",
+            "api_key ==",
+            "openai_api_key ==",
         )
     )
 
@@ -827,7 +835,11 @@ if [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ] || [ -f requirem
   "$PYTHON_BIN" -m pip --version >/dev/null 2>&1 \
     || "$PYTHON_BIN" -m ensurepip --upgrade \
     || true
-  "$PYTHON_BIN" -m pytest --version >/dev/null 2>&1 || "$PYTHON_BIN" -m pip install pytest
+  "$PYTHON_BIN" - <<'PY' >/dev/null 2>&1 || \
+    "$PYTHON_BIN" -m pip install --upgrade pytest pluggy iniconfig packaging
+import pytest
+import pluggy
+PY
   if [ -d tests ] && grep -R "@pytest.mark.asyncio\\|pytest_asyncio" tests pyproject.toml \
     >/dev/null 2>&1; then
     "$PYTHON_BIN" -m pip install pytest-asyncio
@@ -867,6 +879,7 @@ ensure_python3
 mkdir -p .cache/uv .cache/pip
 export UV_CACHE_DIR=/workspace/repo/.cache/uv
 export PIP_CACHE_DIR=/workspace/repo/.cache/pip
+git config --global --add safe.directory /workspace/repo >/dev/null 2>&1 || true
 
 ensure_pytest() {
   target_python="$1"
@@ -876,7 +889,12 @@ ensure_pytest() {
   "$target_python" -m pip --version >/dev/null 2>&1 \
     || "$target_python" -m ensurepip --upgrade \
     || true
-  "$target_python" -m pytest --version >/dev/null 2>&1 || "$target_python" -m pip install pytest
+  "$target_python" - <<'PY' >/dev/null 2>&1 || \
+    "$target_python" -m pip install --upgrade pytest pluggy iniconfig packaging
+import pytest
+import pluggy
+PY
+  "$target_python" -m pytest --version
 }
 
 expose_venv_tools() {
@@ -935,6 +953,7 @@ cuda_source_packages = {
 }
 changed = False
 lines: list[str] = []
+seen_requirements: set[str] = set()
 for raw in source.read_text(encoding="utf-8").splitlines():
     stripped = raw.strip()
     if not stripped or stripped.startswith("#"):
@@ -946,6 +965,12 @@ for raw in source.read_text(encoding="utf-8").splitlines():
         continue
     name = re.split(r"\\s*(?:===|==|~=|!=|<=|>=|<|>|;)", stripped, 1)[0]
     name = name.split("[", 1)[0].strip().lower().replace("_", "-")
+    if name and name in seen_requirements:
+        changed = True
+        print(f"[pheragent] skipped duplicate requirement {name}", file=sys.stderr)
+        continue
+    if name:
+        seen_requirements.add(name)
     if skip_cuda_deps and name in cuda_source_packages:
         changed = True
         print(
@@ -992,7 +1017,7 @@ else
     rm -rf .venv
     python3 -m venv .venv
   fi
-  ./.venv/bin/python -m pip install --upgrade pip setuptools wheel
+  ./.venv/bin/python -m pip install --upgrade pip 'setuptools>=68.2,<82' wheel
   if [ -f requirements.txt ]; then
     install_requirements requirements.txt
   fi
@@ -1075,9 +1100,20 @@ def _safe_go_dependency_validation_command() -> str:
 
 
 def _safe_python_dependency_validation_command() -> str:
+    return _python_collect_only_validation_command()
+
+
+def _python_collect_only_validation_command() -> str:
     return (
-        "cd /workspace/repo && test -x .venv/bin/python && "
-        ".venv/bin/python -m pip check"
+        "cd /workspace/repo && ( "
+        "test -x .venv/bin/python; "
+        "./.venv/bin/python -m pytest --collect-only -q; "
+        "status=$?; "
+        'if [ "$status" -eq 5 ]; then '
+        'echo "[pheragent] no pytest tests collected"; exit 0; '
+        "fi; "
+        'exit "$status"'
+        " )"
     )
 
 
@@ -1119,12 +1155,24 @@ Rules:
   ecosystem when useful, such as 20-python-runtime, 21-node-runtime,
   30-python-deps, 31-node-deps. Keep the total block count capped at 7 when
   practical.
+- For Python repositories, inspect Python version signals before planning the
+  runtime block: `project.requires-python` in pyproject.toml, setup.cfg/setup.py
+  metadata, `.python-version`, `runtime.txt`, tox/nox configs, and CI matrices.
+  Choose a compatible Python minor version such as 3.10, 3.11, or 3.12 when the
+  repository gives a constraint; do not assume the base image's `python3` is
+  compatible. If the current base cannot provide the required interpreter, make
+  the runtime block fail clearly instead of editing project files.
 - Use POSIX sh, not bash-specific syntax.
 - Keep commands deterministic and idempotent where practical.
 - Do not start long-running services in setup blocks.
 - Do not use host paths outside /workspace/repo.
 - Build/test prep validation must verify tools can run, not require the full test
   suite to pass. Prefer import checks, version checks, or pytest --collect-only.
+- Do not use `pip check` as a success criterion for setup blocks. Dependency
+  metadata conflicts may be real but should be diagnostic, not the primary
+  environment success gate. For Python dependency and build/test prep blocks,
+  prefer `.venv/bin/python -m pytest --collect-only -q`, treating exit code 5
+  (no tests collected) as success.
 - Do not create conftest.py, sitecustomize.py, or monkeypatch application routes
   to make project tests pass; this agent builds environments, not application fixes.
 - Prefer the provided fallback_blocks when they are suitable, and improve them only

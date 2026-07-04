@@ -218,6 +218,101 @@ def test_environment_builder_oracle_uses_inherited_python_environment(
     )
 
 
+def test_environment_builder_repairs_failed_oracle_validation(tmp_path: Path) -> None:
+    class OracleRuntime(FakeRuntime):
+        def __init__(self, request: BuildRequest, run_id: str):
+            super().__init__(request, run_id)
+            self.oracle_ready = False
+
+        def recreate_from(self, image_ref: str) -> str:
+            self.oracle_ready = False
+            return super().recreate_from(image_ref)
+
+        def execute_script(self, script_path: Path, *, timeout: float) -> CommandResult:
+            script = script_path.read_text(encoding="utf-8")
+            if "install-oracle-dep" in script:
+                self.oracle_ready = True
+                return CommandResult(exit_code=0, stdout="oracle dep installed")
+            return super().execute_script(script_path, timeout=timeout)
+
+        def execute_command(self, command: str, *, timeout: float) -> CommandResult:
+            del timeout
+            self.commands.append(command)
+            if "container preflight" in command:
+                return CommandResult(
+                    exit_code=0,
+                    stdout="tool:python3=/usr/bin/python3\npython.version=3.12.0\n",
+                )
+            if command == "install-oracle-dep":
+                self.oracle_ready = True
+                return CommandResult(exit_code=0, stdout="installed")
+            if "oracle-check" in command:
+                if self.oracle_ready:
+                    return CommandResult(exit_code=0, stdout="oracle ok")
+                return CommandResult(exit_code=1, stderr="missing oracle dependency")
+            return CommandResult(exit_code=0, stdout="ok")
+
+    class OracleRepairPlanner:
+        def suggest(self, block, result, *, context=None, heuristic_hints=None):
+            del block, result, context, heuristic_hints
+            return [
+                RepairCommand(
+                    title="Install oracle dependency",
+                    command="install-oracle-dep",
+                    patch_script="install-oracle-dep",
+                )
+            ]
+
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    oracle_file = tmp_path / "oracle.json"
+    oracle_file.write_text(
+        json.dumps({"fixed_test_commands": [{"commands": ["oracle-check"]}]}),
+        encoding="utf-8",
+    )
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="oracle-repair",
+        oracle_file=oracle_file,
+        max_repair_attempts=1,
+    )
+    planner = StaticPlanner(
+        [
+            CommandBlock(
+                id="00-tooling",
+                title="Tooling",
+                goal="install",
+                script="#!/bin/sh\necho tooling\n",
+                order=0,
+            )
+        ]
+    )
+
+    result = EnvironmentBuilder(
+        request,
+        planner=planner,
+        repair_planner=RepairPlanner(llm_planner=OracleRepairPlanner()),
+        runtime_factory=OracleRuntime,
+    ).build()
+
+    runtime = FakeRuntime.instances[-1]
+    oracle_block = result.blocks[-1]
+    phases = [execution.phase for execution in result.executions]
+
+    assert result.ok
+    assert oracle_block.id == "01-oracle-validation"
+    assert oracle_block.status == "succeeded"
+    assert "install-oracle-dep" in (result.scripts_dir / "01-oracle-validation.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "oracle" in phases
+    assert "repair" in phases
+    assert "validation" in phases
+    assert runtime.recreated.count("fake:final-clean-replay-clean-replay") >= 2
+
+
 def test_environment_builder_inlines_inherited_prelude_in_planned_blocks(
     tmp_path: Path,
 ) -> None:

@@ -404,9 +404,9 @@ def test_openai_responses_planner_uses_safe_python_dependency_script() -> None:
         0
     ].script
     assert "ln -sf /workspace/repo/.venv/bin/pytest /usr/local/bin/pytest" in blocks[0].script
-    assert blocks[0].validation_command == (
-        "cd /workspace/repo && test -x .venv/bin/python && .venv/bin/python -m pip check"
-    )
+    assert blocks[0].validation_command is not None
+    assert "pytest --collect-only -q" in blocks[0].validation_command
+    assert "pip check" not in blocks[0].validation_command
 
 
 def test_openai_responses_planner_treats_python_language_deps_as_safe_dependency_block() -> None:
@@ -440,9 +440,9 @@ def test_openai_responses_planner_treats_python_language_deps_as_safe_dependency
     assert "ensure_pytest /workspace/repo/.venv/bin/python" in blocks[0].script
     assert "if [ ! -x .venv/bin/python ]; then" in blocks[0].script
     assert "rm -rf .venv" in blocks[0].script
-    assert blocks[0].validation_command == (
-        "cd /workspace/repo && test -x .venv/bin/python && .venv/bin/python -m pip check"
-    )
+    assert blocks[0].validation_command is not None
+    assert "pytest --collect-only -q" in blocks[0].validation_command
+    assert "pip check" not in blocks[0].validation_command
 
 
 def test_openai_responses_planner_uses_collect_only_for_build_test_validation() -> None:
@@ -638,6 +638,93 @@ def test_openai_responses_planner_replaces_task_validation_build_test_script() -
     assert "node --version" in blocks[0].script
     assert blocks[0].validation_command is not None
     assert "localhost" not in blocks[0].validation_command
+
+
+def test_openai_responses_planner_replaces_placeholder_secret_validation() -> None:
+    planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
+
+    blocks = planner._parse_blocks(
+        json.dumps(
+            {
+                "blocks": [
+                    {
+                        "id": "50-test-tooling",
+                        "order": 50,
+                        "title": "Build/Test Prep",
+                        "goal": "validate test tooling",
+                        "script": (
+                            "python - <<'PY'\n"
+                            "import os\n"
+                            "assert os.environ.get('OPENAI_API_KEY') == "
+                            "'your_openai_api_key_here'\n"
+                            "PY"
+                        ),
+                        "validation_command": (
+                            "python -c \"import os; assert os.environ.get"
+                            "('OPENAI_API_KEY') == 'your_openai_api_key_here'\""
+                        ),
+                    }
+                ]
+            }
+        )
+    )
+
+    assert "your_openai_api_key_here" not in blocks[0].script
+    assert blocks[0].validation_command is not None
+    assert "your_openai_api_key_here" not in blocks[0].validation_command
+    assert "pip --version" in blocks[0].validation_command
+
+
+def test_openai_responses_planner_python_deps_script_has_common_repo2run_guards() -> None:
+    planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
+
+    blocks = planner._parse_blocks(
+        json.dumps(
+            {
+                "blocks": [
+                    {
+                        "id": "30-python-deps",
+                        "order": 30,
+                        "title": "Python Dependencies",
+                        "goal": "install python deps",
+                        "script": "python3 -m venv .venv && .venv/bin/pip install -r requirements.txt",
+                        "validation_command": ".venv/bin/python -m pytest --version",
+                    }
+                ]
+            }
+        )
+    )
+
+    script = blocks[0].script
+    assert "safe.directory /workspace/repo" in script
+    assert "import pluggy" in script
+    assert "skipped duplicate requirement" in script
+    assert "'setuptools>=68.2,<82'" in script
+
+
+def test_openai_responses_planner_replaces_pip_check_validation() -> None:
+    planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
+
+    blocks = planner._parse_blocks(
+        json.dumps(
+            {
+                "blocks": [
+                    {
+                        "id": "60-validation",
+                        "order": 60,
+                        "title": "Validation",
+                        "goal": "validate environment",
+                        "script": "echo ok",
+                        "validation_command": ".venv/bin/python -m pip check",
+                    }
+                ]
+            }
+        )
+    )
+
+    assert blocks[0].validation_command is not None
+    assert "pytest --collect-only -q" in blocks[0].validation_command
+    assert "pip check" not in blocks[0].validation_command
 
 
 def test_openai_responses_planner_replaces_node_runtime_checks_with_safe_script() -> None:

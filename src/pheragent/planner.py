@@ -287,10 +287,7 @@ def _python_runtime_validation_command() -> str:
 
 
 def _python_dependency_validation_command() -> str:
-    return (
-        "test -x .venv/bin/python && "
-        './.venv/bin/python -c "import sys; print(sys.executable); print(sys.version)"'
-    )
+    return _pytest_collect_validation_command()
 
 
 def _node_runtime_validation_command() -> str:
@@ -527,6 +524,11 @@ fi
 if [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; then
   ./.venv/bin/python -m pip install -e '.[dev]' || ./.venv/bin/python -m pip install -e .
 fi
+./.venv/bin/python - <<'PY' >/dev/null 2>&1 || \
+  ./.venv/bin/python -m pip install --upgrade pytest pluggy iniconfig packaging
+import pytest
+import pluggy
+PY
 """
     )
 
@@ -656,7 +658,11 @@ def _python_test_tooling_script() -> str:
     return """
 echo "[pheragent] preparing python test tooling"
 test -x .venv/bin/python
-./.venv/bin/python -m pytest --version >/dev/null 2>&1 || ./.venv/bin/python -m pip install pytest
+./.venv/bin/python - <<'PY' >/dev/null 2>&1 || \
+  ./.venv/bin/python -m pip install --upgrade pytest pluggy iniconfig packaging
+import pytest
+import pluggy
+PY
 """
 
 

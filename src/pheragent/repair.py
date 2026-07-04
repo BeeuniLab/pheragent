@@ -355,6 +355,7 @@ class OpenAIResponsesRepairPlanner:
             validation = _optional_text(
                 item.get("patch_validation_command") or item.get("validation_command")
             )
+            validation = _sanitize_repair_validation_command(validation)
             repairs.append(
                 RepairCommand(
                     title=title,
@@ -657,6 +658,31 @@ def _heuristic_repair_hints(block: CommandBlock, result: CommandResult) -> list[
                 patch_script=_project_venv_pip_command(),
             )
         )
+    if (
+        "no module named 'pluggy'" in output
+        or 'no module named "pluggy"' in output
+        or "no module named pytest" in output
+        or "no module named 'pytest'" in output
+    ):
+        suggestions.append(
+            RepairCommand(
+                title="Repair pytest installation",
+                command=_project_venv_pip_command(),
+                patch_script=_project_venv_pip_command(),
+            )
+        )
+    if "detected dubious ownership" in output or "safe.directory" in output:
+        suggestions.append(
+            RepairCommand(
+                title="Trust container repo worktree",
+                command="git config --global --add safe.directory /workspace/repo",
+                patch_script="git config --global --add safe.directory /workspace/repo || true",
+            )
+        )
+    if "has requirement setuptools<82" in output or (
+        "setuptools" in output and "but you have setuptools" in output
+    ):
+        suggestions.append(_setuptools_upper_bound_repair())
     if "pnpm" in output and "requires at least node.js" in output:
         suggestions.append(
             RepairCommand(
@@ -714,6 +740,15 @@ def _heuristic_repair_hints(block: CommandBlock, result: CommandResult) -> list[
                     patch_validation_command=patched_validation,
                 )
             )
+    if _looks_like_secret_placeholder_validation(output, block.validation_command):
+        suggestions.append(
+            RepairCommand(
+                title="Relax placeholder secret validation",
+                command="true",
+                patch_script="",
+                patch_validation_command=_generic_environment_validation_command(),
+            )
+        )
 
     return suggestions
 
@@ -1028,8 +1063,22 @@ def _project_venv_pip_command() -> str:
         "if [ ! -x .venv/bin/python ]; then rm -rf .venv && python3 -m venv .venv; fi && "
         "./.venv/bin/python -m pip --version >/dev/null 2>&1 || "
         "./.venv/bin/python -m ensurepip --upgrade || true; "
-        "./.venv/bin/python -m pip install --upgrade pip setuptools wheel pytest && "
+        "./.venv/bin/python -m pip install --upgrade "
+        "pip 'setuptools>=68.2,<82' wheel pytest pluggy iniconfig packaging && "
         "./.venv/bin/python -m pytest --version"
+    )
+
+
+def _setuptools_upper_bound_repair() -> RepairCommand:
+    command = (
+        "cd /workspace/repo && "
+        "./.venv/bin/python -m pip install --upgrade 'setuptools>=68.2,<82' wheel && "
+        "./.venv/bin/python -m pip --version"
+    )
+    return RepairCommand(
+        title="Use dependency-compatible setuptools",
+        command=command,
+        patch_script="./.venv/bin/python -m pip install --upgrade 'setuptools>=68.2,<82' wheel",
     )
 
 
@@ -1288,6 +1337,28 @@ def _pytest_tooling_validation_command() -> str:
     return "./.venv/bin/python -m pytest --version"
 
 
+def _pytest_collect_only_validation_command() -> str:
+    return (
+        "cd /workspace/repo && ( "
+        "test -x .venv/bin/python; "
+        "./.venv/bin/python -m pytest --collect-only -q; "
+        "status=$?; "
+        'if [ "$status" -eq 5 ]; then '
+        'echo "[pheragent] no pytest tests collected"; exit 0; '
+        "fi; "
+        'exit "$status"'
+        " )"
+    )
+
+
+def _sanitize_repair_validation_command(command: str | None) -> str | None:
+    if command is None:
+        return None
+    if "pip check" in command.lower():
+        return _pytest_collect_only_validation_command()
+    return command
+
+
 def _pytest_collection_is_application_behavior(output: str) -> bool:
     markers = (
         "importerror while loading conftest",
@@ -1356,6 +1427,34 @@ def _dedupe_requirements_repair() -> RepairCommand:
         title="Install deduplicated requirements copy",
         command=command,
         patch_script=command,
+    )
+
+
+def _looks_like_secret_placeholder_validation(
+    output: str,
+    validation_command: str | None,
+) -> bool:
+    haystack = f"{output}\n{validation_command or ''}".lower()
+    return any(
+        token in haystack
+        for token in (
+            "your_openai_api_key",
+            "your-openai-api-key",
+            "openai_api_key_here",
+            "api key here",
+            "api_key ==",
+            "openai_api_key ==",
+        )
+    )
+
+
+def _generic_environment_validation_command() -> str:
+    return (
+        "cd /workspace/repo && "
+        "if [ -x .venv/bin/python ]; then ./.venv/bin/python -m pip --version >/dev/null 2>&1; "
+        "elif command -v python3 >/dev/null 2>&1; then python3 --version >/dev/null 2>&1; fi; "
+        "if [ -f package.json ] && command -v node >/dev/null 2>&1; then "
+        "node --version >/dev/null 2>&1; fi"
     )
 
 
@@ -1795,6 +1894,12 @@ Rules:
 - For Python projects with `.venv/bin/python`, use `.venv/bin/python -m pip`
   and `.venv/bin/python -m pytest`. Do not use system `python3 -m pip install`
   when PEP 668 or externally-managed-environment is present.
+- For Python version failures, inspect `requires-python`, `.python-version`,
+  `runtime.txt`, tox/nox config, and CI hints. Prefer installing a compatible
+  interpreter such as python3.10, python3.11, or python3.12 and recreating
+  `.venv`; do not edit repository metadata or source to bypass version
+  constraints. If the base image cannot provide that interpreter, report that
+  base/runtime selection is the blocker.
 - The block is executed by POSIX sh. Use `. .venv/bin/activate` or direct
   `.venv/bin/python -m pip`; do not try to repair `source: not found` by
   calling transient block scripts, catting scripts into themselves, or rewriting
@@ -1816,6 +1921,22 @@ Rules:
   edit requirements.txt and do not rely on the legacy resolver as the primary
   fix. Generate a temporary sanitized requirements file under /tmp and install
   from that file, preserving the original repo file unchanged.
+- For Python dependency errors caused by packages declaring an incompatible
+  Requires-Python range, treat the package as an environment compatibility
+  issue. Prefer interpreter-compatible pins, optional-dependency avoidance, or
+  dependency-only installs over editing project source.
+- For git "dubious ownership" failures inside the container, configure
+  `git config --global --add safe.directory /workspace/repo`; do not rewrite
+  repository ownership from the host.
+- Never require real external secrets for environment setup validation. If a
+  generated validation checks placeholder API keys such as
+  `your_openai_api_key_here`, replace that validation with a local tool/import
+  check instead.
+- Do not use `pip check` as a success criterion. If validation needs to prove a
+  Python environment is usable, prefer `.venv/bin/python -m pytest --collect-only
+  -q` with exit code 5 treated as success, or use `.venv/bin/python -m pytest
+  --version` when collection imports application code that needs services or
+  credentials.
 - Do not edit application source, tests, conftest.py, or sitecustomize.py to make
   tests pass. If validation is running the full test suite and failures are
   application behavior, replace validation with a tool/import/pytest collect-only

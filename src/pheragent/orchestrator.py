@@ -25,7 +25,7 @@ from .models import (
 from .oracle import load_oracle_commands
 from .planner import BlockPlanner
 from .repair import RepairCommand, RepairPlanner, RepairProbeCommand, make_repair_planner
-from .utils import new_run_id, normalize_posix_source, tail_text
+from .utils import new_run_id, normalize_posix_source, shell_script, tail_text
 
 RuntimeFactory = Callable[[BuildRequest, str], DockerRuntime]
 
@@ -297,10 +297,14 @@ class EnvironmentBuilder:
 
             if self.request.oracle_file is not None:
                 self._emit(f"run {self.run_id}: oracle validation")
-                oracle_ok = self._run_oracle_validation(
+                oracle_ok, current_image = self._run_oracle_validation_with_repair(
                     runtime=runtime,
                     checkpoint_image=current_image,
+                    repo_context=context,
+                    blocks=blocks,
+                    checkpoints=checkpoints,
                     executions=executions,
+                    workspace_image=workspace_image,
                 )
                 if not oracle_ok:
                     self._emit(f"run {self.run_id}: oracle validation failed")
@@ -1964,20 +1968,74 @@ class EnvironmentBuilder:
         self.store.append_execution(execution)
         return result
 
-    def _run_oracle_validation(
+    def _run_oracle_validation_with_repair(
         self,
         *,
         runtime: DockerRuntime,
         checkpoint_image: str,
+        repo_context: RepoContext,
+        blocks: list[CommandBlock],
+        checkpoints: list[Checkpoint],
         executions: list[BlockExecution],
-    ) -> bool:
+        workspace_image: str | None,
+    ) -> tuple[bool, str]:
         if self.request.oracle_file is None:
-            return True
+            return True, checkpoint_image
         commands = load_oracle_commands(self.request.oracle_file)
         if not commands:
             raise ValueError(
                 f"oracle file did not contain test commands: {self.request.oracle_file}"
             )
+        ok, failed_result = self._run_oracle_commands(
+            runtime=runtime,
+            checkpoint_image=checkpoint_image,
+            commands=commands,
+            executions=executions,
+        )
+        if ok:
+            return True, checkpoint_image
+        if failed_result is None or not self.progress_control.local_repair:
+            return False, checkpoint_image
+
+        order = max((block.order for block in blocks), default=0) + 1
+        oracle_block = CommandBlock(
+            id=f"{order:02d}-oracle-validation",
+            order=order,
+            title="Oracle Validation",
+            goal=(
+                "Repair environment gaps exposed by the external oracle without "
+                "editing repository source code."
+            ),
+            script=shell_script('echo "[pheragent] oracle validation repair point"'),
+            validation_command=_combined_oracle_validation_command(
+                commands,
+                workdir=self.request.container_workdir,
+            ),
+            last_error=tail_text(failed_result.combined_output, max_chars=4000),
+        )
+        oracle_block = self.store.write_block(oracle_block)
+        blocks.append(oracle_block)
+        self._recreate_from_checkpoint(runtime, checkpoint_image)
+        return self._run_block_with_repair(
+            runtime=runtime,
+            block=oracle_block,
+            baseline_image=checkpoint_image,
+            repo_context=repo_context,
+            completed_blocks=blocks[:-1],
+            all_blocks=blocks,
+            workspace_image=workspace_image,
+            checkpoints=checkpoints,
+            executions=executions,
+        )
+
+    def _run_oracle_commands(
+        self,
+        *,
+        runtime: DockerRuntime,
+        checkpoint_image: str,
+        commands: list[str],
+        executions: list[BlockExecution],
+    ) -> tuple[bool, CommandResult | None]:
         timeout = self.request.oracle_timeout or self.request.command_timeout
         for index, command in enumerate(commands, start=1):
             self._emit(f"run {self.run_id}: oracle command {index}/{len(commands)}")
@@ -1996,8 +2054,8 @@ class EnvironmentBuilder:
             executions.append(execution)
             self.store.append_execution(execution)
             if not result.ok:
-                return False
-        return True
+                return False, result
+        return True, None
 
     def _record_llm_repair_status(
         self,
@@ -2105,6 +2163,16 @@ _INHERITED_PRELUDE_BEGIN = "# [pheragent] inherited environment prelude begin"
 _INHERITED_PRELUDE_END = "# [pheragent] inherited environment prelude end"
 
 
+def _combined_oracle_validation_command(commands: list[str], *, workdir: str) -> str:
+    lines = ["set -eu", _inherited_environment_prelude(workdir)]
+    for index, command in enumerate(commands, start=1):
+        lines.append(f"echo '[pheragent] oracle validation command {index}/{len(commands)}'")
+        lines.append("(")
+        lines.extend(command.splitlines())
+        lines.append(")")
+    return "\n".join(lines)
+
+
 def _ensure_inherited_block_preludes(
     blocks: list[CommandBlock],
     *,
@@ -2169,6 +2237,9 @@ if [ -x "$PHERAGENT_WORKDIR/.venv/bin/pytest" ]; then
 fi
 if [ -x "$PHERAGENT_WORKDIR/.pheragent-tools/bin/uv" ]; then
   ln -sf "$PHERAGENT_WORKDIR/.pheragent-tools/bin/uv" /usr/local/bin/uv || true
+fi
+if command -v git >/dev/null 2>&1; then
+  git config --global --add safe.directory "$PHERAGENT_WORKDIR" >/dev/null 2>&1 || true
 fi
 {_INHERITED_PRELUDE_END}
 """.strip()
