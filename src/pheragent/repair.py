@@ -546,6 +546,26 @@ def _heuristic_repair_hints(block: CommandBlock, result: CommandResult) -> list[
                 patch_script=_project_venv_pip_command(),
             )
         )
+    if (
+        "no module named 'pluggy'" in output
+        or 'no module named "pluggy"' in output
+        or "no module named pytest" in output
+    ):
+        suggestions.append(
+            RepairCommand(
+                title="Repair pytest installation",
+                command=_project_venv_pip_command(),
+                patch_script=_project_venv_pip_command(),
+            )
+        )
+    if "detected dubious ownership" in output or "safe.directory" in output:
+        suggestions.append(
+            RepairCommand(
+                title="Trust container repo worktree",
+                command="git config --global --add safe.directory /workspace/repo",
+                patch_script="git config --global --add safe.directory /workspace/repo || true",
+            )
+        )
     if "pnpm" in output and "requires at least node.js" in output:
         suggestions.append(
             RepairCommand(
@@ -567,6 +587,15 @@ def _heuristic_repair_hints(block: CommandBlock, result: CommandResult) -> list[
                     patch_validation_command=patched_validation,
                 )
             )
+    if _looks_like_secret_placeholder_validation(output, block.validation_command):
+        suggestions.append(
+            RepairCommand(
+                title="Relax placeholder secret validation",
+                command="true",
+                patch_script="",
+                patch_validation_command=_generic_environment_validation_command(),
+            )
+        )
 
     return suggestions
 
@@ -726,7 +755,8 @@ def _project_venv_pip_command() -> str:
         "if [ ! -x .venv/bin/python ]; then python3 -m venv .venv; fi && "
         "./.venv/bin/python -m pip --version >/dev/null 2>&1 || "
         "./.venv/bin/python -m ensurepip --upgrade || true; "
-        "./.venv/bin/python -m pip install --upgrade pip setuptools wheel pytest && "
+        "./.venv/bin/python -m pip install --upgrade "
+        "pip setuptools wheel pytest pluggy iniconfig packaging && "
         "./.venv/bin/python -m pytest --version"
     )
 
@@ -775,6 +805,34 @@ def _dedupe_requirements_repair() -> RepairCommand:
         title="Install deduplicated requirements copy",
         command=command,
         patch_script=command,
+    )
+
+
+def _looks_like_secret_placeholder_validation(
+    output: str,
+    validation_command: str | None,
+) -> bool:
+    haystack = f"{output}\n{validation_command or ''}".lower()
+    return any(
+        token in haystack
+        for token in (
+            "your_openai_api_key",
+            "your-openai-api-key",
+            "openai_api_key_here",
+            "api key here",
+            "api_key ==",
+            "openai_api_key ==",
+        )
+    )
+
+
+def _generic_environment_validation_command() -> str:
+    return (
+        "cd /workspace/repo && "
+        "if [ -x .venv/bin/python ]; then ./.venv/bin/python -m pip --version >/dev/null 2>&1; "
+        "elif command -v python3 >/dev/null 2>&1; then python3 --version >/dev/null 2>&1; fi; "
+        "if [ -f package.json ] && command -v node >/dev/null 2>&1; then "
+        "node --version >/dev/null 2>&1; fi"
     )
 
 
@@ -969,6 +1027,17 @@ Rules:
   edit requirements.txt and do not rely on the legacy resolver as the primary
   fix. Generate a temporary sanitized requirements file under /tmp and install
   from that file, preserving the original repo file unchanged.
+- For Python dependency errors caused by packages declaring an incompatible
+  Requires-Python range, treat the package as an environment compatibility
+  issue. Prefer interpreter-compatible pins, optional-dependency avoidance, or
+  dependency-only installs over editing project source.
+- For git "dubious ownership" failures inside the container, configure
+  `git config --global --add safe.directory /workspace/repo`; do not rewrite
+  repository ownership from the host.
+- Never require real external secrets for environment setup validation. If a
+  generated validation checks placeholder API keys such as
+  `your_openai_api_key_here`, replace that validation with a local tool/import
+  check instead.
 - Safety filtering rejects Python file-write APIs such as `.write_text(`,
   `.write_bytes(`, and `open(`. When generating temporary requirements files,
   use shell redirection to /tmp plus tools such as awk, sed without -i, perl

@@ -843,3 +843,43 @@ def test_make_repair_planner_auto_uses_rules_without_api_key(monkeypatch) -> Non
     )
 
     assert planner.llm_planner is None
+
+
+def test_repair_hints_fix_incomplete_pytest_installation() -> None:
+    block = CommandBlock(
+        id="30-python-deps",
+        title="Python Dependencies",
+        goal="Install deps",
+        script="#!/bin/sh\n.venv/bin/python -m pytest --version\n",
+    )
+    result = CommandResult(
+        exit_code=1,
+        stderr="ModuleNotFoundError: No module named 'pluggy'",
+    )
+
+    suggestions = _heuristic_repair_hints(block, result)
+
+    assert suggestions
+    assert suggestions[0].title == "Repair pytest installation"
+    assert "pytest pluggy iniconfig packaging" in suggestions[0].command
+
+
+def test_repair_hints_relax_placeholder_secret_validation() -> None:
+    block = CommandBlock(
+        id="50-test-tooling",
+        title="Build/Test Prep",
+        goal="Validate tooling",
+        script="#!/bin/sh\necho validate\n",
+        validation_command=(
+            "python -c \"import os; assert os.environ.get('OPENAI_API_KEY') == "
+            "'your_openai_api_key_here'\""
+        ),
+    )
+    result = CommandResult(exit_code=1, stderr="AssertionError: your_openai_api_key_here")
+
+    suggestions = _heuristic_repair_hints(block, result)
+
+    assert suggestions
+    assert suggestions[0].title == "Relax placeholder secret validation"
+    assert suggestions[0].patch_validation_command is not None
+    assert "your_openai_api_key_here" not in suggestions[0].patch_validation_command

@@ -703,6 +703,12 @@ def _uses_task_or_service_validation(script: str, validation_command: str | None
             "sleep 20",
             "wagtail start",
             "django-admin startproject",
+            "your_openai_api_key",
+            "your-openai-api-key",
+            "openai_api_key_here",
+            "api key here",
+            "api_key ==",
+            "openai_api_key ==",
         )
     )
 
@@ -772,7 +778,11 @@ if [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ] || [ -f requirem
   "$PYTHON_BIN" -m pip --version >/dev/null 2>&1 \
     || "$PYTHON_BIN" -m ensurepip --upgrade \
     || true
-  "$PYTHON_BIN" -m pytest --version >/dev/null 2>&1 || "$PYTHON_BIN" -m pip install pytest
+  "$PYTHON_BIN" - <<'PY' >/dev/null 2>&1 || \
+    "$PYTHON_BIN" -m pip install --upgrade pytest pluggy iniconfig packaging
+import pytest
+import pluggy
+PY
   if [ -d tests ] && grep -R "@pytest.mark.asyncio\\|pytest_asyncio" tests pyproject.toml \
     >/dev/null 2>&1; then
     "$PYTHON_BIN" -m pip install pytest-asyncio
@@ -801,6 +811,15 @@ else
   exit 127
 fi
 
+if command -v apt-get >/dev/null 2>&1; then
+  if ! "$PYTHON_BIN" -m venv -h >/dev/null 2>&1 \
+    || ! "$PYTHON_BIN" -m pip --version >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends python3-pip python3-venv
+  fi
+fi
+
 if command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
   if [ -w /usr/local/bin ] || [ "$(id -u)" = "0" ]; then
     ln -sf "$(command -v python3)" /usr/local/bin/python
@@ -810,6 +829,7 @@ fi
 mkdir -p .cache/uv .cache/pip
 export UV_CACHE_DIR=/workspace/repo/.cache/uv
 export PIP_CACHE_DIR=/workspace/repo/.cache/pip
+git config --global --add safe.directory /workspace/repo >/dev/null 2>&1 || true
 
 ensure_pytest() {
   target_python="$1"
@@ -819,7 +839,12 @@ ensure_pytest() {
   "$target_python" -m pip --version >/dev/null 2>&1 \
     || "$target_python" -m ensurepip --upgrade \
     || true
-  "$target_python" -m pytest --version >/dev/null 2>&1 || "$target_python" -m pip install pytest
+  "$target_python" - <<'PY' >/dev/null 2>&1 || \
+    "$target_python" -m pip install --upgrade pytest pluggy iniconfig packaging
+import pytest
+import pluggy
+PY
+  "$target_python" -m pytest --version
 }
 
 expose_venv_tools() {
@@ -866,6 +891,7 @@ target = Path(sys.argv[2])
 skip_cuda_deps = os.environ.get("PHERAGENT_SKIP_CUDA_DEPS") == "1"
 changed = False
 lines: list[str] = []
+seen_requirements: set[str] = set()
 for raw in source.read_text(encoding="utf-8").splitlines():
     stripped = raw.strip()
     if not stripped or stripped.startswith("#"):
@@ -877,6 +903,12 @@ for raw in source.read_text(encoding="utf-8").splitlines():
         continue
     name = re.split(r"\\s*(?:===|==|~=|!=|<=|>=|<|>|;)", stripped, 1)[0]
     name = name.split("[", 1)[0].strip().lower().replace("_", "-")
+    if name and name in seen_requirements:
+        changed = True
+        print(f"[pheragent] skipped duplicate requirement {name}", file=sys.stderr)
+        continue
+    if name:
+        seen_requirements.add(name)
     if skip_cuda_deps and name == "vllm":
         changed = True
         print(
