@@ -1981,7 +1981,11 @@ class EnvironmentBuilder:
         timeout = self.request.oracle_timeout or self.request.command_timeout
         for index, command in enumerate(commands, start=1):
             self._emit(f"run {self.run_id}: oracle command {index}/{len(commands)}")
-            result = runtime.execute_command(command, timeout=timeout)
+            oracle_command = _oracle_command_with_inherited_environment(
+                command,
+                workdir=self.request.container_workdir,
+            )
+            result = runtime.execute_command(oracle_command, timeout=timeout)
             execution = self._execution_from_result(
                 block_id="oracle",
                 phase="oracle",
@@ -2131,6 +2135,12 @@ def _prepend_inherited_prelude(script: str, *, workdir: str) -> str:
     prelude = _inherited_environment_prelude(workdir)
     body_lines = _shell_script_body_lines(script)
     return "#!/bin/sh\nset -eu\n\n" + prelude + "\n\n" + "\n".join(body_lines).strip() + "\n"
+
+
+def _oracle_command_with_inherited_environment(command: str, *, workdir: str) -> str:
+    if _INHERITED_PRELUDE_BEGIN in command:
+        return command
+    return _inherited_environment_prelude(workdir) + "\n\n" + command.strip()
 
 
 def _inherited_environment_prelude(workdir: str) -> str:

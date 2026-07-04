@@ -32,6 +32,7 @@ class FakeRuntime:
         self.started: list[str] = []
         self.recreated: list[str] = []
         self.commits: list[str] = []
+        self.commands: list[str] = []
         self.command_sequences: list[list[str]] = []
         self.block_runs = 0
 
@@ -54,6 +55,7 @@ class FakeRuntime:
 
     def execute_command(self, command: str, *, timeout: float) -> CommandResult:
         del timeout
+        self.commands.append(command)
         if "container preflight" in command:
             return CommandResult(
                 exit_code=0,
@@ -157,6 +159,63 @@ def test_environment_builder_repairs_failed_block_and_persists_patch(tmp_path: P
     assert first_log.is_file()
     assert '"phase": "docker_build"' in first_log.read_text(encoding="utf-8")
     assert '"log_path"' in (result.state_dir / "executions.jsonl").read_text(encoding="utf-8")
+
+
+def test_environment_builder_oracle_uses_inherited_python_environment(
+    tmp_path: Path,
+) -> None:
+    FakeRuntime.instances = []
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    oracle_file = tmp_path / "oracle.json"
+    oracle_file.write_text(
+        json.dumps(
+            {
+                "fixed_test_commands": [
+                    {"command": "python -m pytest --collect-only -q"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    request = BuildRequest(
+        repo_path=tmp_path,
+        base_dockerfile=tmp_path / "Dockerfile",
+        state_dir=tmp_path / ".pheragent",
+        run_id="test-run",
+        oracle_file=oracle_file,
+    )
+    block = CommandBlock(
+        id="10-setup",
+        title="Setup",
+        goal="minimal setup",
+        script="echo setup\n",
+        order=10,
+    )
+
+    result = EnvironmentBuilder(
+        request,
+        planner=StaticPlanner([block]),
+        runtime_factory=FakeRuntime,
+    ).build()
+
+    assert result.ok
+    runtime = FakeRuntime.instances[-1]
+    oracle_commands = [
+        command
+        for command in runtime.commands
+        if command.rstrip().endswith("python -m pytest --collect-only -q")
+    ]
+    assert oracle_commands
+    oracle_command = oracle_commands[-1]
+    assert "[pheragent] inherited environment prelude begin" in oracle_command
+    assert (
+        'PHERAGENT_PATH_PREFIX="$PHERAGENT_WORKDIR/.venv/bin:'
+        "$PHERAGENT_WORKDIR/.pheragent-tools/bin" in oracle_command
+    )
+    assert (
+        'ln -sf "$PHERAGENT_WORKDIR/.venv/bin/python" /usr/local/bin/python'
+        in oracle_command
+    )
 
 
 def test_environment_builder_inlines_inherited_prelude_in_planned_blocks(
