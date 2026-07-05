@@ -13,7 +13,7 @@ Scope: server run at `/home/lix/EnvAgent/love/lix_pheragent`.
 | Runner result accounting | Fixed | `scripts/run_setupbench.py` now preserves result files unless `--fresh-results` is set, finds nested manifests, records manifest summary fields, and supports `--rerun-failures` with failed workspace reset. |
 | SetupBench task context | Fixed | Per-project task descriptions are passed into pheragent via `--task-description`; planner and repair LLM payloads receive them through `repo_context.task_description`. |
 | Interrupted reruns | Fixed | Failure records are now updated per completed project, so interrupting `--rerun-failures` does not erase unprocessed failures. |
-| Stale Docker containers | Fixed | Docker runtime removes a same-name pheragent container before `docker run`, avoiding conflicts after interrupted runs. |
+| Stale Docker containers | Fixed | Docker runtime includes a unique hash in each container name and still removes an exact same-name container before `docker run` as a collision fallback. |
 | SetupBench oracle scope | Fixed | Full-suite `pytest` and `tox` SetupBench oracle commands are normalized to environment-level collect/config checks; web-server oracles get bounded `setsid` startup and cleanup. |
 | Python venv handling | Fixed | Generated Python dependency scripts expose `.venv` as `python/python3/pip/pip3`; build-test validation now prefers `.venv/bin/python` and treats no collected pytest tests as a non-environment failure. Repair hints discourage system pip on PEP 668. |
 | Python requirements includes | Fixed | Sanitized requirements are installed from a temp mirror that preserves relative include paths such as `-r requirements/base.txt`. |

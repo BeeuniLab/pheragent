@@ -50,7 +50,7 @@ def test_start_seeds_repo_with_docker_cp_and_no_bind_mount(
     ]
 
 
-def test_start_removes_stale_named_container_before_run(
+def test_start_removes_same_hash_named_container_before_run(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -76,6 +76,33 @@ def test_start_removes_stale_named_container_before_run(
     assert commands[0][:2] == ["docker", "inspect"]
     assert commands[1][:3] == ["docker", "rm", "-f"]
     assert commands[2][:2] == ["docker", "run"]
+
+
+def test_generated_containers_include_unique_hashes_with_same_run_id(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_names: list[str] = []
+
+    def fake_run_command(command: list[str], *, timeout: float, cwd=None) -> CommandResult:
+        del timeout, cwd
+        if command[:2] == ["docker", "inspect"]:
+            return CommandResult(exit_code=1, stderr="not found")
+        if command[:2] == ["docker", "run"]:
+            run_names.append(command[command.index("--name") + 1])
+            return CommandResult(exit_code=0, stdout="container-id")
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr("pheragent.docker_runtime.run_command", fake_run_command)
+    request = BuildRequest(repo_path=tmp_path, base_dockerfile=tmp_path / "Dockerfile")
+
+    DockerRuntime(request, "test").start()
+    DockerRuntime(request, "test").start()
+
+    assert len(run_names) == 2
+    assert run_names[0] != run_names[1]
+    assert re.fullmatch(r"pheragent-test-[0-9a-f]{12}-c1", run_names[0])
+    assert re.fullmatch(r"pheragent-test-[0-9a-f]{12}-c1", run_names[1])
 
 
 def test_generated_images_include_unique_hashes_with_same_run_id(tmp_path: Path) -> None:

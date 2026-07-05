@@ -21,7 +21,7 @@ class DockerRuntime:
         self.request = request.normalized()
         self.run_id = run_id
         self.base_image = (
-            f"{slugify(self.request.image_prefix)}:{run_id}-{self._new_image_hash()}-base"
+            f"{slugify(self.request.image_prefix)}:{run_id}-{self._new_unique_hash()}-base"
         )
         self.current_container: str | None = None
         self._container_counter = 0
@@ -47,7 +47,10 @@ class DockerRuntime:
     def start(self, image_ref: str | None = None, *, seed_repo: bool = False) -> str:
         image = image_ref or self.base_image
         self._container_counter += 1
-        name = f"{slugify(self.request.image_prefix)}-{self.run_id}-c{self._container_counter}"
+        name = (
+            f"{slugify(self.request.image_prefix)}-{self.run_id}-"
+            f"{self._new_unique_hash()}-c{self._container_counter}"
+        )
         self._remove_container_by_name(name)
         command = [
             "docker",
@@ -368,7 +371,7 @@ class DockerRuntime:
         safe_block = slugify(block_id or "base")
         image_ref = (
             f"{slugify(self.request.image_prefix)}:"
-            f"{self.run_id}-{self._new_image_hash()}-"
+            f"{self.run_id}-{self._new_unique_hash()}-"
             f"{self._checkpoint_counter:03d}-{safe_block}-{slugify(kind)}"
         )
         result = self._run_command(
@@ -401,7 +404,7 @@ class DockerRuntime:
         if inspect.ok:
             run_command(["docker", "rm", "-f", name], timeout=60)
 
-    def _new_image_hash(self) -> str:
+    def _new_unique_hash(self) -> str:
         return uuid.uuid4().hex[:12]
 
     def cleanup(self) -> None:
