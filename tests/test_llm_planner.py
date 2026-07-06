@@ -97,6 +97,13 @@ def _planner_response_events() -> list[FakeEvent]:
     ]
 
 
+def _invalid_blocks_response_events() -> list[FakeEvent]:
+    return [
+        FakeEvent("response.output_text.delta", delta=json.dumps({"blocks": []})),
+        FakeEvent("response.completed", response={"usage": {"total_tokens": 4}}),
+    ]
+
+
 def test_make_planner_auto_uses_rules_without_api_key(monkeypatch) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
@@ -325,6 +332,51 @@ def test_openai_responses_planner_auto_falls_back_after_retries(
 
     assert blocks
     assert any(block.id.endswith("python-deps") for block in blocks)
+
+
+def test_openai_responses_planner_falls_back_on_invalid_blocks(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    context = RepoAnalyzer().analyze(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    FakeOpenAI.clients = []
+    FakeOpenAI.events = _invalid_blocks_response_events()
+    FakeOpenAI.failures_before_success = 0
+    monkeypatch.setattr("pheragent.llm_planner._openai_client", FakeOpenAI)
+    planner = OpenAIResponsesBlockPlanner(OpenAIResponsesPlannerConfig(model="gpt-5.5"))
+
+    blocks = planner.plan(context)
+
+    assert blocks
+    assert any(block.id.endswith("python-deps") for block in blocks)
+
+
+def test_openai_responses_planner_does_not_fallback_on_request_error_by_default(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class FailingResponses:
+        def create(self, **payload):
+            del payload
+            raise TimeoutError("temporary")
+
+    class FailingOpenAI:
+        def __init__(self, **kwargs):
+            del kwargs
+            self.responses = FailingResponses()
+
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    context = RepoAnalyzer().analyze(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr("pheragent.llm_planner._openai_client", FailingOpenAI)
+    planner = OpenAIResponsesBlockPlanner(
+        OpenAIResponsesPlannerConfig(model="gpt-5.5", max_retries=1, retry_delay_s=0)
+    )
+
+    with pytest.raises(RuntimeError, match="LLM planner request failed"):
+        planner.plan(context)
 
 
 def test_openai_responses_planner_uses_safe_preflight_script() -> None:

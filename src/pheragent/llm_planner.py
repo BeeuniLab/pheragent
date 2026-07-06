@@ -31,6 +31,7 @@ class OpenAIResponsesPlannerConfig:
     max_retries: int = 3
     retry_delay_s: float = 1.0
     fallback_on_error: bool = False
+    fallback_on_invalid_response: bool = True
 
 
 class OpenAIResponsesBlockPlanner:
@@ -60,7 +61,12 @@ class OpenAIResponsesBlockPlanner:
                 _openai_client(base_url=base_url, api_key=api_key, timeout=self.config.timeout),
                 self._request_payload(context),
             )
-            return self._parse_blocks(content)
+            try:
+                return self._parse_blocks(content)
+            except ValueError:
+                if self.config.fallback_on_error or self.config.fallback_on_invalid_response:
+                    return self.fallback.plan(context)
+                raise
         except Exception:
             if self.config.fallback_on_error:
                 return self.fallback.plan(context)
