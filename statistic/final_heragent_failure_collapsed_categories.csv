@@ -1,0 +1,6 @@
+category,count,percent
+Dependency/runtime constraint conflict,117,52.5
+Validation/test-command assumption,45,20.2
+Container/replay orchestration failure,31,13.9
+Missing runtime/build/system tooling,22,9.9
+Incomplete/non-replayable setup artifact,8,3.6

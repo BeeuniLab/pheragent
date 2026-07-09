@@ -1,0 +1,14 @@
+benchmark,from_block,from_order,from_lines,to_block,to_order,to_lines,classification,from_failed_phases,to_checkpoint_before,to_first_phase
+setupbench-runs-all-gpt-5.4-multiblock,00-preflight,0,3-5,10-system-packages,10,6-8,forward,,pheragent-setupbench:setupbench-cassandra-c8ea82e72cb9-002-00-preflight-success,block
+setupbench-runs-all-gpt-5.4-multiblock,10-system-packages,10,6-8,20-runtime-toolchain,20,9-11,forward,,pheragent-setupbench:setupbench-cassandra-563286dd4152-003-10-system-packages-success,block
+setupbench-runs-all-gpt-5.4-multiblock,20-runtime-toolchain,20,9-11,30-project-dependencies,30,12-39,forward,,pheragent-setupbench:setupbench-cassandra-7bf452af301e-004-20-runtime-toolchain-success,block
+setupbench-runs-all-gpt-5.4-multiblock,30-project-dependencies,30,12-39,40-native-build-config,40,40-51,forward,block#1=1 | repair#1=1 | repair#2=1 | block#2=1 | block#3=1 | block#4=1 | block#5=1,pheragent-setupbench:setupbench-cassandra-0a53ca38dba2-005-30-project-dependencies-repaired,block
+setupbench-runs-all-gpt-5.4-multiblock,40-native-build-config,40,40-51,50-test-tooling,50,52-53,forward,block#1=1 | validation#1=1,pheragent-setupbench:setupbench-cassandra-635a35353477-006-40-native-build-config-repaired,block
+setupbench-runs-all-gpt-5.4-multiblock,50-test-tooling,50,52-53,30-project-dependencies,30,54-62,runtime_backjump_non_adjacent,block#1=1 | validation#1=1,pheragent-setupbench:setupbench-cassandra-7bf452af301e-004-20-runtime-toolchain-success,llm_repair
+setupbench-runs-all-gpt-5.4-multiblock,30-project-dependencies,30,54-62,40-native-build-config,40,63-65,forward,repair#1=1 | repair#2=1,pheragent-setupbench:setupbench-cassandra-6f624f8fbf1a-007-30-project-dependencies-repaired,block
+setupbench-runs-all-gpt-5.4-multiblock,40-native-build-config,40,63-65,50-test-tooling,50,66-68,forward,,pheragent-setupbench:setupbench-cassandra-fb896676d92a-008-40-native-build-config-success,block
+setupbench-runs-all-gpt-5.4-multiblock,50-test-tooling,50,66-68,60-service-or-final-validation-prep,60,69-71,forward,,pheragent-setupbench:setupbench-cassandra-2d81ea37b3c2-009-50-test-tooling-success,block
+setupbench-runs-all-gpt-4.1-2rerun,00-preflight,0,3-5,01-system-deps,1,6-8,forward,,pheragent-setupbench:setupbench-cassandra-002-00-preflight-success,block
+setupbench-runs-all-gpt-4.1-2rerun,01-system-deps,1,6-8,02-build-test-prep,2,9-11,forward,,pheragent-setupbench:setupbench-cassandra-003-01-system-deps-success,block
+setupbench-runs-all-gpt-4.1,00-preflight,0,5-7,10-system-deps,1,8-10,forward,,pheragent-setupbench:setupbench-cassandra-002-00-preflight-success,block
+setupbench-runs-all-gpt-4.1,10-system-deps,1,8-10,20-build-prep,2,11-13,forward,,pheragent-setupbench:setupbench-cassandra-003-10-system-deps-success,block

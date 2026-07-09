@@ -422,6 +422,15 @@ stdout/stderr instead of only manifest tails.
 the container preflight. Those runtime notes are included in LLM planning and in
 LLM-assisted block repair.
 
+## Trajectory artifacts
+
+Raw trajectory archives are published as GitHub Release assets instead of being
+committed to the source tree. Derived statistics and analysis tables live under
+`statistic/`.
+
+Installamatic trajectory archives and checksums are documented in
+[`docs/trajectories.md`](docs/trajectories.md).
+
 ## Current Scope
 
 - Repository context analysis is deterministic and file-based.

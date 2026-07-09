@@ -39,6 +39,9 @@ setupbench-runs*/
 executionagent-runs*/
 gpt54-setupbench-runs/
 repo2run-runs*/
+installamatic-runs*/
+installamatic-trajectories*/
+release-artifacts/
 tests/projects/cicdfiles/*
 projects-repo2run/
 

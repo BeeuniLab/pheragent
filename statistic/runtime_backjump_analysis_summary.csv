@@ -1,0 +1,14 @@
+metric,value
+runs_indexed,476
+runs_processed,470
+scan_errors,6
+runtime_non_adjacent_backjumps,19
+runtime_non_adjacent_backjumps_missed_by_final_graph_run,19
+non_adjacent_by_source::executionagent-runs-gpt4o,7
+non_adjacent_by_source::installamatic-runs,2
+non_adjacent_by_source::projects-repo2run,8
+non_adjacent_by_source::setupbench-runs-all-gpt-5.4-multiblock,2
+missed_by_source::executionagent-runs-gpt4o,7
+missed_by_source::installamatic-runs,2
+missed_by_source::projects-repo2run,8
+missed_by_source::setupbench-runs-all-gpt-5.4-multiblock,2

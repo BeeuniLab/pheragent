@@ -1,0 +1,11 @@
+source_dir,total_runs,ok_runs,failed_or_incomplete_runs,missing_manifest_runs,top_failure_categories
+/sdb-disk/lix/love/pheragent/projects-repo2run,415,368,47,0,python_dependency_resolution:25; docker_or_container_runtime:13; python_runtime_or_venv:5; system_package_installation:4
+executionagent-runs-gpt4o,50,38,12,0,java_runtime_or_dependency:4; python_dependency_resolution:3; node_dependency_or_runtime:2; repo_layout_or_wrong_workdir:1; python_runtime_or_venv:1
+executionagent-runs-gpt54,50,43,7,0,python_dependency_resolution:2; test_tooling_or_collection:2; docker_or_container_runtime:1; system_package_installation:1; java_runtime_or_dependency:1
+installamatic-runs,40,20,20,0,python_dependency_resolution:15; test_tooling_or_collection:5
+installamatic-runs-rerun-failures-2,20,8,12,0,test_tooling_or_collection:6; python_dependency_resolution:6
+installamatic-runs-rerun-failures-3,12,2,10,0,python_dependency_resolution:7; test_tooling_or_collection:3
+projects-repo2run,212,142,70,4,python_dependency_resolution:58; incomplete_or_missing_trace:4; docker_or_container_runtime:4; test_tooling_or_collection:3; llm_or_repair_generation:1
+setupbench-runs-all-gpt-4.1,54,28,26,0,oracle_or_final_validation_failure:14; docker_or_container_runtime:9; python_dependency_resolution:1; system_package_installation:1; python_runtime_or_venv:1
+setupbench-runs-all-gpt-4.1-2rerun,27,10,17,1,oracle_or_final_validation_failure:10; docker_or_container_runtime:4; python_runtime_or_venv:1; test_tooling_or_collection:1; incomplete_or_missing_trace:1
+setupbench-runs-all-gpt-5.4-multiblock,11,9,2,1,incomplete_or_missing_trace:1; test_tooling_or_collection:1

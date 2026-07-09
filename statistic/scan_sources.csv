@@ -1,0 +1,10 @@
+source_dir,source_kind,trajectory_runs
+executionagent-runs-gpt4o,state_run,50
+executionagent-runs-gpt54,state_run,50
+installamatic-runs,state_run,40
+installamatic-runs-rerun-failures-2,state_run,20
+installamatic-runs-rerun-failures-3,state_run,12
+setupbench-runs-all-gpt-5.4-multiblock,state_run,11
+setupbench-runs-all-gpt-4.1-2rerun,state_run,27
+setupbench-runs-all-gpt-4.1,state_run,54
+projects-repo2run,project_pheragent_run,212

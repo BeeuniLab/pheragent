@@ -1,0 +1,15 @@
+group,total_cases,non_adjacent_block_rollback,previous_block_only_rollback,no_prior_block_rollback_detected,insufficient_checkpoint_data,insufficient_block_data,total_non_adjacent_edges,total_adjacent_edges
+ALL,202,16,179,0,1,6,16,542
+executionagent-runs-gpt4o,12,2,10,0,0,0,2,29
+executionagent-runs-gpt54,25,13,12,0,0,0,13,108
+installamatic-runs,20,0,20,0,0,0,0,59
+installamatic-runs-rerun-failures-2,12,0,12,0,0,0,0,37
+installamatic-runs-rerun-failures-3,10,0,10,0,0,0,0,32
+projects-repo2run,70,1,68,0,0,1,1,153
+setupbench-runs-all-gpt-4.1,26,0,23,0,1,2,0,50
+setupbench-runs-all-gpt-4.1-2rerun,21,0,18,0,0,3,0,51
+setupbench-runs-all-gpt-5.4-multiblock,6,0,6,0,0,0,0,23
+project_attempt_classification=failed_after_project_retries,24,6,15,0,0,3,6,71
+project_attempt_classification=failed_in_project_run,146,3,139,0,1,3,3,348
+project_attempt_classification=missing_manifest_incomplete,6,0,6,0,0,0,0,15
+project_attempt_classification=succeeded_after_project_retry,26,7,19,0,0,0,7,108

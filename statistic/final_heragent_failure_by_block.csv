@@ -1,0 +1,29 @@
+reported_failed_block,count,categories,sources
+30-python-deps,85,python_dependency_resolution:79; docker_or_container_runtime:4; incomplete_or_missing_trace:2,projects-repo2run:60; installamatic-runs:14; installamatic-runs-rerun-failures-2:5; installamatic-runs-rerun-failures-3:5; executionagent-runs-gpt4o:1
+,43,oracle_or_final_validation_failure:24; docker_or_container_runtime:18; llm_or_repair_generation:1,setupbench-runs-all-gpt-4.1:16; setupbench-runs-all-gpt-4.1-2rerun:13; /sdb-disk/lix/love/pheragent/projects-repo2run:13; projects-repo2run:1
+50-test-tooling,21,test_tooling_or_collection:18; incomplete_or_missing_trace:2; docker_or_container_runtime:1,installamatic-runs-rerun-failures-2:6; installamatic-runs:5; projects-repo2run:5; installamatic-runs-rerun-failures-3:3; executionagent-runs-gpt54:1; setupbench-runs-all-gpt-5.4-multiblock:1
+02-python-deps,18,python_dependency_resolution:16; docker_or_container_runtime:1; python_runtime_or_venv:1,/sdb-disk/lix/love/pheragent/projects-repo2run:15; setupbench-runs-all-gpt-4.1:2; executionagent-runs-gpt54:1
+02-language-deps,13,python_dependency_resolution:11; python_runtime_or_venv:2,/sdb-disk/lix/love/pheragent/projects-repo2run:12; executionagent-runs-gpt54:1
+01-system-deps,6,system_package_installation:4; docker_or_container_runtime:1; python_runtime_or_venv:1,setupbench-runs-all-gpt-4.1:3; /sdb-disk/lix/love/pheragent/projects-repo2run:3
+03-build-test-prep,5,test_tooling_or_collection:2; python_runtime_or_venv:2; docker_or_container_runtime:1,executionagent-runs-gpt54:2; /sdb-disk/lix/love/pheragent/projects-repo2run:2; setupbench-runs-all-gpt-4.1-2rerun:1
+30-project-dependencies,4,python_dependency_resolution:4,projects-repo2run:2; executionagent-runs-gpt4o:1; installamatic-runs-rerun-failures-3:1
+10-system-packages,3,python_runtime_or_venv:1; system_package_installation:1; incomplete_or_missing_trace:1,executionagent-runs-gpt4o:1; executionagent-runs-gpt54:1; setupbench-runs-all-gpt-5.4-multiblock:1
+30-java-deps,3,java_runtime_or_dependency:3,executionagent-runs-gpt4o:2; executionagent-runs-gpt54:1
+10-system-deps,2,docker_or_container_runtime:1; system_package_installation:1,setupbench-runs-all-gpt-4.1:1; /sdb-disk/lix/love/pheragent/projects-repo2run:1
+20-python-runtime,2,python_dependency_resolution:2,installamatic-runs:1; installamatic-runs-rerun-failures-2:1
+30-node-deps,2,node_dependency_or_runtime:2,executionagent-runs-gpt4o:2
+30-python-dependencies,2,python_dependency_resolution:2,projects-repo2run:2
+00-preflight,1,docker_or_container_runtime:1,setupbench-runs-all-gpt-4.1:1
+01-java-deps,1,java_runtime_or_dependency:1,executionagent-runs-gpt4o:1
+01-python-deps,1,python_dependency_resolution:1,executionagent-runs-gpt4o:1
+01-system-node,1,docker_or_container_runtime:1,setupbench-runs-all-gpt-4.1:1
+01-system-python,1,python_runtime_or_venv:1,setupbench-runs-all-gpt-4.1-2rerun:1
+02-rust-setup,1,docker_or_container_runtime:1,setupbench-runs-all-gpt-4.1:1
+03-pytest-collect,1,docker_or_container_runtime:1,setupbench-runs-all-gpt-4.1:1
+04-pytest-collect,1,test_tooling_or_collection:1,setupbench-runs-all-gpt-4.1-2rerun:1
+20-language-deps,1,python_dependency_resolution:1,/sdb-disk/lix/love/pheragent/projects-repo2run:1
+20-native-build-config,1,repo_layout_or_wrong_workdir:1,executionagent-runs-gpt4o:1
+20-python-deps,1,python_dependency_resolution:1,installamatic-runs-rerun-failures-3:1
+20-runtime-toolchain,1,incomplete_or_missing_trace:1,setupbench-runs-all-gpt-4.1-2rerun:1
+21-java-runtime,1,java_runtime_or_dependency:1,executionagent-runs-gpt4o:1
+30-rust-deps,1,native_build_or_toolchain:1,executionagent-runs-gpt4o:1

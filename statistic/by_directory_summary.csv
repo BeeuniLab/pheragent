@@ -1,0 +1,10 @@
+source_dir,source_kind,trajectory_runs,final_ok,final_failed_or_incomplete,clean_one_shot_success,not_one_shot_trajectory,not_one_shot_project_attempt,succeeded_after_project_retry,succeeded_after_internal_repair,failed_after_project_retries,failed_in_project_run,missing_manifest_incomplete
+executionagent-runs-gpt4o,state_run,50,38,12,27,23,12,0,11,0,12,0
+executionagent-runs-gpt54,state_run,50,43,7,14,36,25,18,11,7,0,0
+installamatic-runs,state_run,40,20,20,9,31,20,0,11,0,20,0
+installamatic-runs-rerun-failures-2,state_run,20,8,12,1,19,12,0,7,0,12,0
+installamatic-runs-rerun-failures-3,state_run,12,2,10,0,12,10,0,2,0,10,0
+setupbench-runs-all-gpt-5.4-multiblock,state_run,11,9,2,2,9,6,4,3,1,0,1
+setupbench-runs-all-gpt-4.1-2rerun,state_run,27,10,17,2,25,21,4,4,16,0,1
+setupbench-runs-all-gpt-4.1,state_run,54,28,26,12,42,26,0,16,0,26,0
+projects-repo2run,project_pheragent_run,212,142,70,48,164,70,0,94,0,66,4
