@@ -865,9 +865,7 @@ ensure_python3() {
     return 0
   fi
   if command -v apt-get >/dev/null 2>&1; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update
-    apt-get install -y --no-install-recommends python3 python3-pip python3-venv
+    pheragent_apt_install python3 python3-pip python3-venv
   elif command -v apk >/dev/null 2>&1; then
     apk add --no-cache python3 py3-pip py3-virtualenv
   elif command -v dnf >/dev/null 2>&1; then
@@ -1067,9 +1065,7 @@ install_go_release() {
     *) echo "unsupported go architecture: $arch" >&2; exit 1 ;;
   esac
   if command -v apt-get >/dev/null 2>&1; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update
-    apt-get install -y --no-install-recommends ca-certificates curl tar
+    pheragent_apt_install ca-certificates curl tar
   fi
   rm -rf /usr/local/go
   curl -fsSL "https://go.dev/dl/go${version}.linux-${go_arch}.tar.gz" -o /tmp/pheragent-go.tgz
@@ -1170,6 +1166,9 @@ Rules:
   the runtime block fail clearly instead of editing project files.
 - Use POSIX sh, not bash-specific syntax.
 - Keep commands deterministic and idempotent where practical.
+- For Debian/Ubuntu packages, use the inherited `pheragent_apt_install package...`
+  helper instead of raw `apt-get update` or `apt-get install`; it cleans stale
+  apt indexes, retries updates, and disables transient external apt sources.
 - Do not start long-running services in setup blocks.
 - Do not use host paths outside /workspace/repo.
 - Build/test prep validation must verify tools can run, not require the full test

@@ -739,7 +739,10 @@ def test_openai_responses_planner_python_deps_script_has_common_repo2run_guards(
                         "order": 30,
                         "title": "Python Dependencies",
                         "goal": "install python deps",
-                        "script": "python3 -m venv .venv && .venv/bin/pip install -r requirements.txt",
+                        "script": (
+                            "python3 -m venv .venv && "
+                            ".venv/bin/pip install -r requirements.txt"
+                        ),
                         "validation_command": ".venv/bin/python -m pytest --version",
                     }
                 ]
@@ -800,7 +803,7 @@ def test_openai_responses_planner_replaces_node_runtime_checks_with_safe_script(
     )
 
     assert "ensuring node runtime" in blocks[0].script
-    assert "apt-get install -y --no-install-recommends nodejs npm" in blocks[0].script
+    assert "pheragent_apt_install nodejs npm" in blocks[0].script
     assert "resolve_runtime_bin" in blocks[0].script
     assert 'ln -sf "$NODE_BIN" .pheragent-tools/bin/node' in blocks[0].script
     assert ".pheragent-tools/bin/node --version" in blocks[0].script

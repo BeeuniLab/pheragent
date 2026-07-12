@@ -665,7 +665,10 @@ class EnvironmentBuilder:
                     last_failure_phase = "block"
                     continue
             repair_result = runtime.execute_command(
-                repair.command,
+                _repair_command_with_inherited_environment(
+                    repair.command,
+                    workdir=self.request.container_workdir,
+                ),
                 timeout=self.request.command_timeout,
             )
             execution = self._execution_from_result(
@@ -916,7 +919,10 @@ class EnvironmentBuilder:
             )
             self._recreate_from_checkpoint(runtime, root_baseline)
             repair_result = runtime.execute_command(
-                repair.command,
+                _repair_command_with_inherited_environment(
+                    repair.command,
+                    workdir=self.request.container_workdir,
+                ),
                 timeout=self.request.command_timeout,
             )
             execution = self._execution_from_result(
@@ -1504,7 +1510,10 @@ class EnvironmentBuilder:
                 f"{repair_attempt}"
             )
             repair_result = runtime.execute_command(
-                repair.command,
+                _repair_command_with_inherited_environment(
+                    repair.command,
+                    workdir=self.request.container_workdir,
+                ),
                 timeout=self.request.command_timeout,
             )
             execution = self._execution_from_result(
@@ -2205,10 +2214,20 @@ def _prepend_inherited_prelude(script: str, *, workdir: str) -> str:
     return "#!/bin/sh\nset -eu\n\n" + prelude + "\n\n" + "\n".join(body_lines).strip() + "\n"
 
 
-def _oracle_command_with_inherited_environment(command: str, *, workdir: str) -> str:
+def _command_with_inherited_environment(command: str, *, workdir: str) -> str:
     if _INHERITED_PRELUDE_BEGIN in command:
         return command
     return _inherited_environment_prelude(workdir) + "\n\n" + command.strip()
+
+
+def _repair_command_with_inherited_environment(command: str, *, workdir: str) -> str:
+    if "pheragent_apt_" not in command:
+        return command
+    return _command_with_inherited_environment(command, workdir=workdir)
+
+
+def _oracle_command_with_inherited_environment(command: str, *, workdir: str) -> str:
+    return _command_with_inherited_environment(command, workdir=workdir)
 
 
 def _inherited_environment_prelude(workdir: str) -> str:
@@ -2223,6 +2242,44 @@ export UV_CACHE_DIR="$PHERAGENT_WORKDIR/.cache/uv"
 PHERAGENT_PATH_PREFIX="$PHERAGENT_WORKDIR/.venv/bin:$PHERAGENT_WORKDIR/.pheragent-tools/bin"
 PHERAGENT_PATH_PREFIX="$PHERAGENT_PATH_PREFIX:$PHERAGENT_WORKDIR/node_modules/.bin"
 export PATH="$PHERAGENT_PATH_PREFIX:/usr/local/bin:$PATH"
+
+pheragent_disable_external_apt_sources() {{
+  if [ -f /etc/apt/sources.list.d/docker.list ]; then
+    mv /etc/apt/sources.list.d/docker.list \
+      /etc/apt/sources.list.d/docker.list.disabled 2>/dev/null || true
+  fi
+}}
+
+pheragent_apt_update() {{
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "apt-get not available" >&2
+    return 127
+  fi
+  export DEBIAN_FRONTEND=noninteractive
+  pheragent_disable_external_apt_sources
+  chmod 1777 /tmp 2>/dev/null || true
+  mkdir -p /var/lib/apt/lists/partial /var/cache/apt/archives/partial
+  attempt=1
+  while [ "$attempt" -le 3 ]; do
+    apt-get clean >/dev/null 2>&1 || true
+    rm -rf /var/lib/apt/lists/*
+    if apt-get \
+      -o Acquire::Retries=3 \
+      -o Acquire::http::No-Cache=true \
+      -o Acquire::https::No-Cache=true \
+      update; then
+      return 0
+    fi
+    sleep "$((attempt * 2))"
+    attempt="$((attempt + 1))"
+  done
+  return 1
+}}
+
+pheragent_apt_install() {{
+  pheragent_apt_update
+  apt-get install -y --no-install-recommends "$@"
+}}
 
 if [ -x "$PHERAGENT_WORKDIR/.venv/bin/python" ]; then
   ln -sf "$PHERAGENT_WORKDIR/.venv/bin/python" /usr/local/bin/python || true

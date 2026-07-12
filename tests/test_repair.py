@@ -484,6 +484,37 @@ def test_patch_block_applies_script_when_validation_is_replaced() -> None:
     assert patched.repair_attempts == 1
 
 
+def test_patch_block_inserts_repair_after_inherited_prelude() -> None:
+    block = CommandBlock(
+        id="20-python-runtime",
+        title="Python Runtime",
+        goal="Prepare interpreter tooling",
+        script=(
+            "#!/bin/sh\n"
+            "set -eu\n\n"
+            "# [pheragent] inherited environment prelude begin\n"
+            "PHERAGENT_WORKDIR=/workspace/repo\n"
+            "# [pheragent] inherited environment prelude end\n\n"
+            "python3 -m venv .venv\n"
+        ),
+    )
+    repair = RepairCommand(
+        title="Install venv support",
+        command="pheragent_apt_install python3-venv",
+        patch_script="pheragent_apt_install python3-venv",
+    )
+
+    patched = RepairPlanner().patch_block(block, repair)
+
+    prelude_end_index = patched.script.index("# [pheragent] inherited environment prelude end")
+    patch_index = patched.script.index("pheragent_apt_install python3-venv")
+    venv_index = patched.script.index("python3 -m venv .venv")
+    assert prelude_end_index < patch_index < venv_index
+
+    patched_again = RepairPlanner().patch_block(patched, repair)
+    assert patched_again.script.count("pheragent_apt_install python3-venv") == 1
+
+
 def test_patch_block_keeps_stable_validation_for_python_dependency_repairs() -> None:
     block = CommandBlock(
         id="30-python-deps",
@@ -1567,7 +1598,9 @@ def test_repair_hints_trust_container_repo_worktree() -> None:
     suggestions = _heuristic_repair_hints(block, result)
 
     hint = next(
-        suggestion for suggestion in suggestions if suggestion.title == "Trust container repo worktree"
+        suggestion
+        for suggestion in suggestions
+        if suggestion.title == "Trust container repo worktree"
     )
     assert "safe.directory /workspace/repo" in hint.command
 

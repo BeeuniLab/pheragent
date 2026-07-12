@@ -28,6 +28,8 @@ from .llm_planner import (
 from .models import CommandBlock, CommandResult, LLMApiMode, RepairContext, to_jsonable
 from .utils import normalize_posix_source, shell_script, tail_text
 
+_INHERITED_PRELUDE_END = "# [pheragent] inherited environment prelude end"
+
 
 @dataclass(slots=True)
 class RepairCommand:
@@ -546,7 +548,10 @@ class RepairPlanner:
         else:
             patch_chunk = ""
         if patch_script and not _repair_patch_is_leading(original, patch_chunk):
-            if original.startswith("#!/"):
+            prelude_patched = _insert_patch_after_inherited_prelude(original, patch_chunk)
+            if prelude_patched is not None:
+                block.script = prelude_patched
+            elif original.startswith("#!/"):
                 lines = original.splitlines()
                 shebang = lines[0]
                 rest = "\n".join(lines[1:]).lstrip()
@@ -564,10 +569,29 @@ class RepairPlanner:
         return block
 
 
+def _insert_patch_after_inherited_prelude(script: str, patch_chunk: str) -> str | None:
+    lines = script.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip() == _INHERITED_PRELUDE_END:
+            patched_lines = (
+                lines[: index + 1]
+                + [""]
+                + patch_chunk.splitlines()
+                + [""]
+                + lines[index + 1 :]
+            )
+            return "\n".join(patched_lines).rstrip() + "\n"
+    return None
+
+
 def _repair_patch_is_leading(script: str, patch_chunk: str) -> bool:
     if not patch_chunk:
         return True
     lines = script.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip() == _INHERITED_PRELUDE_END:
+            lines = lines[index + 1 :]
+            break
     if lines and lines[0].startswith("#!"):
         lines = lines[1:]
     while lines and not lines[0].strip():
@@ -617,11 +641,11 @@ def _heuristic_repair_hints(block: CommandBlock, result: CommandResult) -> list[
                 title="Bootstrap pip",
                 command=(
                     "python3 -m ensurepip --upgrade || python -m ensurepip --upgrade || "
-                    "(apt-get update && apt-get install -y python3-pip)"
+                    "pheragent_apt_install python3-pip"
                 ),
                 patch_script=(
                     "python3 -m ensurepip --upgrade || python -m ensurepip --upgrade || "
-                    "(apt-get update && apt-get install -y python3-pip)"
+                    "pheragent_apt_install python3-pip"
                 ),
             )
         )
@@ -902,7 +926,7 @@ def make_repair_planner(
 def _apt_repair(title: str, packages: str) -> RepairCommand:
     command = (
         "if command -v apt-get >/dev/null 2>&1; then "
-        "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y "
+        "pheragent_apt_install "
         f"{packages}; "
         "else echo 'apt-get not available for repair' >&2; exit 127; fi"
     )
@@ -916,9 +940,8 @@ def _qt_opencv_runtime_repair() -> RepairCommand:
     )
     command = (
         "if command -v apt-get >/dev/null 2>&1; then "
-        "export DEBIAN_FRONTEND=noninteractive; apt-get update && "
-        f"(apt-get install -y --no-install-recommends {packages} libglib2.0-0 || "
-        f"apt-get install -y --no-install-recommends {packages} libglib2.0-0t64); "
+        f"(pheragent_apt_install {packages} libglib2.0-0 || "
+        f"pheragent_apt_install {packages} libglib2.0-0t64); "
         "else echo 'apt-get not available for repair' >&2; exit 127; fi"
     )
     return RepairCommand(
@@ -930,9 +953,7 @@ def _qt_opencv_runtime_repair() -> RepairCommand:
 
 def _headless_gui_runtime_repair() -> RepairCommand:
     command = """if command -v apt-get >/dev/null 2>&1; then
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update
-  apt-get install -y --no-install-recommends xvfb xauth libx11-6 libxcb1 libxext6 libxrender1
+  pheragent_apt_install xvfb xauth libx11-6 libxcb1 libxext6 libxrender1
 else
   echo 'apt-get not available for repair' >&2
   exit 127
@@ -971,14 +992,13 @@ def _python_venv_repair_command(output: str) -> tuple[str, str]:
     package = package_match.group(1) if package_match else "python3-venv"
     if package != "python3-venv":
         install = (
-            f"(apt-get install -y --no-install-recommends {package} || "
-            "apt-get install -y --no-install-recommends python3-venv)"
+            f"(pheragent_apt_install {package} || "
+            "pheragent_apt_install python3-venv)"
         )
     else:
-        install = "apt-get install -y --no-install-recommends python3-venv"
+        install = "pheragent_apt_install python3-venv"
     patch_script = (
         "if command -v apt-get >/dev/null 2>&1; then "
-        "export DEBIAN_FRONTEND=noninteractive; apt-get update && "
         f"{install}; "
         "else echo 'apt-get not available for repair' >&2; exit 127; fi"
     )
@@ -1047,7 +1067,7 @@ def _uv_tool_venv_command() -> str:
         "if { ! python3 -m pip --version >/dev/null 2>&1 || "
         "! python3 -m venv -h >/dev/null 2>&1; } "
         "&& command -v apt-get >/dev/null 2>&1; then "
-        "apt-get update && apt-get install -y python3-pip python3-venv; fi && "
+        "pheragent_apt_install python3-pip python3-venv; fi && "
         "python3 -m venv .pheragent-tools && "
         "./.pheragent-tools/bin/python -m pip install --upgrade pip && "
         "./.pheragent-tools/bin/python -m pip install uv && "
@@ -1486,6 +1506,7 @@ def _probe_command_rejection_reason(command: str) -> str | None:
     normalized = re.sub(r"\s+", " ", command.strip().lower())
     mutating_tokens = (
         "apt-get install",
+        "pheragent_apt_install",
         "apt install",
         "apt-get upgrade",
         "apt upgrade",
@@ -1631,6 +1652,7 @@ def _repair_command_effect_rejection_reason(command: str) -> str | None:
 
     repair_tokens = (
         "apt-get install",
+        "pheragent_apt_install",
         "apt install",
         "apk add",
         "dnf install",
@@ -1879,10 +1901,12 @@ Rules:
 - command may include checks or validation, but it must not be only a probe.
   Pure diagnostic commands such as dpkg-query, command -v, which, --version
   checks, ls, cat, test, or echo belong in probes, not repairs. A repair command
-  should include a state-changing fix, such as apt-get install, venv creation,
+  should include a state-changing fix, such as package installation, venv creation,
   symlink repair, chmod, or environment setup. For missing Debian/Ubuntu
-  packages, use apt-get update followed by apt-get install -y
-  --no-install-recommends for the required packages.
+  packages, use the inherited `pheragent_apt_install package...` helper for
+  the required packages instead of raw `apt-get update` or `apt-get install`;
+  it cleans stale apt indexes, retries updates, and disables transient external
+  apt sources.
 - patch_script must be the persistent, replayable form of the successful repair.
   If command installs a package, exports an environment variable, changes pip
   flags, or replaces validation assumptions, patch_script must include the same

@@ -328,9 +328,7 @@ def _system_packages_script(context: RepoContext) -> str:
     return f"""
 echo "[pheragent] preparing system packages"
 if command -v apt-get >/dev/null 2>&1; then
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update
-  apt-get install -y --no-install-recommends ca-certificates curl git{extra_packages}
+  pheragent_apt_install ca-certificates curl git{extra_packages}
 elif command -v apk >/dev/null 2>&1; then
   apk add --no-cache ca-certificates curl git make gcc g++ pkgconf
 elif command -v dnf >/dev/null 2>&1; then
@@ -346,9 +344,7 @@ def _python_runtime_script() -> str:
 echo "[pheragent] ensuring python runtime"
 ensure_python_packages() {
   if command -v apt-get >/dev/null 2>&1; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update
-    apt-get install -y --no-install-recommends python3 python3-pip python3-venv
+    pheragent_apt_install python3 python3-pip python3-venv
   elif command -v apk >/dev/null 2>&1; then
     apk add --no-cache python3 py3-pip py3-virtualenv
   elif command -v dnf >/dev/null 2>&1; then
@@ -401,9 +397,7 @@ def _node_runtime_script() -> str:
 echo "[pheragent] ensuring node runtime"
 if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
   if command -v apt-get >/dev/null 2>&1; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update
-    apt-get install -y --no-install-recommends nodejs npm
+    pheragent_apt_install nodejs npm
   elif command -v apk >/dev/null 2>&1; then
     apk add --no-cache nodejs npm
   elif command -v dnf >/dev/null 2>&1; then

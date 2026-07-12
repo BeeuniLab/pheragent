@@ -116,7 +116,7 @@ def test_rule_based_planner_splits_two_language_repo_but_caps_blocks(tmp_path: P
     assert ".venv/bin/python" in python_runtime.validation_command
     node_runtime = next(block for block in blocks if block.id == "21-node-runtime")
     assert "ensuring node runtime" in node_runtime.script
-    assert "apt-get install -y --no-install-recommends nodejs npm" in node_runtime.script
+    assert "pheragent_apt_install nodejs npm" in node_runtime.script
     assert "resolve_runtime_bin" in node_runtime.script
     assert 'ln -sf "$NODE_BIN" .pheragent-tools/bin/node' in node_runtime.script
     assert ".pheragent-tools/bin/node --version" in node_runtime.script
