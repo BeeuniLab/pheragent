@@ -424,33 +424,12 @@ LLM-assisted block repair.
 
 ## Experiment trajectories
 
-Trajectory archives are published as assets of the
-[`trajectories` GitHub Release](https://github.com/BeeuniLab/pheragent/releases/tag/trajectories)
-instead of being committed to the source tree. Each archive contains
-`manifest.json` and `blocks/*.json` for every trajectory; the top-level project
-directories are the authoritative project list. Derived statistics and analysis
-tables live under `statistic/`.
+Trajectory archives are available from the
+[`trajectories` GitHub Release](https://github.com/BeeuniLab/pheragent/releases/tag/trajectories):
 
-| Experiment | Archive | Coverage |
-| --- | --- | --- |
-| ExecutionAgent | [`executionagent-trajectories.zip`](https://github.com/BeeuniLab/pheragent/releases/download/trajectories/executionagent-trajectories.zip) · [`executionagent-trajectories-gpt54.zip`](https://github.com/BeeuniLab/pheragent/releases/download/trajectories/executionagent-trajectories-gpt54.zip) | 50 repositories per model: gpt-4o (`50` trajectories, `12` failures) and gpt-5.4 (`50` trajectories, `7` failures). Project list: [`tests/projects/executionAgent.txt`](tests/projects/executionAgent.txt). |
-| Installamatic | [`installamatic-trajectories.zip`](https://github.com/BeeuniLab/pheragent/releases/download/trajectories/installamatic-trajectories.zip) · [`installamatic-trajectories-gpt54.zip`](https://github.com/BeeuniLab/pheragent/releases/download/trajectories/installamatic-trajectories-gpt54.zip) | 40-project batch. The gpt-4o-mini archive contains the initial batch plus failure reruns (`72` trajectory directories, `20` failures); the gpt-5.4 archive contains `40` trajectories (`3` failures). |
-| SetupBench | [`setupbench-trajectories.zip`](https://github.com/BeeuniLab/pheragent/releases/download/trajectories/setupbench-trajectories.zip) · [`setupbench-trajectories-gpt54.zip`](https://github.com/BeeuniLab/pheragent/releases/download/trajectories/setupbench-trajectories-gpt54.zip) | SetupBench repository set: gpt-4.1 (`80` trajectories, `42` failures) and gpt-5.4 (`44` trajectories, `4` failures). Project list: [`tests/projects/setupbench.txt`](tests/projects/setupbench.txt). |
-| Repo2Run | [`repo2run-trajectories.zip`](https://github.com/BeeuniLab/pheragent/releases/download/trajectories/repo2run-trajectories.zip) | gpt-5.4-mini Repo2Run experiments across `413` unique projects. The public view contains `656` filtered trajectories, including baseline, capability rerun, Docker rerun, unresolved-candidate, and block-failure experiments; the archive also preserves the `raw/` snapshot with `661` trajectories. Project list: [`tests/projects/repo2run.txt`](tests/projects/repo2run.txt). |
-
-Download and verify any archive with:
-
-```bash
-gh release download trajectories \
-  --repo BeeuniLab/pheragent \
-  --pattern '*trajectories*.zip' \
-  --dir release-artifacts
-
-sha256sum release-artifacts/*trajectories*.zip
-```
-
-Installamatic archive details and checksums are also documented in
-[`docs/trajectories.md`](docs/trajectories.md).
+- ExecutionAgent: [`executionagent-trajectories.zip`](https://github.com/BeeuniLab/pheragent/releases/download/trajectories/executionagent-trajectories.zip), [`executionagent-trajectories-gpt54.zip`](https://github.com/BeeuniLab/pheragent/releases/download/trajectories/executionagent-trajectories-gpt54.zip)
+- Installamatic: [`installamatic-trajectories.zip`](https://github.com/BeeuniLab/pheragent/releases/download/trajectories/installamatic-trajectories.zip), [`installamatic-trajectories-gpt54.zip`](https://github.com/BeeuniLab/pheragent/releases/download/trajectories/installamatic-trajectories-gpt54.zip)
+- SetupBench: [`setupbench-trajectories.zip`](https://github.com/BeeuniLab/pheragent/releases/download/trajectories/setupbench-trajectories.zip), [`setupbench-trajectories-gpt54.zip`](https://github.com/BeeuniLab/pheragent/releases/download/trajectories/setupbench-trajectories-gpt54.zip)
 
 ## Current Scope
 
