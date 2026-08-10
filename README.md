@@ -430,6 +430,7 @@ Trajectory archives are available from the
 - ExecutionAgent: [`executionagent-trajectories.zip`](https://github.com/BeeuniLab/pheragent/releases/download/trajectories/executionagent-trajectories.zip), [`executionagent-trajectories-gpt54.zip`](https://github.com/BeeuniLab/pheragent/releases/download/trajectories/executionagent-trajectories-gpt54.zip)
 - Installamatic: [`installamatic-trajectories.zip`](https://github.com/BeeuniLab/pheragent/releases/download/trajectories/installamatic-trajectories.zip), [`installamatic-trajectories-gpt54.zip`](https://github.com/BeeuniLab/pheragent/releases/download/trajectories/installamatic-trajectories-gpt54.zip)
 - SetupBench: [`setupbench-trajectories.zip`](https://github.com/BeeuniLab/pheragent/releases/download/trajectories/setupbench-trajectories.zip), [`setupbench-trajectories-gpt54.zip`](https://github.com/BeeuniLab/pheragent/releases/download/trajectories/setupbench-trajectories-gpt54.zip)
+- Repo2Run: [`repo2run-trajectories.zip`](https://github.com/BeeuniLab/pheragent/releases/download/trajectories/repo2run-trajectories.zip)
 
 ## Current Scope
 
